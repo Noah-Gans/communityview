@@ -1,0 +1,181 @@
+.coverage {
+  position: relative;
+  display: inline-block;
+  max-width: 800px;
+}
+
+.coverage svg {
+  width: 100%;
+  height: auto;
+  display: block;
+  background: rgba(0, 0, 0, 0.7);
+  border: 4px solid #ffffff;
+  border-radius: 8px;
+}
+
+/* Base styles for all paths */
+.county, .coverage path, .coverage g path {
+  fill: transparent !important;
+  transition: all 0.3s ease;
+  transform-origin: center center;
+}
+
+/* County paths with hover functionality */
+.coverage path[onMouseEnter] {
+  stroke: #d40000 !important;
+  stroke-width: 5 !important;
+  cursor: pointer;
+}
+
+/* States - white borders, thicker */
+.coverage g[id*="state"] path,
+.coverage g[id*="cb_2023_us_state"] path {
+  stroke: #ffffff !important;
+  stroke-width: 3 !important;
+}
+
+/* Counties - green borders, medium thickness */
+.coverage g[id*="county"] path,
+.coverage g[id*="cb_2023_us_county"] path {
+  stroke: #ffffff !important;
+  stroke-width: 5 !important;
+  z-index: 1 !important;
+  cursor: pointer;
+}
+
+/* Dissolved/Region borders - yellow, thickest */
+.coverage g[id*="Dissolved"] path {
+  stroke: #3bb88c !important;
+  stroke-width: 30 !important;
+  z-index: 10 !important;
+}
+
+/* Unified hover effects for all layers */
+.county:hover, .coverage path:hover, .coverage g path:hover {
+  fill: rgba(255, 255, 255, 0.085) !important;
+  cursor: pointer;
+  filter: brightness(1.3) drop-shadow(0 0 10px rgba(255, 255, 255, 0.5));
+  stroke-width: 8 !important;
+  stroke: #ffffff !important;
+  scale: 1.01 !important;
+}
+
+/* State labels */
+.state-label {
+  font: 700 48px/1 Arial, sans-serif;
+  fill: #fff;
+  pointer-events: none;
+}
+
+/* Region label */
+.region-label {
+  font-family: Arial, sans-serif;
+  font-size: clamp(72px, 4vw, 64px);
+  font-weight: bold;
+  fill: #3bb88c !important;
+  text-anchor: middle;
+  dominant-baseline: middle;
+  pointer-events: none;
+  z-index: 10;
+}
+
+/* Tooltip */
+.tooltip {
+  position: absolute;
+  bottom: 100%;
+  left: 50%;
+  transform: translateX(-50%);
+  background: rgba(0, 0, 0, 0.9);
+  color: white;
+  font-size: 14px;
+  padding: 8px 12px;
+  border-radius: 8px;
+  white-space: nowrap;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.2s ease;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  backdrop-filter: blur(10px);
+  z-index: 1000;
+}
+
+.tooltip.show {
+  opacity: 1;
+}
+
+/* County label styling */
+.county-label {
+  font-family: Arial, sans-serif;
+  font-size: clamp(48px, 3vw, 50px);
+  font-weight: bold;
+  fill: #ffffff !important;
+  text-anchor: middle;
+  dominant-baseline: middle;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.3s ease;
+  z-index: 100;
+  text-shadow: none;
+}
+
+.county-label.show {
+  opacity: 1;
+}
+
+/* Map title overlay with enhanced flare */
+.map-title-overlay {
+  position: absolute;
+  top: 20px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 10;
+  pointer-events: none;
+}
+
+.coverage-map-title {
+  font-size: clamp(1.5rem, 3vw, 2rem);
+  font-weight: 700;
+  color: #ffffff;
+  text-align: center;
+  margin: 0;
+  letter-spacing: -0.02em;
+  /* Subtle white text shadow for flare */
+  text-shadow: 
+    0 0 10px rgba(255, 255, 255, 0.3),
+    0 0 20px rgba(255, 255, 255, 0.2),
+    0 0 30px rgba(255, 255, 255, 0.1),
+    0 1px 2px rgba(0, 0, 0, 0.5);
+  /* Subtle white glow effect */
+  filter: drop-shadow(0 0 5px rgba(255, 255, 255, 0.2));
+  /* Subtle animation */
+  animation: titleGlow 4s ease-in-out infinite alternate;
+}
+
+/* Subtle glow animation for the title */
+@keyframes titleGlow {
+  0% {
+    text-shadow: 
+      0 0 10px rgba(255, 255, 255, 0.3),
+      0 0 20px rgba(255, 255, 255, 0.2),
+      0 0 30px rgba(255, 255, 255, 0.1),
+      0 1px 2px rgba(0, 0, 0, 0.5);
+  }
+  100% {
+    text-shadow: 
+      0 0 15px rgba(255, 255, 255, 0.4),
+      0 0 25px rgba(255, 255, 255, 0.3),
+      0 0 35px rgba(255, 255, 255, 0.2),
+      0 1px 2px rgba(0, 0, 0, 0.5);
+  }
+}
+
+/* Update the coverage map container to remove the old title styling */
+.coverage-map-container {
+  margin-top: 15%;
+  position: relative;
+  z-index: 3;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+}
+  

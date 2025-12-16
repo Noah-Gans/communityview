@@ -1,0 +1,423 @@
+/* Full container for the reports page */
+.reports-background-blur {
+  position: absolute;
+  top: 0px;
+  left: 0;
+  width: 100%;
+  height: calc(100vh);
+  display: flex;
+  flex-direction: column; /* Arrange title above content */
+  z-index: 10;
+  backdrop-filter: blur(0px); /* Blur background */
+  overflow: hidden; /* Prevent overflow of the container */
+}
+
+.reports-container {
+  position: absolute;
+  top: 50px; /* Adjusted to match header height (48px + 2px margin) */
+  left: 0;
+  right: 0;
+  width: 100%;
+  height: calc(100vh - 50px); /* Use exact calculation */
+  max-height: calc(100vh - 50px); /* Prevent overflow */
+  display: flex;
+  flex-direction: column; /* Arrange title above content */
+  z-index: 10;
+  background-color: rgba(255, 255, 255, 0.6); /* Transparent white */
+  backdrop-filter: blur(3px); /* Blur background */
+  overflow: hidden; /* Prevent overflow of the container */
+  border: solid black;
+  border-radius: 0; /* Remove border radius for full width */
+  margin: 0; /* Remove all margins */
+  padding: 0; /* Remove all padding */
+  box-sizing: border-box;
+}
+
+.reports-title {
+  width: 100%;
+  text-align: center;
+  background-color: #9d7715; /* Yellow-brown background */
+  font-size: 11px;
+  font-weight: 600;
+  color: white;
+  margin: 0; /* Remove default margins */
+  line-height: 1.2; /* Compact line-height */
+  border-bottom: 1px solid black;
+  padding: 4px 0; /* Minimal padding */
+  flex-shrink: 0; /* Prevent growing */
+}
+
+.reports-title h1 {
+  margin: 0; /* Remove margins around the <h1> tag */
+  padding: 0; /* Remove padding */
+  font-size: inherit; /* Inherit from parent */
+  line-height: inherit; /* Inherit from parent */
+}
+/* Content Area Below Title */
+.reports-content {
+  display: flex;
+  flex: 1; /* Take remaining space */
+  min-height: 0; /* Allow flex item to shrink */
+  overflow: hidden; /* Prevent side panel from resizing */
+  width: 100%;
+  box-sizing: border-box;
+}
+
+/* Side Panel Styling */
+.report-side-panel {
+  width: 250px;
+  background-color: #006b45; /* Green with slight transparency */
+  color: white; /* Default text color for side panel */
+  padding: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  box-sizing: border-box;
+  overflow-y: auto;
+  border-right: 2px solid #ddd;
+  flex-shrink: 0; /* Prevent shrinking */
+  border-right: solid black;
+}
+
+/* Ensure all text in side panel is white */
+.report-side-panel,
+.report-side-panel * {
+  color: white;
+}
+
+/* Exception: Items in dropdown menus should be black (they're on white background) */
+.dropdown-menu-reports,
+.dropdown-menu-reports * {
+  color: black;
+}
+
+/* Exception: Selected column items should be black (they're on white background) */
+.selected-column-item,
+.selected-column-item * {
+  color: black;
+}
+
+/* Buttons in the side panel */
+.action-button {
+  padding: 10px 15px;
+  background-color: #9d7715; /* Brown background to match theme */
+  color: white; /* White text */
+  border: 2px solid rgba(0, 0, 0, 0.3);
+  border-radius: 5px;
+  cursor: pointer;
+  font-weight: bold;
+  text-align: center;
+  width: 100%; /* Added to match dropdown width */
+  height: auto; /* Allow height to adjust naturally */
+  min-height: 44px; /* Set minimum height for better proportions */
+  box-sizing: border-box; /* Include padding in width calculation */
+  transition: all 0.2s ease;
+}
+
+.action-button:hover {
+  background-color: #8a6a12; /* Darker brown on hover */
+  color: white; /* Keep white text on hover */
+}
+
+/* Main Panel Styling */
+.main-panel {
+  flex: 1;
+  min-width: 0; /* Allow flex item to shrink */
+  display: flex;
+  flex-direction: column;
+  padding: 20px;
+  box-sizing: border-box;
+  overflow: hidden; /* Prevent overflow */
+  background-color: rgba(255, 0, 0, 0);
+}
+
+.table-container {
+  flex: 1; /* Take remaining space */
+  min-height: 0; /* Allow flex item to shrink */
+  overflow-x: auto; /* Enable horizontal scrolling */
+  overflow-y: auto; /* Enable vertical scrolling */
+  background-color: rgba(255, 255, 255, 0.6); /* Transparent white with slight opacity */
+  backdrop-filter: blur(10px); /* Apply a blur effect to the background */
+  border: 1px solid #ddd;
+  border-radius: 0; /* Remove border radius to match container */
+  box-sizing: border-box;
+}
+
+/* Table Styling */
+.report-table {
+  width: max-content; /* Table takes only as much space as needed */
+  border-collapse: collapse;
+}
+.report-table th,
+.report-table td {
+  border: 1px solid black; /* Grid lines between cells */
+  padding: 10px;
+  text-align: left;
+}
+.report-table th {
+  background-color: rgb(114, 114, 114); /* Dark header background */
+  color: #fff; /* White text for headers */
+  padding: 10px;
+  text-align: left;
+}
+
+.report-table td {
+  padding: 10px;
+  text-align: left;
+}
+
+/* Alternating Row Colors */
+.report-table tr:nth-child(odd) td {
+  background-color: #ebebeb; /* Light gray for odd rows */
+}
+
+.report-table tr:nth-child(even) td {
+  background-color: #fff; /* White for even rows */
+}
+
+/* Highlight for Hovered Rows */
+.report-table tr:hover td {
+  background-color: #c2c2c2; /* Slightly darker gray for hovered rows */
+}
+
+/* Pagination Styling */
+.pagination {
+  flex-shrink: 0; /* Keep the pagination at the bottom */
+  margin-top: 10px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.pagination button {
+  padding: 5px 10px;
+  border: 1px solid #ccc;
+  background-color: #f4f4f4;
+  cursor: pointer;
+  border-radius: 3px;
+}
+
+.pagination button:disabled {
+  background-color: #ddd;
+  cursor: not-allowed;
+}
+/* ATTRIBUTE DROPDOWN CONTAINER */
+.attribute-dropdown-reports {
+  margin-top: 1rem;
+  font-family: 'Arial', sans-serif;
+}
+
+/* Ensure all headings in attribute dropdown are white */
+.attribute-dropdown-reports h3 {
+  color: white !important;
+  margin: 0 0 10px 0;
+  font-size: 16px;
+  font-weight: bold;
+}
+
+/* GROUPING FOR EACH DROPDOWN SECTION */
+.dropdown-group-reports {
+  margin-bottom: 0.75rem;
+  border-radius: 8px;
+  overflow: hidden;
+  background: #ffffff;
+  box-shadow: 0 2px 5px rgba(0, 0, 0, 0.1);
+}
+
+/* HEADER STYLING */
+.dropdown-header-reports {
+  cursor: pointer;
+  background: #9d7715; /* Green background */
+  color: white;
+  border: none;
+  padding: 10px 15px;
+  font-weight: bold;
+  width: 100%;
+  text-align: left;
+  font-size: 16px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  border-radius: 6px;
+  transition: background 0.2s ease, transform 0.1s ease;
+}
+
+.dropdown-header-reports:hover {
+  background: #8a6812; /* Darker green on hover */
+}
+
+/* DROPDOWN MENU CONTAINER */
+.dropdown-menu-reports {
+  background: white;
+  color: black;
+  border: 1px solid #ddd;
+  margin-top: 0.25rem;
+  padding: 10px;
+  max-height: 200px;
+  overflow-y: auto;
+  border-radius: 6px;
+  box-shadow: 0 2px 5px rgba(0, 0, 0, 0.1);
+}
+
+/* DROPDOWN ITEMS */
+.dropdown-item-reports {
+  display: flex;
+  align-items: center;
+  padding: 8px 12px;
+  cursor: pointer;
+  font-size: 14px;
+  border-radius: 5px;
+  transition: background 0.2s ease-in-out;
+}
+
+/* HOVER EFFECT ON ITEMS */
+.dropdown-item-reports:hover {
+  background: #e6f7e6; /* Light green highlight on hover */
+}
+
+/* CHECKBOXES */
+.dropdown-item-reports input {
+  margin-right: 8px;
+  transform: scale(1.2);
+  accent-color: #006b45; /* Green checkboxes */
+}
+
+
+
+
+.geo-filter-notice {
+  background-color: #f9f9f9;
+  border: 1px solid #ddd;
+  border-radius: 4px;
+  padding: 1rem;
+  margin: 1rem 0;
+  font-size: 0.9rem;
+  color: #333;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.geo-filter-notice span {
+  font-weight: bold;
+}
+
+.geo-filter-clear {
+  background-color: #ff6666;
+  color: white;
+  border: none;
+  border-radius: 4px;
+  padding: 0.5rem 0.75rem;
+  cursor: pointer;
+  font-size: 0.9rem;
+}
+
+.geo-filter-clear:hover {
+  background-color: #ff4d4d;
+}
+
+.geo-filter-clear:focus {
+  outline: none;
+}
+
+
+.header-cell {
+  display: flex;
+  flex-direction: column;
+  align-items: start;
+  gap: 0.25rem;
+}
+
+.header-cell span {
+  cursor: pointer;
+  font-weight: bold;
+}
+
+.header-cell span:hover {
+  color: #007bff;
+}
+
+.header-cell input {
+  width: 100%;
+  font-size: 0.9rem;
+  padding: 0.2rem;
+  border: 1px solid #ccc;
+  border-radius: 4px;
+}
+
+/* Selected Columns Section */
+.selected-columns-section {
+  margin-top: 1rem;
+  font-family: 'Arial', sans-serif;
+}
+
+.selected-columns-section h3 {
+  color: white;
+  margin: 0 0 10px 0;
+  font-size: 16px;
+  font-weight: bold;
+}
+
+.selected-columns-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 200px;
+  overflow-y: auto;
+}
+
+.selected-column-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  background: white;
+  color: black;
+  padding: 8px 12px;
+  border-radius: 5px;
+  font-size: 14px;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+}
+
+.selected-column-item span {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.remove-column-btn {
+  background: #ff6666;
+  color: white;
+  border: none;
+  border-radius: 50%;
+  width: 20px;
+  height: 20px;
+  font-size: 16px;
+  font-weight: bold;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  margin-left: 8px;
+  flex-shrink: 0;
+  transition: background 0.2s ease;
+}
+
+.remove-column-btn:hover {
+  background: #ff4d4d;
+}
+
+.remove-column-btn:focus {
+  outline: none;
+}
+
+.no-columns-message {
+  color: rgba(255, 255, 255, 0.7);
+  font-size: 14px;
+  font-style: italic;
+  margin: 0;
+  padding: 10px;
+  text-align: center;
+}
+

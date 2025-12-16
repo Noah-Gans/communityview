@@ -1,0 +1,69 @@
+/* One Page Sales Document - 8.5" x 11" Letter Size - Blank with Topo SVG */
+.onepage-container {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100vw;
+  min-height: 100vh;
+  background-color: #000000;
+  z-index: 10001 !important;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  box-sizing: border-box;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Inter', 'SF Pro Display', sans-serif;
+}
+
+.onepage-document {
+  width: 8.5in;
+  height: 11in;
+  background: #000000;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+  padding: 0;
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  position: relative;
+}
+
+/* Topographic overlay with green filter - same as Intro */
+.onepage-topo-overlay {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 1;
+  pointer-events: none;
+}
+
+/* Print Styles */
+@media print {
+  .onepage-container {
+    background: #000000;
+    padding: 0;
+  }
+
+  .onepage-document {
+    box-shadow: none;
+    width: 100%;
+    height: 100%;
+  }
+}
+
+/* Responsive - Scale down for smaller screens */
+@media (max-width: 1000px) {
+  .onepage-document {
+    transform: scale(0.85);
+    transform-origin: top center;
+  }
+}
+
+@media (max-width: 768px) {
+  .onepage-document {
+    transform: scale(0.7);
+    transform-origin: top center;
+  }
+}

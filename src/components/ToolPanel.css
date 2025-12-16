@@ -1,0 +1,125 @@
+/* src/components/ToolPanel.css */
+.tool-panel {
+  width: fit-content;
+  display: flex;
+  top: 48px; /* Set the vertical offset from the top */
+  height: 50px;
+  margin: auto;
+  align-items: center;
+  padding-left: 20px;
+  padding-right: 20px;
+  background-color: rgba(255, 255, 255, 0.6); /* Whitish-gray background with some transparency */
+  backdrop-filter: blur(3px); /* Apply a blur effect to the background */
+  border-bottom-left-radius: 10px; /* Rounded bottom-left corner */
+  border-bottom-right-radius: 10px; /* Rounded bottom-right corner */
+  border-radius: 10px;
+  border: 2px solid black;
+  z-index: 10;
+  position: relative;
+}
+
+  .tool-container {
+    margin: auto;
+  }
+  .tool-btn {
+    margin-left: 0px;
+    background-color: #d2d2d2;
+    border: 1px solid #9d7715;
+
+    width: 30px;
+    height: 30px;
+    border-radius: 3px;
+    margin-right: 2.5px;
+    padding: 5px;
+    cursor: pointer;
+  }
+  
+  .tool-btn:hover {
+    background-color: #1d784f;
+    border: 3px solid #9d7715;
+    padding: 2px;
+
+  }
+  
+  .tool-dropdown {
+    margin-right: 5px;
+    margin-left: 5px;
+    padding: 5px;
+    border-radius: 3px;
+    border: 1px solid #ccc;
+    background-color: #f1f1f1;
+  }
+  
+  .tool-search {
+    padding: 5px;
+    margin-left: 5px;
+
+    border-radius: 10px;
+    border: 1px solid #ccc;
+    background-color: #f1f1f1;
+    width: 200px;
+
+  }
+  .edit-dropdown {
+    position: relative;
+    display: inline-block;
+  }
+  
+  .dropdown-content {
+    display: flex;
+    flex-direction: column;
+    position: absolute;
+    background-color: white;
+    border: 1px solid #ccc;
+    padding: 5px;
+    z-index: 1;
+  }
+  
+  .dropdown-content button {
+    background-color: transparent;
+    border: none;
+    cursor: pointer;
+    padding: 5px 10px;
+  }
+  
+  .dropdown-content button:hover {
+    background-color: #f1f1f1;
+  }
+  
+
+  .tooltip-container {
+    position: relative;
+    display: inline-block;
+  }
+  
+  .tooltip-text {
+    visibility: hidden;
+    background-color: rgba(0, 0, 0, 0.8);
+    color: #fff;
+    text-align: center;
+    padding: 5px 10px;
+    border-radius: 5px;
+    font-size: 12px;
+    position: absolute;
+    bottom: -100%; /* Position above the button */
+    left: 50%;
+    transform: translateX(-50%);
+    white-space: nowrap;
+    opacity: 0;
+    transition: opacity 0.3s;
+  }
+  
+  .tooltip-container:hover .tooltip-text {
+    visibility: visible;
+    opacity: 1;
+  }
+
+
+  @media (max-width: 768px) {
+.tool-panel {
+  display: none !important;
+}
+}
+
+  
+  

@@ -1,0 +1,990 @@
+/* src/components/Search.css */
+.search-container {
+  position: absolute;
+  top: 50px; /* Adjusted to match header height (48px + 2px margin) */
+  left: 0;
+  right: 0;
+  width: 100%;
+  display: flex;
+  height: calc(100vh - 50px); /* Use exact calculation */
+  max-height: calc(100vh - 50px); /* Prevent overflow */
+  background-color: rgba(255, 255, 255, 0.6); /* Whitish-gray background with some transparency */
+  backdrop-filter: blur(3px);
+  border: solid black;
+  border-radius: 0; /* Remove border radius for full width */
+  margin: 0; /* Remove all margins */
+  padding: 0; /* Remove all padding */
+  flex-direction: column; /* Ensure children are stacked vertically */
+  z-index: 10; /* High z-index to overlay on top of map */
+  overflow: hidden; /* Prevent container from scrolling */
+  box-sizing: border-box;
+  color: #000; /* Ensure default text color is black */
+}
+
+/* Ensure all text content in search results is black, not white */
+.search-container,
+.search-container * {
+  color: inherit;
+}
+
+.search-container div,
+.search-container span,
+.search-container p,
+.search-container label,
+.search-container li,
+.search-container strong {
+  color: #000 !important; /* Force black text for readability */
+}
+
+/* Exception: Buttons should keep their white text */
+.search-container button,
+.search-container .map-it-button,
+.search-container .property-details-button,
+.search-container .action-button,
+.search-container .search-tab-button {
+  color: white !important;
+}
+  
+.search-tabs {
+  display: flex;
+  margin-bottom: 0px;
+  top: 0px;
+  justify-content: center;
+  background-color: rgba(255, 255, 255, 0.1); /* Subtle background */
+  border-bottom: 1px solid rgba(0, 0, 0, 0.2); /* Softer border */
+  padding: 4px; /* Small padding for modern look */
+  min-height: 36px; /* Compact height */
+  flex-shrink: 0; /* Prevent shrinking */
+  box-sizing: border-box;
+}
+
+/* Specific styling for search tab buttons - modern design */
+.search-tabs .search-tab-button {
+  flex: 1;
+  margin: 2px;
+  margin-bottom: 0px;
+  background: linear-gradient(135deg, #9d7715 0%, #8a6a12 100%);
+  color: white;
+  border: 1px solid rgba(0, 0, 0, 0.3);
+  border-bottom: 0px;
+  border-radius: 0px;
+  border-top-left-radius: 8px;
+  border-top-right-radius: 8px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  font-size: 12px;
+  font-weight: 600;
+  padding: 8px 16px; /* Slightly more padding for modern look */
+  min-height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1); /* Subtle shadow */
+}
+
+.search-tabs .search-tab-button:hover {
+  background: linear-gradient(135deg, #8a6a12 0%, #7a5a0f 100%);
+  transform: translateY(-1px);
+  box-shadow: 0 4px 8px rgba(0, 0, 0, 0.15);
+}
+
+.search-tabs .search-tab-active {
+  background: linear-gradient(135deg, #006b45 0%, #005a3a 100%);
+  color: white;
+  border-bottom: 2px solid #006b45;
+  margin-bottom: -1px;
+  box-shadow: 0 4px 8px rgba(0, 107, 69, 0.3);
+  z-index: 1;
+  position: relative;
+}
+
+.search-tabs .search-tab-inactive {
+  background-color: #9d7715;
+  color: white;
+}
+
+.search-content {
+  align-items: stretch; /* Changed from center to stretch for full width */
+  width: 100%;
+  height: 100%;
+  max-height: 100%; /* Take up full height of parent container */
+  display: flex;
+  flex-direction: column;
+  overflow: hidden; /* Prevent scrolling at this level */
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+.search-tab-panel {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+}
+
+/* Container for Search Bar and Buttons */
+.search-bar-and-actions-container {
+  display: flex;
+  flex-direction: column;
+  align-items: center; /* Center align content but container is full width */
+  margin-bottom: 0px;
+  border-bottom: solid black;
+  border-radius: 0px;
+  padding: 8px 6px; /* Reduced padding for more compact look */
+  margin-top: 0px;
+  margin-left: 0;
+  margin-right: 0;
+  width: 100%; /* Ensure full width */
+  background-color: #006b45;
+  z-index: 10;
+  gap: 6px; /* Slightly increased gap for better spacing */
+  flex-shrink: 0; /* Prevent shrinking */
+  box-sizing: border-box;
+}
+
+.search-bar {
+  display: flex;
+  justify-content: center; /* Center-align the search bar */
+  gap: 10px; /* Add spacing between input and button */
+  margin-bottom: 6px; /* Reduced from 10px to 6px */
+  width: 90%; /* Much wider for better use of space */
+  align-items: center; /* Ensure vertical alignment */
+}
+
+/* County Filter Styles */
+.county-filter {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  margin-bottom: 6px; /* Reduced from 10px to 6px */
+  width: 95%; /* Expanded from 60% to 95% */
+}
+
+.county-filter label {
+  color: white;
+  font-weight: bold;
+  margin-bottom: 5px;
+  font-size: 14px;
+}
+
+.county-checkboxes {
+  display: flex;
+  flex-wrap: nowrap; /* Prevent wrapping to keep all counties on one line */
+  gap: 8px; /* Reduced gap to fit more counties */
+  justify-content: center;
+  width: 100%;
+  overflow-x: auto; /* Allow horizontal scrolling if needed */
+}
+
+.county-checkbox {
+  display: flex;
+  align-items: center;
+  background-color: #9d7715; /* Brown color */
+  padding: 4px 8px; /* Reduced padding to make more compact */
+  border-radius: 15px;
+  border: 1px solid #333;
+  font-size: 11px; /* Slightly smaller font to fit better */
+  color: white !important; /* White text for contrast - force with !important */
+  cursor: pointer;
+  transition: background-color 0.2s ease;
+  white-space: nowrap; /* Prevent text wrapping within each checkbox */
+}
+
+/* Ensure all text in county checkbox is white */
+.county-checkbox,
+.county-checkbox * {
+  color: white !important;
+}
+
+.search-container .county-filter,
+.search-container .county-filter *,
+.search-container .search-bar-and-actions-container > label,
+.search-container .search-bar-and-actions-container > label *,
+.search-container .filter-row-mobile label,
+.search-container .filter-row-mobile label * {
+  color: white !important;
+}
+
+.county-checkbox:hover {
+  background-color: #8a6a12; /* Darker brown on hover */
+}
+
+.county-checkbox input[type="checkbox"] {
+  margin-right: 5px;
+  width: 14px;
+  height: 14px;
+}
+
+/* Search Limit Styles */
+.search-limit {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+
+.search-limit label {
+  color: white;
+  font-weight: bold;
+  font-size: 14px;
+}
+
+.search-limit select {
+  padding: 5px 10px;
+  border: 2px solid #333;
+  border-radius: 5px;
+  background-color: white;
+  font-size: 14px;
+  cursor: pointer;
+}
+
+.search-limit select:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+/* Loading Indicator */
+.loading-indicator {
+  text-align: center;
+  font-size: 18px;
+  color: #006b45;
+  margin: 20px;
+  padding: 20px;
+  background-color: rgba(255, 255, 255, 0.8);
+  border-radius: 10px;
+  border: 2px solid #006b45;
+}
+
+.search-bar-button-container {
+  padding: 20px;
+  gap: 20px;
+  display: flex; /* Ensures the input and button align horizontally */
+  border-bottom: solid black;
+  background-color: #006b45;
+  gap: 10px; /* Adjust the spacing between the elements */
+  align-items: center; /* Vertically align input and button */
+  justify-content: center; /* Center the container */
+}
+
+/* Styling for the search input - modern design */
+.search-content input {
+  margin: 0;
+  flex: 1; /* Take available space */
+  padding: 10px 18px;
+  border: 2px solid rgba(0, 0, 0, 0.2);
+  border-radius: 25px;
+  font-size: 16px;
+  outline: none;
+  transition: all 0.3s ease;
+  background-color: rgba(255, 255, 255, 0.95);
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+  min-width: 0; /* Allow shrinking */
+}
+
+.search-content input:focus {
+  border-color: #006b45;
+  box-shadow: 0 4px 8px rgba(0, 107, 69, 0.2);
+  background-color: white;
+}
+
+.search-content input:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+/* Styling for the search button - modern design */
+.search-content button {
+  margin-left: 10px;
+  margin-right: 10px;
+  padding: 10px 24px;
+  background: linear-gradient(135deg, #9d7715 0%, #8a6a12 100%);
+  color: white;
+  border-radius: 25px;
+  cursor: pointer;
+  font-size: 15px;
+  font-weight: 600;
+  transition: all 0.3s ease;
+  border: 2px solid rgba(0, 0, 0, 0.3);
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.15);
+}
+
+.search-content button:hover {
+  background: linear-gradient(135deg, #006b45 0%, #005a3a 100%);
+  transform: translateY(-1px);
+  box-shadow: 0 4px 8px rgba(0, 107, 69, 0.3);
+}
+
+.search-content button:disabled {
+  background-color: #cccccc;
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+
+.search-results-container {
+  flex: 1; /* Take remaining space */
+  min-height: 0; /* Allow flex item to shrink below content size */
+  overflow-y: auto; /* Enable vertical scrolling only here */
+  overflow-x: hidden;
+  margin: 0; /* Remove auto margins that center it */
+  padding: 10px; /* Inner padding for better layout */
+  border-radius: 0; /* Remove border radius */
+  background-color: #006b4600; /* Optional: background color */
+  width: 100%; /* Full width */
+  box-sizing: border-box;
+}
+
+/* Optional scrollbar styling for a polished look */
+.search-results-container::-webkit-scrollbar {
+  width: 8px;
+}
+
+.search-results-container::-webkit-scrollbar-thumb {
+  background-color: #aaa; /* Custom scrollbar color */
+  border-radius: 4px;
+}
+
+.search-results-container::-webkit-scrollbar-thumb:hover {
+  background-color: #888;
+}
+
+/* Top blur effect */
+.blur-effect-top,
+.blur-effect-bottom {
+  position: sticky;
+  height: 30px; /* Adjust the height of the blur effect */
+  width: 100%;
+  z-index: 10;
+  background-color: rgba(255, 255, 255, 0.6); /* Whitish-gray background with some transparency */
+  backdrop-filter: blur(3px); /* Apply blur effect */
+}
+
+/* Top blur sticks to the top */
+.blur-effect-top {
+  top: 0;
+}
+
+/* Bottom blur sticks to the bottom */
+.blur-effect-bottom {
+  bottom: 0;
+}
+
+
+
+.search-results-list {
+  list-style-type: none;
+  padding: 0;
+  margin: 20px 0;
+  width: 100%;
+  max-width: 100%; /* Ensure it doesn't exceed container */
+}
+
+.search-result-item {
+  padding: 15px;
+  margin-left: 0;
+  margin-right: 0;
+  margin-bottom: 20px;
+  width: 100%; /* Use full width of container */
+  border: 1px solid #ddd;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  border-radius: 10px; /* Rounded corners for modern look */
+  border: 4px solid black; /* Increased from 2px to 4px for thicker border */
+  height: auto; /* Let height adjust to content on mobile */
+  min-height: 120px; /* Add minimum height instead */
+  position: relative; /* Added for better border handling */
+  box-sizing: border-box;
+  color: #000 !important; /* Ensure result items have black text */
+}
+
+/* Ensure all text in result items is black, except buttons */
+.search-result-item {
+  color: #000 !important;
+}
+
+.search-result-item div,
+.search-result-item span,
+.search-result-item p,
+.search-result-item label,
+.search-result-item strong,
+.search-result-item li {
+  color: #000 !important;
+}
+
+/* Exception: Buttons in result items should keep white text */
+.search-result-item button,
+.search-result-item .map-it-button,
+.search-result-item .property-details-button {
+  color: white !important;
+}
+/* Ensure consistent checkbox size and alignment */
+.result-checkbox {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  max-width: 100px;
+  margin-right: 5%;
+}
+
+/* Increase checkbox size */
+.result-checkbox input[type="checkbox"] {
+  width: 20px;
+  height: 20px;
+  cursor: pointer;
+  border: 2px solid #1d784f; /* Green border */
+  border-radius: 4px; /* Rounded checkbox */
+  background-color: white; /* Default background */
+  transition: background-color 0.2s ease, border-color 0.2s ease;
+}
+
+/* Default styles (for Desktop) */
+.result-body {
+  display: flex;
+  flex-direction: row; /* Keep text and buttons side-by-side on desktop */
+  width: 100%;
+  align-items: center; /* Align everything properly */
+  justify-content: space-between;
+}
+
+
+
+.search-result-item.even {
+  background-color: #f9f9f9; /* Light grey for even items */
+}
+
+.search-result-item.odd {
+  background-color: #cbcbcb; /* Slightly darker grey for odd items */
+}
+
+.search-result-item hr {
+
+  border: 0;
+  border-top: 1px solid #ddd;
+}
+
+.result-content {
+  width: 100%;
+  display: flex;
+  align-items: center; /* Vertically aligns elements */
+  gap: 20px; /* Add space between checkbox and text */
+  color: #000 !important; /* Ensure result content text is black */
+}
+
+/* Result details text */
+.result-details,
+.result-details *,
+.result-body,
+.result-body * {
+  color: #000 !important; /* Force black text for all result details */
+}
+
+.result-details strong {
+  color: #000 !important; /* Ensure strong tags are black */
+}
+
+.result-buttons-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr; /* 2 columns for Map and Property Details */
+  row-gap: 6px;
+  column-gap: 6px;
+  width: 140px; /* Slightly wider for better button sizing */
+  align-items: center;
+  justify-items: center;
+  margin-top: 2%;
+  margin-right: 100px;
+}
+
+.result-buttons {
+  display: flex;
+  justify-content: flex-end; /* Aligns buttons to the right */
+  flex-grow: 1; /* Allows it to take up remaining space */
+}
+
+.result-buttons-grid a, .result-buttons-grid button {
+  font-size: 13px;
+  font-weight: 600;
+  width: 100%;
+  height: 42px; /* Fixed height for consistency */
+  text-align: center;
+  text-decoration: none;
+  border-radius: 8px;
+  border: 2px solid rgba(0, 0, 0, 0.3);
+  cursor: pointer;
+  transition: all 0.3s ease;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+}
+
+.result-buttons-grid a:hover, .result-buttons-grid button:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 4px 8px rgba(0, 0, 0, 0.2);
+}
+
+.result-buttons-grid .map-it-button {
+  background: linear-gradient(135deg, #17a2b8 0%, #138496 100%);
+  color: white;
+}
+
+.result-buttons-grid .map-it-button:hover {
+  background: linear-gradient(135deg, #138496 0%, #117a8b 100%);
+}
+
+.result-buttons-grid .property-details-button {
+  background: linear-gradient(135deg, #006b45 0%, #005a3a 100%);
+  color: white;
+}
+
+.result-buttons-grid .property-details-button:hover {
+  background: linear-gradient(135deg, #005a3a 0%, #004930 100%);
+}
+
+
+.no-results {
+  text-align: center;
+  font-size: 24px;
+  color: #000 !important; /* Ensure no-results text is black */
+  margin-top: 20px;
+}
+
+/* Loading indicator text */
+.loading-indicator {
+  color: #000 !important; /* Ensure loading text is black */
+  text-align: center;
+  font-size: 18px;
+  margin-top: 20px;
+}
+
+/* Header Action Buttons - new styling for buttons in header */
+.header-action-buttons {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  width: 95%;
+  max-width: 100%;
+  flex-wrap: wrap;
+  box-sizing: border-box;
+  gap: 10px;
+  margin-top: 10px;
+  margin-bottom: 10px;
+}
+
+.header-action-buttons .action-button {
+  flex: 1;
+  max-width: 30%;
+  height: 50px;
+  font-size: 13px;
+  text-align: center;
+  border-radius: 10px;
+  border: solid black 2px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin: 0;
+  padding: 8px;
+  background-color: #9d7715;
+  color: white;
+  transition: background-color 0.3s ease;
+}
+
+.header-action-buttons .action-button:hover {
+  opacity: 0.8;
+  background-color: #8a6a12;
+}
+
+.header-action-buttons .action-button:disabled {
+  background-color: #cccccc;
+  color: #666666;
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+/* Hide mobile filter row on desktop */
+.filter-row-mobile {
+  display: none;
+}
+
+@media (max-width: 768px) {
+  /* Hide advanced search tab on mobile */
+  .search-tabs .search-tab-button:nth-child(2) {
+    display: none;
+  }
+
+  /* Mobile search container - full width */
+  .search-container {
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    transform: none; /* Remove centering transform */
+    width: 100%;
+    height: 92%;
+    background-color: rgba(255, 255, 255, 0.6);
+    backdrop-filter: blur(3px);
+    border: solid black;
+    border-radius: 0; /* Remove border radius on mobile too */
+    z-index: 10;
+    flex-direction: column;
+    display: flex;
+    margin: 0;
+    padding: 0;
+  }
+  
+  /* Compact tabs on mobile */
+  .search-tabs {
+    min-height: 32px;
+  }
+  
+  .search-tabs .search-tab-button {
+    font-size: 11px;
+    padding: 4px 8px;
+    min-height: 28px;
+  }
+
+  /* Center search bar and buttons */
+  .search-bar-and-actions-container {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    width: 100%;
+    box-sizing: border-box;
+    padding: 10px;
+    border-bottom: solid black;
+    background-color: #006b45;
+    gap: 8px;
+  }
+
+  /* Search bar styling - input and button on same row */
+  .search-bar {
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    width: 95%;
+    gap: 8px;
+  }
+
+  /* Search input styling */
+  .search-bar input {
+    flex: 1;
+    font-size: 16px;
+    padding: 12px 15px;
+    border: 2px solid black;
+    border-radius: 8px;
+  }
+
+  /* Search button styling */
+  .search-bar button {
+    width: 80px;
+    height: 48px;
+    font-size: 14px;
+    padding: 0;
+    background-color: #9d7715;
+    color: white;
+    border-radius: 8px;
+    border: solid black 2px;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  .search-bar button:hover {
+    background-color: #006b45;
+  }
+
+  /* Hide desktop county filter on mobile */
+  .county-filter-desktop {
+    display: none;
+  }
+
+  /* County Filter + Limit Row for Mobile */
+  .filter-row-mobile {
+    width: 95%;
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    gap: 8px;
+  }
+
+  /* County dropdown selector */
+  .county-dropdown-select {
+    flex: 1;
+    height: 40px;
+    padding: 8px 12px;
+    font-size: 12px;
+    border: 2px solid black;
+    border-radius: 8px;
+    background-color: white;
+    cursor: pointer;
+  }
+
+  /* Results limit selector on same row */
+  .filter-row-mobile .search-limit-select {
+    width: 70px;
+    height: 40px;
+    padding: 8px;
+    font-size: 12px;
+    border: 2px solid black;
+    border-radius: 8px;
+    background-color: white;
+    flex-shrink: 0;
+  }
+
+  /* Hide mobile filter row on desktop */
+  .filter-row-mobile {
+    display: none;
+  }
+}
+
+@media (max-width: 768px) {
+  .filter-row-mobile {
+    display: flex;
+  }
+
+/* Ensure buttons take full width but reduce gap */
+.action-buttons {
+  display: flex;
+  justify-content: space-between; /* Spread buttons evenly */
+  align-items: center;
+  width: 100%;
+  max-width: 100%;
+  flex-wrap: wrap; /* Wrap to the next line if needed */
+  box-sizing: border-box;
+  gap: 0px; /* Reduce space between buttons */
+}
+
+/* Reduce button width & remove extra margins */
+.action-button {
+  flex: 1; /* Distribute buttons evenly */
+  max-width: 27%; /* Prevent buttons from taking too much space */
+  height: 60px;
+  font-size: 14px;
+  text-align: center;
+  border-radius: 10px;
+  border: solid black 2px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin: 0; /* Ensure no extra margin */
+  padding: 10px; /* Adjust padding for balance */
+  background-color: #9d7715; /* Brown color */
+  color: white;
+}
+
+  /* Button colors */
+  .select-all-button {
+    background-color: #9d7715;
+    color: white;
+  }
+
+  .map-selected-button {
+    background-color: #9d7715;
+    color: white;
+  }
+
+  .clear-selection-button {
+    background-color: #9d7715;
+    color: white;
+  }
+
+  /* Hover effects */
+  .action-button:hover {
+    opacity: 0.8;
+    background-color: #8a6a12; /* Darker brown on hover */
+  }
+
+  /* Disabled button states */
+  .action-button:disabled {
+    background-color: #cccccc;
+    color: #666666;
+    cursor: not-allowed;
+    opacity: 0.5;
+  }
+
+  /* Style for individual search results */
+    
+  .search-results-container {
+    width: 98%;
+    flex: 1;
+    min-height: 0;
+    overflow-y: auto;
+    padding: 10px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    box-sizing: border-box;
+  }
+  
+  /* Mobile search result items */
+  .search-result-item {
+    display: flex;
+    flex-direction: row;
+    align-items: stretch;
+    padding: 12px;
+    margin-bottom: 12px;
+    border: 3px solid black;
+    border-radius: 10px;
+    background-color: #f9f9f9;
+    width: 95%;
+    min-height: 180px;
+    gap: 10px;
+  }
+
+  /* Checkbox on left */
+  .result-checkbox {
+    display: flex;
+    align-items: flex-start;
+    padding-top: 4px;
+    margin-right: 0;
+  }
+
+  .result-checkbox input[type="checkbox"] {
+    width: 18px;
+    height: 18px;
+  }
+
+  /* Stack text above buttons */
+  .result-content {
+    flex: 1;
+    display: flex;
+    gap: 8px;
+  }
+
+  .result-body {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+    width: 100%;
+    padding: 0;
+    margin: 0;
+    align-items: center;
+  }
+
+  /* Details section */
+  .result-details {
+    width: 100%;
+    font-size: 13px;
+    line-height: 1.5;
+    margin-bottom: 10px;
+    padding: 0;
+    text-align: left;
+  }
+
+  .result-details strong {
+    font-weight: 600;
+    color: #333;
+  }
+
+  /* Button container */
+  .result-buttons {
+    width: 100%;
+    display: flex;
+    justify-content: center;
+    margin-top: auto;
+  }
+
+  /* Button grid - 2 columns for Map and Property Details */
+  .result-buttons-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    grid-template-rows: 1fr;
+    gap: 6px;
+    width: 50%;
+  }
+
+  .result-buttons-grid button {
+    height: 40px;
+    font-size: 12px;
+    border-radius: 6px;
+    border: 2px solid black;
+    padding: 0;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-weight: 600;
+    width: 80px;
+  }
+
+  /* Hide hr separators on mobile */
+  .search-result-item hr {
+    display: none;
+  }
+/* Button colors */
+.map-it-button {
+  background-color: #17a2b8;
+  color: white;
+}
+
+.detail-button {
+  background-color: #ffc107;
+  color: black;
+}
+
+.tax-button {
+  background-color: #28a745;
+  color: white;
+}
+
+.clerk-button {
+  background-color: #6f42c1;
+  color: white;
+}
+
+/* Hover effects */
+.result-buttons-grid button:hover {
+  opacity: 0.8;
+}
+
+/* Inline search limit select styling */
+.search-limit-select {
+  padding: 8px 12px;
+  border: 2px solid black; /* Changed from #1d784f to black to match other elements */
+  border-radius: 20px; /* Already rounded like the search button */
+  background-color: white;
+  font-size: 14px;
+  cursor: pointer;
+  outline: none;
+  transition: border-color 0.3s ease;
+}
+
+.search-limit-select:focus {
+  border-color: #007bff; /* Blue focus color */
+}
+
+.search-limit-select:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+
+@media (max-width: 768px) {
+  /* ... existing mobile styles ... */
+
+  /* Mobile Header Action Buttons */
+  .header-action-buttons {
+    width: 95%;
+    gap: 5px;
+    margin-top: 8px;
+    margin-bottom: 8px;
+  }
+
+  .header-action-buttons .action-button {
+    max-width: 32%;
+    height: 45px;
+    font-size: 11px;
+    padding: 6px;
+  }
+
+  .search-result-item hr {
+    display: none; /* Hide hr on mobile too */
+  }
+}
+}

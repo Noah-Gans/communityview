@@ -1,0 +1,352 @@
+.scroll-container button {
+  pointer-events: auto; /* ✅ This allows the title tooltip to work */
+}
+.print-overlay {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+  z-index: 5;
+}
+
+.print-overlay .print-panel,
+.print-overlay .print-panel * {
+  pointer-events: auto;
+}
+
+.print-panel {
+  position: absolute;
+  left: 0;
+  top: 60px;
+  height: calc(100vh - 150px);
+  width: 300px;
+  background-color: rgba(255, 255, 255, 0.6);
+  backdrop-filter: blur(5px);
+  border: solid black 1px;
+  border-radius: 0 10px 10px 0;
+  transition: transform 0.3s ease-in-out;
+  z-index: 5;
+}
+
+.print-panel.closed {
+  transform: translateX(-100%);
+}
+
+.print-panel .toggle-btn {
+  position: absolute;
+  right: -20px;
+  top: 50%;
+  width: 20px;
+  height: 70px;
+  background-color: #1d784f;
+  color: white;
+  border: none;
+  border-radius: 0 10px 10px 0;
+  cursor: pointer;
+  z-index: 1002;
+}
+
+.print-panel .content {
+  padding: 20px;
+}
+
+.tab-buttons button {
+  width: 100%;
+  border-radius: 10px 10px 0 0;
+  padding: 10px;
+  background-color: #d5d5d5;
+  border: none;
+  border-bottom: solid #1d784f 2px;
+  cursor: pointer;
+}
+
+.tab-buttons button.active {
+  background-color: #9d7715;
+  color: white;
+  border: solid #1d784f 2px;
+  border-bottom: none;
+}
+
+.tab-content {
+  border: solid #1d784f 2px;
+  border-top: 0px;
+  border-radius: 0 0 10px 10px;
+  padding: 10px;
+  height: calc(100vh - 250px);
+  overflow-y: auto;
+  overflow-x: visible; /* ✅ allow hover pop-outs */
+}
+
+.modern-print-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.top-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.print-button {
+  background-color: #1d784f;
+  color: white;
+  font-size: 18px;
+  padding: 12px;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.orientation-toggle {
+  display: flex;
+  gap: 10px;
+}
+
+.orientation-toggle button {
+  flex: 1;
+  padding: 10px;
+  background-color: #d5d5d5;
+  border: none;
+  border-radius: 5px;
+  cursor: pointer;
+}
+
+.orientation-toggle button.selected {
+  background-color: #1d784f;
+  color: white;
+}
+
+.scroll-section {
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: -10px; /* or leave this out */
+  margin-top: 0px;
+}
+
+.scroll-section h4 {
+  margin: 0 0 6px 0; /* bottom margin only */
+  font-size: 16px;
+}
+
+.scroll-container {
+  display: flex;
+  gap: 8px;
+  overflow-x: auto;
+  overflow-y: visible;
+  padding: 12px 15px 32px 15px; /* top, right, bottom, left */
+  position: relative;
+  margin-top: 0;
+  border: 1px solid #8B4513; /* brown border */
+  border-radius: 8px;
+  background-color: rgba(255, 255, 255, 0); /* optional soft background */
+}
+.edit-panel {
+  display: flex;
+  gap: 8px;
+  overflow-x: auto;
+  overflow-y: visible;
+  padding: 12px 15px 32px 15px; /* top, right, bottom, left */
+  position: relative;
+  margin-top: 0;
+  border: 1px solid #8B4513; /* brown border */
+  border-radius: 8px;
+  background-color: rgba(255, 255, 255, 0); /* optional soft background */
+
+}
+
+.scroll-container button {
+  font-size: 20px;
+  padding: 10px;
+  min-width: 48px;
+  min-height: 48px;
+  background-color: white;
+  border: 1px solid #ccc;
+  border-radius: 6px;
+  cursor: pointer;
+  position: relative;
+  transition: background-color 0.2s;
+}
+/* Wrapper around each icon button */
+.tooltip-wrapper {
+  position: relative;
+  display: inline-block;
+}
+.tooltip-wrapper button svg {
+  width: 24px;
+  height: 24px;
+}
+
+.tooltip-text {
+  visibility: hidden;
+  opacity: 0;
+  position: absolute;
+  bottom: -32px;
+
+  /* Default positioning */
+  left: 50%;
+  transform: translateX(-50%);
+
+  background-color: black;
+  color: white;
+  padding: 6px 10px;
+  border-radius: 6px;
+  font-size: 14px;
+  white-space: nowrap;
+  transition: opacity 0.15s ease-in-out;
+  z-index: 3000;
+
+  /* Ensure tooltips don't overflow the container */
+  max-width: 200px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Tooltip visibility trigger */
+.tooltip-wrapper:hover .tooltip-text {
+  visibility: visible;
+  opacity: 1;
+}
+
+/* 💡 Extra optional fix: prevent tooltips from being cut off by container */
+.scroll-container {
+  padding-left: 15px;  /* ← Gives space to first item's tooltip */
+  padding-right: 8px; /* ← Prevents clipping on the far right too */
+}
+
+.final-tools {
+  margin-top: 20px;
+}
+
+.final-tools button {
+  background-color: #9d7715;
+  color: white;
+  width: 100%;
+  padding: 10px;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+body.print-preview-active .print-center-wrapper {
+  display: flex;
+  justify-content: center;
+  align-items: flex-start;
+  height: 100vh;
+  overflow: auto;
+  background-color: #354d42;
+}
+
+body.print-preview-active .print-scroll-wrapper {
+  margin-top: 55px;
+}
+
+.edit-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 8px;
+}
+.edit-panel label {
+  display: flex;
+  justify-content: space-between;
+  font-size: 14px;
+}
+.edit-panel input[type="color"],
+.edit-panel input[type="number"] {
+  margin-left: auto;
+  margin-left: 12px;
+}
+/* in your Print.css */
+@media print {
+  /* 1) Zero out the sheet margins, we'll inset our content instead */
+  @page {
+    /* size gets injected by JS as portrait or landscape */
+    margin: 0.2in;    /* safe “printer margin” */
+  }
+
+  /* 2) Hide every UI panel so only our map+overlay shows */
+  html, body {
+    margin: 0; padding: 0;
+    width: 100%; height: 100%;
+    overflow: hidden;
+  }
+  .print-panel,
+  .side-panel,
+  .main-header,
+  .footer,
+  .print-controls-bar,
+  .tool-panel,
+  .login-dropdown,
+  .layer-selector-container,
+  .location-zoom-button-container {
+    display: none !important;
+  }
+  .print-scroll-wrapper,
+  .print-center-wrapper,
+  .print-map-wrapper {
+    transform: none !important;
+    overflow: visible !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    width: 100% !important;
+    height: 100% !important;
+  }
+
+   /* ——— Hide all resize/move handles ——— */
+   .drag-handle {
+    display: none !important;
+  }
+  textarea {
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+  }
+  .print-note-wrapper {
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+  }
+  /* ——— Hide Mapbox-draw handles, if any ——— */
+  .mapboxgl-ctrl-geocoder,
+  .mapbox-gl-draw_point,
+  .mapbox-gl-draw_vertex-point {
+    display: none !important;
+  }
+
+  /* ——— Hide any rotation anchors / dashed boxes ——— */
+  /* targets that little <div> with a dashed border in DiamondElement */
+  div[style*="dashed"] {
+    display: none !important;
+  }
+    /* cover both span and its li container */
+    #notes-overlay ul li,
+    #notes-overlay ul li span {
+      -webkit-print-color-adjust: exact !important;
+      print-color-adjust: exact !important;
+    }
+  
+  /* 3) Pin both map & overlay the same way */
+  #map,
+  #notes-overlay {
+    position: fixed       !important;
+    top:      0.2in       !important;
+    left:     0.2in       !important;
+    width:    calc(100% - 0.4in)  !important;
+    height:   calc(100% - 0.4in)  !important;
+    box-sizing: border-box  !important;
+    transform:   none       !important;
+    border: 5px solid black !important;
+
+    pointer-events: none;
+  }
+
+  /* 4) Only the map gets the black border */
+  #map {
+  }
+}
+
+
+
+

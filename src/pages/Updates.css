@@ -1,0 +1,523 @@
+/* Main page - positioned absolutely over everything but BELOW header */
+.updates-page {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100vw;
+  height: 100vh;
+  background-color: #000000;
+  z-index: 10000;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: flex-start;
+  padding: 0;
+  padding-top: 65px;
+  overflow-x: hidden;
+  overflow-y: auto;
+  box-sizing: border-box;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Inter', 'SF Pro Display', sans-serif;
+}
+
+/* Hero Section - Minimal */
+.updates-hero {
+  text-align: center;
+  padding: 8px 20px 6px;
+  color: white;
+  width: 100%;
+  background: #000000;
+  position: relative;
+  z-index: 2;
+  flex-shrink: 0;
+}
+
+.updates-main-title {
+  font-size: clamp(1.8rem, 5vw, 2.5rem);
+  font-weight: 900;
+  margin: 0;
+  letter-spacing: -0.03em;
+  color: #ffffff;
+  text-shadow: 0 0 30px rgba(255, 255, 255, 0.2);
+}
+
+/* Carousel Container */
+.updates-carousel-container {
+  width: 100%;
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: visible;
+  position: relative;
+  padding: 40px 0;
+}
+
+/* Cards Track - holds all cards in a row */
+.updates-cards-track {
+  display: flex;
+  gap: 50px;
+  transition: transform 0.7s cubic-bezier(0.4, 0, 0.2, 1);
+  padding: 0 50vw;
+}
+
+/* Individual Update Card - Outer wrapper with rounded corners */
+.update-card {
+  flex: 0 0 auto;
+  width: 650px;
+  max-width: 85vw;
+  background: linear-gradient(145deg, rgba(30, 30, 30, 1) 0%, rgba(20, 24, 22, 1) 100%);
+  border-radius: 28px;
+  margin: 0 20px;
+  box-shadow: 0 30px 80px rgba(0, 0, 0, 0.8);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  transition: all 0.7s cubic-bezier(0.4, 0, 0.2, 1);
+  overflow: hidden;
+  max-height: calc(100vh - 210px);
+  cursor: pointer;
+  filter: blur(5px);
+  opacity: 0.3;
+  transform: scale(0.88);
+  backdrop-filter: blur(20px);
+  position: relative;
+  z-index: 1;
+}
+
+/* Inner scrollable wrapper with padding */
+.update-card-inner {
+  width: 100%;
+  height: 100%;
+  max-height: calc(100vh - 210px);
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding: 32px 40px;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255, 255, 255, 0.2) transparent;
+}
+
+.update-card-inner::-webkit-scrollbar {
+  width: 8px;
+}
+
+.update-card-inner::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.update-card-inner::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.15);
+  border-radius: 4px;
+}
+
+.update-card-inner::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.25);
+}
+
+/* Active (centered) card - clear and prominent */
+.update-card.active {
+  filter: blur(0);
+  opacity: 1;
+  transform: scale(1);
+  border-color: rgba(255, 255, 255, 0.28);
+  box-shadow: 0 45px 120px rgba(0, 0, 0, 0.95), 
+              0 0 0 1px rgba(255, 255, 255, 0.18),
+              inset 0 2px 1px rgba(255, 255, 255, 0.12),
+              inset 0 -1px 1px rgba(0, 0, 0, 0.2);
+  cursor: default;
+  z-index: 10;
+}
+
+/* Card Header */
+.update-card-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 16px;
+  margin-bottom: 20px;
+  padding-bottom: 16px;
+  border-bottom: 2px solid rgba(255, 255, 255, 0.08);
+}
+
+.update-version-badge {
+  display: inline-block;
+  padding: 8px 16px;
+  background: linear-gradient(135deg, #ffffff 0%, #e8e8e8 100%);
+  color: #000000;
+  border-radius: 12px;
+  font-weight: 900;
+  font-size: 0.85rem;
+  letter-spacing: 1px;
+  box-shadow: 0 4px 20px rgba(255, 255, 255, 0.3),
+              inset 0 1px 0 rgba(255, 255, 255, 0.8),
+              inset 0 -1px 0 rgba(0, 0, 0, 0.1);
+  text-transform: uppercase;
+  flex-shrink: 0;
+}
+
+/* Card Title - Now in header */
+.update-title {
+  font-size: 1.35rem;
+  font-weight: 900;
+  color: #ffffff;
+  margin: 0;
+  line-height: 1.2;
+  letter-spacing: -0.02em;
+  flex: 1;
+  text-align: center;
+}
+
+.update-date {
+  color: rgba(255, 255, 255, 0.45);
+  font-size: 0.85rem;
+  font-weight: 500;
+  letter-spacing: 0.5px;
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+
+/* Highlight Box - Now contains overview */
+.update-highlight-box {
+  background: linear-gradient(135deg, rgba(34, 197, 94, 0.08) 0%, rgba(34, 197, 94, 0.03) 100%);
+  border-left: 4px solid rgba(34, 197, 94, 0.6);
+  padding: 16px 20px;
+  border-radius: 12px;
+  margin-bottom: 20px;
+  box-shadow: inset 0 1px 0 rgba(34, 197, 94, 0.15);
+}
+
+.highlight-label {
+  display: block;
+  font-weight: 800;
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 1.2px;
+  color: rgba(255, 255, 255, 0.5);
+  margin-bottom: 8px;
+}
+
+.highlight-text {
+  font-size: 0.92rem;
+  color: rgba(255, 255, 255, 0.85);
+  margin: 0;
+  line-height: 1.5;
+  font-weight: 400;
+}
+
+/* Features Section */
+.update-features {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+
+.feature-section {
+  border-top: 1px solid rgba(255, 255, 255, 0.06);
+  padding-top: 16px;
+}
+
+.feature-section:first-child {
+  border-top: none;
+  padding-top: 0;
+}
+
+.feature-category {
+  font-size: 1.05rem;
+  font-weight: 800;
+  color: #ffffff;
+  margin: 0 0 10px 0;
+  display: flex;
+  align-items: center;
+  letter-spacing: -0.01em;
+}
+
+.feature-category::before {
+  content: "▸";
+  margin-right: 10px;
+  font-size: 1.1rem;
+  color: rgba(255, 255, 255, 0.5);
+}
+
+.feature-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+
+.feature-list li {
+  padding: 6px 0 6px 26px;
+  color: rgba(255, 255, 255, 0.7);
+  font-size: 0.92rem;
+  line-height: 1.45;
+  position: relative;
+  transition: color 0.2s ease;
+}
+
+.feature-list li:hover {
+  color: rgba(255, 255, 255, 0.95);
+}
+
+.feature-list li::before {
+  content: "✓";
+  position: absolute;
+  left: 0;
+  color: rgba(255, 255, 255, 0.4);
+  font-weight: bold;
+  font-size: 1rem;
+}
+
+/* Navigation Controls */
+.updates-navigation {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px 20px 25px;
+  flex-shrink: 0;
+}
+
+/* Side Navigation Arrows */
+.nav-arrow {
+  position: absolute;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 70px;
+  height: 70px;
+  border-radius: 50%;
+  background: linear-gradient(135deg, rgba(255, 255, 255, 0.12) 0%, rgba(255, 255, 255, 0.06) 100%);
+  border: 2px solid rgba(255, 255, 255, 0.2);
+  color: white;
+  font-size: 32px;
+  cursor: pointer;
+  transition: all 0.35s cubic-bezier(0.4, 0, 0.2, 1);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  backdrop-filter: blur(15px);
+  z-index: 100;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4),
+              inset 0 1px 0 rgba(255, 255, 255, 0.15);
+}
+
+.nav-arrow-left {
+  left: 5%;
+}
+
+.nav-arrow-right {
+  right: 5%;
+}
+
+.nav-arrow:hover {
+  background: linear-gradient(135deg, rgba(255, 255, 255, 0.2) 0%, rgba(255, 255, 255, 0.12) 100%);
+  border-color: rgba(255, 255, 255, 0.4);
+  transform: translateY(-50%) scale(1.12);
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.5),
+              inset 0 1px 0 rgba(255, 255, 255, 0.25);
+}
+
+.nav-arrow:active {
+  transform: translateY(-50%) scale(0.98);
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3),
+              inset 0 1px 0 rgba(255, 255, 255, 0.1);
+}
+
+/* Dots Navigation */
+.nav-dots {
+  display: flex;
+  gap: 14px;
+  align-items: center;
+}
+
+.nav-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.25);
+  border: none;
+  cursor: pointer;
+  transition: all 0.3s ease;
+  padding: 0;
+}
+
+.nav-dot:hover {
+  background: rgba(255, 255, 255, 0.5);
+  transform: scale(1.3);
+}
+
+.nav-dot.active {
+  background: white;
+  width: 14px;
+  height: 14px;
+  box-shadow: 0 0 15px rgba(255, 255, 255, 0.6);
+}
+
+/* Mobile Responsiveness */
+@media (max-width: 768px) {
+  .updates-page {
+    padding-top: 60px;
+    overflow-y: scroll;
+  }
+
+  .updates-hero {
+    padding: 15px 20px 10px;
+  }
+
+  .updates-main-title {
+    font-size: 1.9rem;
+  }
+
+  .updates-subtitle {
+    font-size: 0.95rem;
+  }
+
+  .updates-carousel-container {
+    padding: 20px 0;
+    align-items: flex-start;
+  }
+
+  .update-card {
+    width: 90vw;
+    max-width: 90vw;
+    max-height: calc(100vh - 200px);
+    margin: 0 5px;
+  }
+  
+  .update-card-inner {
+    padding: 24px 20px;
+    max-height: calc(100vh - 200px);
+  }
+
+  .update-card-header {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 12px;
+  }
+
+  .update-title {
+    font-size: 1.15rem;
+    text-align: left;
+    width: 100%;
+  }
+
+  .update-date {
+    align-self: flex-start;
+  }
+
+  .updates-cards-track {
+    gap: 30px;
+    padding: 0 5vw;
+  }
+
+  .nav-arrow {
+    width: 50px;
+    height: 50px;
+    font-size: 24px;
+  }
+
+  .nav-arrow-left {
+    left: 2%;
+  }
+
+  .nav-arrow-right {
+    right: 2%;
+  }
+
+  .update-highlight-box {
+    padding: 14px 16px;
+  }
+
+  .highlight-text {
+    font-size: 0.9rem;
+  }
+
+  .feature-category {
+    font-size: 1rem;
+  }
+
+  .feature-list li {
+    font-size: 0.9rem;
+    padding: 6px 0 6px 24px;
+  }
+
+  .updates-navigation {
+    padding: 15px 20px 20px;
+  }
+}
+
+@media (max-width: 480px) {
+  .updates-page {
+    padding-top: 55px;
+  }
+
+  .updates-main-title {
+    font-size: 1.6rem;
+  }
+
+  .update-card {
+    width: 95vw;
+    max-width: 95vw;
+    max-height: calc(100vh - 180px);
+    margin: 0;
+  }
+  
+  .update-card-inner {
+    padding: 20px 16px;
+    max-height: calc(100vh - 180px);
+  }
+
+  .update-title {
+    font-size: 1.05rem;
+    line-height: 1.3;
+  }
+
+  .update-card-header {
+    flex-wrap: wrap;
+    gap: 10px;
+    padding-bottom: 12px;
+    margin-bottom: 16px;
+  }
+  
+  .update-version-badge {
+    font-size: 0.7rem;
+    padding: 6px 12px;
+  }
+  
+  .update-date {
+    font-size: 0.75rem;
+  }
+
+  .update-highlight-box {
+    padding: 12px 14px;
+    margin-bottom: 16px;
+  }
+
+  .highlight-text {
+    font-size: 0.85rem;
+  }
+
+  .feature-category {
+    font-size: 0.95rem;
+    margin-bottom: 8px;
+  }
+
+  .feature-list li {
+    font-size: 0.85rem;
+    padding: 5px 0 5px 22px;
+  }
+
+  .nav-arrow {
+    width: 44px;
+    height: 44px;
+    font-size: 20px;
+  }
+
+  .nav-arrow-left {
+    left: 1%;
+  }
+
+  .nav-arrow-right {
+    right: 1%;
+  }
+
+  .updates-cards-track {
+    gap: 20px;
+    padding: 0 2.5vw;
+  }
+}
+  

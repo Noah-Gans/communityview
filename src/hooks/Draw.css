@@ -1,0 +1,19 @@
+/* Force visibility of drawn features */
+.mapbox-gl-draw_polygon,
+.mapbox-gl-draw_line_string {
+  cursor: crosshair !important;
+}
+
+.mapbox-gl-draw-polygon-fill {
+  fill: rgba(255, 0, 0, 0.5) !important;
+}
+
+.mapbox-gl-draw-polygon-stroke {
+  stroke: red !important;
+  stroke-width: 2px !important;
+}
+
+.mapbox-gl-draw-line {
+  stroke: blue !important;
+  stroke-width: 2px !important;
+}

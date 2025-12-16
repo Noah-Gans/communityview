@@ -1,0 +1,400 @@
+/* src/Map.css */
+.map-container {
+  position: relative;
+  height: 100vh;
+  width: 100vw;
+  overflow: hidden;
+}
+.mapboxgl-ctrl-top-left {
+  display: none;
+}
+
+.basemap-switcher {
+  position: absolute;
+  top: 10px;
+  left: 10px;
+  z-index: 7;
+  background: white;
+  padding: 5px;
+  border-radius: 90px;
+  box-shadow: 0 1px 3px rgba(255, 0, 0, 0.3);
+}
+
+#map {
+  position: absolute;
+  top: 0px; /* Adjusted for MainHeader + ToolPanel height */
+  left: 0;
+  height: calc(100vh); /* Adjust height for headers */
+  width: 100%;
+  z-index: 1;
+}
+.area-tooltip {
+  background-color: white;
+  color: black;
+  padding: 2px 5px;
+  border-radius: 3px;
+  border: 1px solid #333;
+  font-size: 12px;
+}
+.info-section {
+  padding: 20px;
+  height: calc(100vh - 50px); /* Adjusted for MainHeader height */
+  overflow-y: auto;
+}
+.hidden-map {
+  display: none;
+}
+
+.visible-map {
+  display: block;
+}
+/* General container for the layer control */
+.leaflet-control-layers {
+  border-radius: 8px;
+  padding: 10px;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.3);
+}
+
+/* Style the toggle button that opens the layer control */
+
+/* Styling for the base layers container (initially hidden) */
+.leaflet-control-layers-list {
+  display: none; /* Hidden by default */
+}
+
+
+.location-zoom-button-container {
+  position: absolute;
+  bottom: 100px; /* Position above the layer selector */
+  left: 20px;
+  z-index: 9;
+  pointer-events: auto;
+}
+
+.location-zoom-button {
+  width: 50px;
+  height: 50px;
+  border: none;
+  border-radius: 8px;
+  background-color: white;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.2);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  transition: transform 0.2s, box-shadow 0.2s;
+}
+
+.location-zoom-button:hover {
+  transform: scale(1.05);
+  box-shadow: 0 4px 8px rgba(0, 0, 0, 0.3);
+}
+
+.location-icon {
+  width: 24px;
+  height: 24px;
+  color: #1d784f;
+}
+
+.layer-selector-container {
+  position: absolute;
+  bottom: 20px;
+  left: 20px; /* Ensure it's well inside the map container */
+  z-index: 9; /* Keep it above all other elements */
+  pointer-events: auto;
+}
+
+.layer-selector-button {
+  width: 50px;
+  height: 50px;
+  border: none;
+  border-radius: 8px;
+  background-color: white;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.2);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  position: relative;
+  z-index: 10; /* Keep it above all other elements */
+
+
+}
+
+.layer-icon {
+  width: 24px;
+  height: 24px;
+}
+
+.layer-selector-popup {
+  display: none;
+  position: absolute;
+  bottom: 60px; /* Prevents overlap with the button */
+  left: 0;
+  background-color: white;
+  border-radius: 8px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+  padding: 15px;
+  width: 360px; /* 3 columns × 110px + gaps */
+  pointer-events: auto;
+  z-index: 10; /* Keep it above all other elements */
+  max-height: 80vh;
+  overflow-y: auto;
+}
+
+.basemap-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 12px;
+}
+
+.basemap-option {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 8px;
+  border: 2px solid transparent;
+  border-radius: 8px;
+  background-color: transparent;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  text-align: center;
+  min-height: 100px;
+}
+
+.basemap-option:hover {
+  background-color: #f0f0f0;
+  border-color: #006b45;
+  transform: translateY(-2px);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+}
+
+.basemap-option.active {
+  border-color: #006b45;
+  border-width: 2px;
+}
+
+.basemap-thumbnail {
+  width: 100px;
+  height: 60px;
+  object-fit: cover;
+  border-radius: 4px;
+  margin-bottom: 6px;
+  border: 1px solid #ddd;
+}
+
+.basemap-label {
+  font-size: 12px;
+  color: #333;
+  font-weight: 500;
+  line-height: 1.2;
+  word-wrap: break-word;
+  max-width: 100%;
+}
+
+.layer-selector-container {
+  padding-bottom: 10px; /* Ensures hover covers the gap */
+}
+
+.layer-selector-container:hover .layer-selector-popup {
+  display: block;
+}
+
+
+#map {
+  position: absolute;
+  top: 0;
+  left: 0;
+  height: 100%;
+  width: 100%;
+}
+
+
+/* The overlay covers the entire .map-container */
+.map-overlay {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  /* A semi-transparent dark background */
+  background-color: rgba(0, 0, 0, 0.6); 
+  z-index: 1001; /* Higher than MobileSearch (1000) to appear on top */
+  /* center the content */
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  /* Ensures pointer events are captured by the overlay, 
+     blocking clicks on the map behind it. */
+  pointer-events: auto; 
+  color: #fff; /* text color */
+}
+
+.overlay-title {
+  font-size: 1.5rem;
+  margin-bottom: 1rem;
+}
+
+.overlay-text {
+  margin-bottom: 1rem;
+  color: white;
+}
+
+.overlay-button {
+  background-color: #006b45;
+  color: #fff;
+  padding: 12px 24px;
+  border: none;
+  border-radius: 5px;
+  cursor: pointer;
+}
+
+.overlay-button:hover {
+  background-color: #005236;
+}
+
+.print-center-wrapper {
+  display: flex;
+  justify-content: center;
+  align-items: start;
+  height: 120vh;
+  width: 100%;
+  overflow: auto;
+  position: relative;
+  top: -55px;
+
+}
+
+
+.print-scroll-wrapper {
+  display: flex;
+  position: relative;
+  width: 100%;         /* 👈 Only as wide as content */
+  height: calc(100vh);
+  overflow: auto;
+  margin-bottom: 100px;
+}
+.print-map-wrapper{
+  z-index: 1;
+  color: #00523700;
+  
+}
+
+@media (max-width: 768px) {
+  .map-container {
+    position: relative;
+    height: 100dvh;
+    width: 100%;
+    overflow: hidden;
+  }
+
+  .print-center-wrapper {
+    height: 100dvh;
+    align-items: stretch;
+    top: 0;
+    overflow: hidden;
+  }
+
+  .print-scroll-wrapper {
+    height: 100dvh;
+    margin-bottom: 0;
+  }
+
+  body.sheet-hidden .location-zoom-button-container,
+  body.sheet-hidden .layer-selector-container {
+    bottom: 130px;
+    z-index: 10;
+  }
+
+  body.sheet-hidden .mobile-account-floating {
+    bottom: 205px; /* Half the gap increase */
+    z-index: 10;
+  }
+
+  body.sheet-peek .location-zoom-button-container,
+  body.sheet-peek .layer-selector-container {
+    bottom: calc(35vh + 16px);
+    z-index: 10; /* Keep buttons above side panel in peek mode */
+  }
+
+  body.sheet-peek .mobile-account-floating {
+    bottom: calc(35vh + 95px); /* Half the gap increase */
+    z-index: 10;
+  }
+
+  body.sheet-full .location-zoom-button-container,
+  body.sheet-full .layer-selector-container {
+    bottom: calc(75vh + 16px);
+    z-index: 5; /* Lower z-index so side panel covers them in full mode */
+  }
+  
+  body.sheet-full .mobile-account-floating {
+    bottom: calc(75vh + 95px); /* Half the gap increase */
+    z-index: 5;
+  }
+  
+  .location-zoom-button-container {
+    position: absolute;
+    bottom: 50px; /* Same height as basemap button */
+    left: 10px; /* Move it to the left */
+    right: auto; /* Override right positioning */
+    z-index: 10;
+    transition: bottom 0.3s ease, z-index 0.3s ease;
+  }
+  
+  .layer-selector-container {
+    position: absolute;
+    bottom: 50px;
+    right: 10px; /* Move it to the right */
+    left: auto; /* Override left positioning */
+    z-index: 10; /* Keep it above all other elements */
+    transition: bottom 0.3s ease, z-index 0.3s ease;
+  }
+
+  .layer-selector-popup {
+    position: fixed;
+    bottom: 70px; /* Move it above the button */
+    right: 10px; /* Align it with the right side */
+    left: 10px; /* Full width with margins */
+    background-color: white;
+    border-radius: 12px;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+    padding: 12px;
+    width: auto; /* Auto width with left/right constraints */
+    max-width: calc(100vw - 20px);
+    pointer-events: auto;
+    max-height: 45vh; /* Take up bottom half, leaving map visible */
+    overflow-y: auto;
+  }
+
+  .basemap-grid {
+    grid-template-columns: repeat(3, 1fr); /* 3 columns on mobile for smaller size */
+    gap: 8px;
+  }
+
+  .basemap-option {
+    padding: 8px;
+    min-height: 70px;
+  }
+
+  .basemap-thumbnail {
+    width: 100%;
+    height: 40px;
+    margin-bottom: 6px;
+  }
+
+  .basemap-label {
+    font-size: 10px;
+    line-height: 1.2;
+  }
+
+  .basemap-switcher {
+    top: 10px;
+    left: 10px;
+    padding: 8px;
+    border-radius: 12px;
+  }
+}

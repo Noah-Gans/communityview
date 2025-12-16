@@ -1,0 +1,722 @@
+/* src/pages/AdvancedSearch.css */
+
+/* Two-column layout container - ADVANCED SEARCH ONLY */
+.advanced-search-container {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  box-sizing: border-box;
+}
+
+.advanced-search-container .advanced-search-layout {
+  display: flex;
+  gap: 0;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+  border-radius: 10px;
+}
+
+/* LEFT PANEL - Search and Filters - ADVANCED SEARCH ONLY */
+.advanced-search-container .advanced-search-left-panel {
+  width: 350px; /* Slightly wider */
+  flex-shrink: 0;
+  overflow-y: auto; /* Enable vertical scrolling */
+  background-color: #006b45;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  /* Add custom scrollbar styling */
+  scrollbar-width: thin;
+  scrollbar-color: #9d7715 #006b45;
+  box-sizing: border-box;
+}
+
+/* Ensure default text color in left panel is white */
+.advanced-search-container .advanced-search-left-panel,
+.advanced-search-container .advanced-search-left-panel * {
+  color: white;
+}
+
+/* Custom scrollbar for webkit browsers */
+.advanced-search-container .advanced-search-left-panel::-webkit-scrollbar {
+  width: 8px;
+}
+
+.advanced-search-container .advanced-search-left-panel::-webkit-scrollbar-track {
+  background: #006b45;
+}
+
+.advanced-search-container .advanced-search-left-panel::-webkit-scrollbar-thumb {
+  background: #9d7715;
+  border-radius: 4px;
+}
+
+.advanced-search-container .advanced-search-left-panel::-webkit-scrollbar-thumb:hover {
+  background: #8a6a12;
+}
+
+/* Ensure content inside can scroll properly */
+.advanced-search-container .advanced-search-left-panel > * {
+  flex-shrink: 0; /* Prevent content from shrinking */
+}
+
+/* RIGHT PANEL - Search Results - ADVANCED SEARCH ONLY */
+.advanced-search-container .advanced-search-right-panel {
+  flex: 1;
+  min-width: 0; /* Allow flex item to shrink */
+  overflow-y: auto;
+  padding: 20px;
+  height: 100%;
+  box-sizing: border-box;
+}
+
+/* ✅ GREEN HEADER STYLING - ADVANCED SEARCH ONLY */
+.advanced-search-container .advanced-search-header {
+  background: #006b45;
+  border-radius: 0;
+  margin-bottom: 0px;
+  width: 100%;
+  overflow: visible; /* Changed from hidden to visible */
+  padding-top: 20px;
+  height: auto; /* Changed from 100% to auto to allow content to expand */
+  box-sizing: border-box;
+  min-height: 100%; /* Ensure it takes at least full height */
+}
+
+/* Title styling - ADVANCED SEARCH ONLY */
+.advanced-search-container .advanced-search-title {
+  color: white;
+  font-size: 20px; /* Increased font size */
+  font-weight: bold;
+  margin-bottom: 20px; /* Increased margin */
+  text-align: left; /* Changed from center to left */
+  text-transform: uppercase; /* Make it stand out */
+  letter-spacing: 1px; /* Add spacing between letters */
+  width: 90%; /* Increased from 80% to 90% */
+  margin-left: auto;
+  margin-right: auto;
+}
+
+/* Better filter descriptions */
+.advanced-search-container .filter-description {
+  color: rgba(255, 255, 255, 0.7);
+  font-size: 9px;
+  text-align: center;
+  margin-bottom: 6px;
+  font-style: italic;
+  line-height: 1.2;
+  padding: 0 10px;
+}
+
+/* ✅ Search bar styling - ADVANCED SEARCH ONLY */
+.advanced-search-container .search-bar {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  align-items: center; /* This centers the search bar content */
+  margin-bottom: 15px;
+  width: 90%;
+  margin-left: auto;
+  margin-right: auto;
+  overflow: hidden;
+}
+
+.advanced-search-container .search-bar input {
+  flex: 1;
+  padding: 12px 12px;
+  border: 2px solid black;
+  border-radius: 15px;
+  font-size: 12px;
+  width: 100%;
+  box-sizing: border-box;
+  color: black;
+}
+
+/* New styles for search button and results selector side by side */
+.advanced-search-container .search-controls {
+  display: flex;
+  width: 100%;
+  justify-content: center;
+  gap: 10px;
+  margin: 0 auto;
+}
+
+.advanced-search-container .search-controls button {
+  background: #9d7715 !important;
+  color: white !important;
+  border: 2px solid black;
+  padding: 8px 16px;
+  border-radius: 12px;
+  cursor: pointer;
+  font-size: 12px;
+  width: 120px; /* Fixed width for consistent sizing */
+  height: 36px; /* Fixed height for consistent sizing */
+  box-sizing: border-box;
+}
+
+.advanced-search-container .search-controls .search-limit-select {
+  padding: 6px 10px;
+  border: 2px solid black;
+  border-radius: 12px;
+  font-size: 11px;
+  width: 120px; /* Same width as button */
+  height: 36px; /* Same height as button */
+  box-sizing: border-box;
+  background-color: #9d7715;
+  color: white;
+}
+
+.advanced-search-container .search-controls .search-limit-select option {
+  color: white;
+  background-color: #9d7715;
+}
+
+/* ✅ County filter styling - ADVANCED SEARCH ONLY */
+.advanced-search-container .county-filter {
+  margin-bottom: 15px;
+  width: 90%; /* Increased from 80% to 90% */
+  margin-left: auto;
+  margin-right: auto;
+  overflow: hidden;
+}
+
+.advanced-search-container .county-filter label {
+  display: block;
+  font-weight: bold;
+  color: white;
+  margin-bottom: 8px;
+  font-size: 12px;
+  text-align: center;
+}
+
+.advanced-search-container .county-checkboxes {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  width: 100%;
+  overflow: hidden;
+}
+
+.advanced-search-container .county-checkbox {
+  display: flex;
+  align-items: center;
+  background-color: #9d7715;
+  padding: 4px 8px;
+  border-radius: 6px;
+  border: 1px solid #333;
+  font-size: 10px;
+  color: white;
+  cursor: pointer;
+  transition: background-color 0.2s ease;
+  white-space: nowrap;
+  justify-content: center;
+}
+
+.advanced-search-container .county-checkbox:hover {
+  background-color: #8a6a12;
+}
+
+.advanced-search-container .county-checkbox input[type="checkbox"] {
+  margin-right: 6px;
+  width: 12px;
+  height: 12px;
+}
+
+/* ✅ Advanced search fields styling - ADVANCED SEARCH ONLY */
+.advanced-search-container .advanced-search-fields {
+  margin-bottom: 15px;
+  overflow: hidden;
+  width: 90%;
+  margin-left: auto;
+  margin-right: auto;
+}
+
+.advanced-search-container .advanced-label {
+  display: block;
+  font-weight: 600;
+  color: white !important;
+  margin-bottom: 8px;
+  font-size: 12px;
+  text-align: center;
+}
+
+/* Add explanatory text styling */
+.advanced-search-container .advanced-search-description {
+  color: white !important;
+  font-size: 10px;
+  text-align: center;
+  margin-bottom: 8px;
+  font-style: italic;
+  line-height: 1.3;
+}
+
+.advanced-search-container .field-checkboxes {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  overflow: hidden;
+  justify-content: center;
+  margin-top: 6px;
+  width: 100%;
+}
+
+.advanced-search-container .field-checkbox {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  padding: 4px 8px;
+  border-radius: 15px;
+  font-size: 11px;
+  color: white !important;
+  background-color: #9d7715;
+  border: 1px solid #333;
+  transition: background-color 0.2s ease;
+  white-space: nowrap;
+  flex: 0 1 auto;
+  min-width: 140px;
+}
+
+.advanced-search-container .field-checkbox:hover {
+  background-color: #8a6a12;
+}
+
+.advanced-search-container .field-checkbox input[type="checkbox"] {
+  width: 14px;
+  height: 14px;
+  accent-color: #9d7715;
+}
+
+/* ✅ Advanced filters styling - ADVANCED SEARCH ONLY */
+.advanced-search-container .advanced-filters {
+  margin-bottom: 15px;
+  overflow: hidden;
+  width: 90%;
+  margin-left: auto;
+  margin-right: auto;
+}
+
+.advanced-search-container .filter-group {
+  display: block;
+  margin-bottom: 12px;
+  width: 100%;
+  /* Removed padding and background - no more box inside box */
+}
+
+.advanced-search-container .filter-label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 600;
+  color: white !important;
+  margin-bottom: 6px;
+  font-size: 12px;
+}
+
+/* Style for checkbox filter specifically */
+.advanced-search-container .filter-group:first-child .filter-label {
+  /* Removed background and padding - no more box styling */
+  padding: 0;
+  margin: 0 0 6px 0;
+  border: none;
+}
+
+.advanced-search-container .filter-group:first-child .filter-label input[type="checkbox"] {
+  width: 16px;
+  height: 16px;
+  accent-color: #9d7715;
+}
+
+.advanced-search-container .filter-select {
+  padding: 6px 10px;
+  border: 2px solid #ced4da;
+  border-radius: 4px;
+  font-size: 11px;
+  width: 80%; /* Reduced from 100% to 80% to make dropdowns narrower */
+  box-sizing: border-box;
+  background-color: #9d7715;
+  color: white;
+  font-weight: 500;
+}
+
+.advanced-search-container .filter-select:focus {
+  outline: none;
+  border-color: #9d7715;
+}
+
+.advanced-search-container .filter-select:hover {
+  border-color: #ced4da;
+}
+
+/* ✅ Action buttons styling - ADVANCED SEARCH ONLY */
+.advanced-search-container .action-buttons {
+  display: flex;
+  justify-content: center;
+  margin-top: 15px;
+  margin-bottom: 15px;
+  overflow: hidden;
+  width: 90%;
+  margin-left: auto;
+  margin-right: auto;
+}
+
+.advanced-search-container .reset-button {
+  background: #9d7715; /* Changed from #6c757d to match your brown theme */
+  color: white;
+  border: 2px solid black; /* Added black border to match other buttons */
+  padding: 10px 20px; /* Increased padding for better proportions */
+  border-radius: 8px; /* Increased border radius for modern look */
+  cursor: pointer;
+  font-size: 12px; /* Increased font size */
+  width: 90%;
+  max-width: 90%;
+  align-self: center;
+  box-sizing: border-box; /* Prevent overflow from borders/padding */
+  font-weight: 600; /* Made text bolder */
+  transition: all 0.2s ease; /* Smooth transitions */
+  text-transform: uppercase; /* Made text uppercase for consistency */
+  letter-spacing: 0.5px; /* Added letter spacing */
+}
+
+.advanced-search-container .reset-button:hover {
+  background: #8a6a12; /* Darker brown on hover */
+  transform: translateY(-1px); /* Slight lift effect */
+  box-shadow: 0 4px 8px rgba(0, 0, 0, 0.2); /* Subtle shadow on hover */
+}
+
+.advanced-search-container .reset-button:active {
+  transform: translateY(0); /* Reset transform when clicked */
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
+}
+
+/* Header Action Buttons - ADVANCED SEARCH ONLY */
+.advanced-search-container .header-action-buttons {
+  display: flex;
+  flex-direction: row;
+  gap: 6px;
+  margin-top: 15px;
+  margin-bottom: 15px;
+  overflow: hidden;
+  width: 90%;
+  margin-left: auto;
+  margin-right: auto;
+}
+
+.advanced-search-container .header-action-buttons .action-button {
+  flex: 1;
+  height: auto;
+  min-height: 45px;
+  font-size: 12px;
+  text-align: center;
+  border-radius: 6px;
+  border: solid black 2px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin: 0;
+  padding: 10px 6px;
+  background-color: #9d7715;
+  color: white;
+  transition: background-color 0.3s ease;
+  white-space: normal;
+  word-wrap: break-word;
+  box-sizing: border-box;
+  line-height: 1.3;
+}
+
+.advanced-search-container .header-action-buttons .action-button:hover {
+  opacity: 0.8;
+  background-color: #8a6a12;
+}
+
+.advanced-search-container .header-action-buttons .action-button:disabled {
+  background-color: #cccccc;
+  color: #666666;
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+/* RIGHT PANEL STYLES - ADVANCED SEARCH ONLY */
+.advanced-search-container .search-results-container {
+  margin-top: 0;
+  width: 100%;
+  overflow-x: hidden;
+  max-height: calc(100vh - 120px);
+  overflow-y: auto;
+}
+
+.advanced-search-container .search-results-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+
+.advanced-search-container .search-result-item {
+  padding: 15px;
+  border-bottom: none;
+  transition: background-color 0.2s;
+  min-height: 140px;
+  position: relative;
+  border: 4px solid black;
+  border-radius: 10px;
+  max-width: 100%;
+  overflow: hidden;
+  margin-bottom: 10px;
+  display: flex;
+  flex-direction: column;
+}
+
+.advanced-search-container .search-result-item.even {
+  background-color: #f8f9fa;
+}
+
+.advanced-search-container .search-result-item.odd {
+  background-color: #ffffff;
+}
+
+.advanced-search-container .search-result-item:hover {
+  background-color: #e9ecef;
+}
+
+.advanced-search-container .result-content {
+  display: flex;
+  gap: 10px;
+  max-width: 100%;
+  overflow: hidden;
+  flex: 1;
+}
+
+.advanced-search-container .result-body {
+  flex: 1;
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  max-width: 100%;
+  overflow: hidden;
+  min-width: 0; /* Allows flex items to shrink below content size */
+}
+
+.advanced-search-container .result-details {
+  flex: 1 1 auto;
+  line-height: 1.6;
+  color: #495057;
+  word-wrap: break-word;
+  overflow-wrap: break-word;
+  min-width: 0; /* Allows text to wrap */
+  font-size: 13px;
+  padding-right: 8px;
+}
+
+.advanced-search-container .result-details br {
+  line-height: 1.8;
+}
+
+.advanced-search-container .result-details strong {
+  color: #2c3e50;
+}
+
+/* Add the missing result styling from Search.css */
+.advanced-search-container .result-checkbox {
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 25px;
+  margin-right: 8px;
+}
+
+.advanced-search-container .result-checkbox input[type="checkbox"] {
+  width: 20px;
+  height: 20px;
+  cursor: pointer;
+  border: 2px solid #1d784f;
+  border-radius: 4px;
+  background-color: white;
+  transition: background-color 0.2s ease, border-color 0.2s ease;
+}
+
+.advanced-search-container .result-buttons {
+  display: flex;
+  justify-content: flex-end;
+  align-items: flex-start;
+  flex-shrink: 0;
+}
+
+.advanced-search-container .result-buttons-grid {
+  display: grid;
+  grid-template-columns: repeat(1, 1fr);
+  row-gap: 8px;
+  column-gap: 0;
+  width: 110px;
+  flex-shrink: 0;
+}
+
+.advanced-search-container .result-buttons-grid button {
+  border: solid black;
+  font-size: 11px;
+  width: 100%;
+  height: auto;
+  min-height: 32px;
+  padding: 6px 3px;
+  text-align: center;
+  text-decoration: none;
+  background-color: #007bff;
+  color: white;
+  border-radius: 5px;
+  border: none;
+  cursor: pointer;
+  transition: background-color 0.3s ease;
+  border: 2px solid #7a7a7a;
+  box-sizing: border-box;
+  white-space: normal;
+  word-wrap: break-word;
+}
+
+.advanced-search-container .result-buttons-grid button:hover {
+  background-color: #0056b3;
+  border-color: #0056b3;
+  box-shadow: 0 8px 12px rgba(0, 0, 0, 0.2);
+}
+
+.advanced-search-container .result-buttons-grid .tax-button {
+  background-color: #28a745;
+}
+
+.advanced-search-container .result-buttons-grid .tax-button:hover {
+  background-color: #218838;
+}
+
+.advanced-search-container .result-buttons-grid .clerk-button {
+  background-color: #6f42c1;
+}
+
+.advanced-search-container .result-buttons-grid .clerk-button:hover {
+  background-color: #593196;
+}
+
+.advanced-search-container .result-buttons-grid .map-it-button {
+  background-color: #17a2b8;
+}
+
+.advanced-search-container .result-buttons-grid .map-it-button:hover {
+  background-color: #138496;
+}
+
+.advanced-search-container .result-buttons-grid .detail-button {
+  background-color: #ffc107;
+}
+
+.advanced-search-container .result-buttons-grid .detail-button:hover {
+  background-color: #e0a800;
+}
+
+/* Action buttons for results */
+.advanced-search-container .action-buttons {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  width: 100%;
+  max-width: 100%;
+  flex-wrap: wrap;
+  box-sizing: border-box;
+  gap: 0px;
+  margin-bottom: 15px;
+}
+
+.advanced-search-container .action-button {
+  flex: 1;
+  max-width: 27%;
+  height: 60px;
+  font-size: 14px;
+  text-align: center;
+  border-radius: 10px;
+  border: solid black 2px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin: 0;
+  padding: 10px;
+  background-color: #9d7715;
+  color: white;
+}
+
+.advanced-search-container .select-all-button {
+  background-color: #9d7715;
+  color: white;
+}
+
+.advanced-search-container .map-selected-button {
+  background-color: #9d7715;
+  color: white;
+}
+
+.advanced-search-container .clear-selection-button {
+  background-color: #9d7715;
+  color: white;
+}
+
+.advanced-search-container .action-button:hover {
+  opacity: 0.8;
+  background-color: #8a6a12;
+}
+
+.advanced-search-container .action-button:disabled {
+  background-color: #cccccc;
+  color: #666666;
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+/* Loading and no results - ADVANCED SEARCH ONLY */
+.advanced-search-container .loading-indicator {
+  padding: 20px;
+  color: #007bff;
+  font-size: 16px;
+}
+
+.advanced-search-container .no-results {
+  text-align: center;
+  padding: 20px;
+  color: #6c757d;
+  font-size: 16px;
+}
+
+/* Pagination styling specific to advanced search */
+.advanced-search-container .pagination {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 10px;
+  margin-top: 10px;
+  color: white;
+}
+
+.advanced-search-container .pagination span {
+  color: white;
+}
+
+.advanced-search-container .pagination button {
+  background-color: #9d7715;
+  color: white;
+  border: 2px solid black;
+  border-radius: 6px;
+  padding: 6px 12px;
+  cursor: pointer;
+  transition: background-color 0.2s ease;
+}
+
+.advanced-search-container .pagination button:hover:not(:disabled) {
+  background-color: #8a6a12;
+}
+
+.advanced-search-container .pagination button:disabled {
+  background-color: #cccccc;
+  color: #666666;
+  cursor: not-allowed;
+  border-color: #999999;
+}
