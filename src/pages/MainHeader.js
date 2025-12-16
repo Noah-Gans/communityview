@@ -422,7 +422,7 @@ const MainHeader = () => {
             <button className="nav-button" onClick={() => navigate('/faq')}>
               FAQ
             </button>
-            <a className="nav-button" href="mailto:noahgans@tetoncountygis.com">
+            <a className="nav-button" href="mailto:noahgans@communityview.ai">
               Contact
             </a>
           </div>

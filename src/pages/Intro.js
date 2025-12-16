@@ -105,7 +105,7 @@ const Intro = ({ onStartClick }) => {
   // Simplified version for native app - just login/signup
   if (isNative) {
     const handleLearnMore = () => {
-      window.open('https://tetoncountygis.com', '_blank', 'noopener,noreferrer');
+      window.open('https://communityview.ai', '_blank', 'noopener,noreferrer');
     };
 
     return (
@@ -284,7 +284,7 @@ const Intro = ({ onStartClick }) => {
               <div className="mobile-why-cta-buttons">
                 <button 
                   className="mobile-cta-button enterprise-button"
-                  onClick={() => window.location.href = 'mailto:noahgans@tetoncountygis.com?subject=Enterprise Inquiry'}
+                  onClick={() => window.location.href = 'mailto:noahgans@communityview.ai?subject=Enterprise Inquiry'}
                 >
                   Enterprise Pricing
                 </button>
@@ -555,7 +555,7 @@ const Intro = ({ onStartClick }) => {
               <button className="footer-button" onClick={() => navigate('/updates')}>Updates</button>
             )}
             <button className="footer-button" onClick={() => navigate('/features')}>Features</button>
-            <a className="footer-button" href="mailto:noahgans@tetoncountygis.com" target="_blank" rel="noopener noreferrer">Contact</a>
+            <a className="footer-button" href="mailto:noahgans@communityview.ai" target="_blank" rel="noopener noreferrer">Contact</a>
           </div>
         </div>
       </footer>

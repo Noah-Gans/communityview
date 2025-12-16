@@ -261,7 +261,7 @@ const Pricing = () => {
           
           <button 
             className="plan-button secondary"
-            onClick={() => window.location.href = 'mailto:noahgans@tetoncountygis.com?subject=Enterprise Inquiry'}
+            onClick={() => window.location.href = 'mailto:noahgans@communityview.ai?subject=Enterprise Inquiry'}
           >
             Contact Us
           </button>
@@ -330,7 +330,7 @@ const Pricing = () => {
               <button className="footer-button" onClick={() => navigate('/updates')}>Updates</button>
             )}
             <button className="footer-button" onClick={() => navigate('/features')}>Features</button>
-            <a className="footer-button" href="mailto:noahgans@tetoncountygis.com" target="_blank" rel="noopener noreferrer">Contact</a>
+            <a className="footer-button" href="mailto:noahgans@communityview.ai" target="_blank" rel="noopener noreferrer">Contact</a>
           </div>
         </div>
       </footer>

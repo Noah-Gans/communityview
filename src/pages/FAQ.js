@@ -63,7 +63,7 @@ const FAQ = () => {
         <div className="cta-buttons">
           <button 
             className="cta-button primary"
-            onClick={() => window.location.href = 'mailto:noahgans@tetoncountygis.com?subject=Question'}
+            onClick={() => window.location.href = 'mailto:noahgans@communityview.ai?subject=Question'}
           >
             Contact Us
             <span className="button-arrow">→</span>
@@ -94,7 +94,7 @@ const FAQ = () => {
               <button className="footer-button" onClick={() => navigate('/updates')}>Updates</button>
             )}
             <button className="footer-button" onClick={() => navigate('/features')}>Features</button>
-            <a className="footer-button" href="mailto:noahgans@tetoncountygis.com" target="_blank" rel="noopener noreferrer">Contact</a>
+            <a className="footer-button" href="mailto:noahgans@communityview.ai" target="_blank" rel="noopener noreferrer">Contact</a>
           </div>
         </div>
       </footer>

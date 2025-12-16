@@ -47,7 +47,7 @@ const Updates = () => {
       version: "1.1.0",
       title: "Search & Custom Domain Integration",
       date: "October 10, 2024",
-      description: "Added parcel search functionality and launched the custom domain tetoncountygis.com.",
+      description: "Added parcel search functionality and launched the custom domain communityview.ai.",
       features: [
         {
           category: "Search",
@@ -365,7 +365,7 @@ const Updates = () => {
               <button className="footer-button" onClick={() => navigate('/updates')}>Updates</button>
             )}
             <button className="footer-button" onClick={() => navigate('/features')}>Features</button>
-            <a className="footer-button" href="mailto:noahgans@tetoncountygis.com" target="_blank" rel="noopener noreferrer">Contact</a>
+            <a className="footer-button" href="mailto:noahgans@communityview.ai" target="_blank" rel="noopener noreferrer">Contact</a>
           </div>
         </div>
       </footer>

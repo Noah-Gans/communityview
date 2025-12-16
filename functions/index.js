@@ -303,7 +303,7 @@ exports.createPortalSession = functions.https.onCall(async (data, context) => {
 
   try {
     // Create a portal session
-    const returnUrl = "https://tetoncountygis.com"; 
+    const returnUrl = "https://communityview.ai"; 
     // The URL to which Stripe will redirect after they manage subscription
     const portalSession = await stripe.billingPortal.sessions.create({
       customer: customerId,
