@@ -1,4 +1,4 @@
 User-agent: *
 Disallow:
 
-Sitemap: https://www.tetoncountygis.com/sitemap.xml
+Sitemap: https://communityview.ai/sitemap.xml
