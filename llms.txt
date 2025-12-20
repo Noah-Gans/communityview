@@ -1,0 +1,31 @@
+# llms.txt - AI Search Engine Instructions
+
+# Allow all AI search engines to crawl
+User-agent: ChatGPT-User
+User-agent: GPTBot
+User-agent: Google-Extended
+User-agent: anthropic-ai
+User-agent: Claude-Web
+User-agent: OAI-SearchBot
+User-agent: PerplexityBot
+User-agent: Applebot-Extended
+Allow: /
+
+# Sitemap location
+Sitemap: https://communityview.ai/sitemap.xml
+
+# Main pages
+Allow: /
+Allow: /map
+Allow: /search
+Allow: /tutorial
+Allow: /updates
+Allow: /features
+Allow: /pricing
+
+# Disallow private/protected pages
+Disallow: /report
+Disallow: /print
+Disallow: /login
+Disallow: /signup
+
