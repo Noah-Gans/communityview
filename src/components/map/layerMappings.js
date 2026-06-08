@@ -1,0 +1,18 @@
+export const layerNameMappings = {
+  ownership: 'Ownership',
+  regrid_zoning: 'Zoning (Regrid)',
+  public_land: 'Public Land',
+  conservation_easements: 'Conservation Easements',
+  soil: 'Soil',
+  surface_water: 'Surface Water',
+  wetlands: 'Wetlands',
+  boundaries_counties: 'US Counties',
+  boundaries_congressional: 'US Congressional Districts',
+  boundaries_places: 'US Places',
+  boundaries_urban_areas: 'US Urban Areas',
+  boundaries_tribal_lands: 'US Tribal Lands',
+  opportunity_zones: 'Opportunity Zones',
+  principal_aquifers: 'Principal Aquifers',
+  transmission_lines: 'Transmission Lines',
+  wildfire_hazard: 'Wildfire Hazard (2023)',
+};

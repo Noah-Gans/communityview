@@ -3,6 +3,8 @@ import { auth, db } from '../firebase/firebaseConfig';
 import { onAuthStateChanged, signOut } from 'firebase/auth';
 import { doc, setDoc, onSnapshot } from 'firebase/firestore';
 import { getFunctions, httpsCallable } from 'firebase/functions';
+import { REGRID_BATCH_REPORTS_ENABLED } from '../config/featureFlags';
+import { fetchSavedMapsSummaries, invalidateSavedMapsCache } from '../utils/savedMapsCache';
 
 const UserContext = createContext(null);
 
@@ -16,6 +18,7 @@ export function UserProvider({ children }) {
   const [hasUserChangedSettings, setHasUserChangedSettings] = useState(false);
   
   const [highlightSettings, setHighlightSettings] = useState(null);
+  const [userProfile, setUserProfile] = useState(null);
 
   // User authentication with real-time subscription updates
   useEffect(() => {
@@ -27,7 +30,8 @@ export function UserProvider({ children }) {
       
       if (firebaseUser) {
         setUser(firebaseUser);
-        
+        fetchSavedMapsSummaries(firebaseUser).catch(() => {});
+
         // Clean up any existing Firestore listener
         if (unsubscribeFirestore) {
           unsubscribeFirestore();
@@ -63,6 +67,14 @@ export function UserProvider({ children }) {
               console.log('🔄 Subscription status update:', data.subscriptionStatus);
               setSubscriptionStatus(data.subscriptionStatus || 'none');
               setRole(data.role || 'none');
+              setUserProfile({
+                firstName: data.firstName || '',
+                lastName: data.lastName || '',
+                contactPhone: data.contactPhone || '',
+                contactEmail: data.contactEmail || '',
+                profilePhotoUrl: data.profilePhotoUrl || '',
+                firmLogoUrl: data.firmLogoUrl || '',
+              });
               
               // 🎯 Load highlight settings if they exist, otherwise use defaults
               if (data.highlightSettings) {
@@ -84,6 +96,7 @@ export function UserProvider({ children }) {
             } else {
               clearTimeout(firestoreTimeout);
               setSubscriptionStatus('none');
+              setUserProfile(null);
               // 🎯 Set defaults for new users
               setHighlightSettings({
                 fillColor: 'rgba(255, 0, 0, 0.25)',
@@ -109,10 +122,12 @@ export function UserProvider({ children }) {
           }
         );
       } else {
+        invalidateSavedMapsCache();
         setUser(null);
         setSubscriptionStatus(null);
         setRole(null);
         setHighlightSettings(null);
+        setUserProfile(null);
         setLoading(false);
       }
     });
@@ -144,6 +159,7 @@ export function UserProvider({ children }) {
   const logout = async () => {
     try {
       await signOut(auth);
+      invalidateSavedMapsCache();
       setUser(null);
       console.log("User successfully signed out");
     } catch (error) {
@@ -231,6 +247,11 @@ export function UserProvider({ children }) {
 
   // Helper function to check if user has access to a feature
   const hasAccessToFeature = (featureName) => {
+    const reportFeatures = ['reports', 'unlimited_reports'];
+    if (!REGRID_BATCH_REPORTS_ENABLED && reportFeatures.includes(featureName)) {
+      return false;
+    }
+
     // Features available to all paid users
     const basicFeatures = ['search', 'map_view', 'basic_search'];
     
@@ -265,6 +286,7 @@ export function UserProvider({ children }) {
       deleteAccount,
       highlightSettings, 
       setHighlightSettings: setHighlightSettingsWithTracking,
+      userProfile,
       hasAccessToFeature
     }}>
       {children}

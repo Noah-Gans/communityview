@@ -1,32 +1,38 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
 import "./MainHeader.css";
-import ContactForm from "../components/ContactForm";
+import ContactForm from "../components/ui/ContactForm";
 import { useMapContext } from "./MapContext";
 import { useUser } from "../contexts/UserContext";
-import { getFunctions, httpsCallable } from "firebase/functions";
-import HighlightSettingsPopup from "../components/HighlightSettingsPopup";
+import AccountMenuDropdown from "../components/account/AccountMenuDropdown";
+import AccountSettingsPanel from "../components/account/AccountSettingsPanel";
 import { isNativeApp } from "../utils/platformDetection";
+import { useTutorialWalkthrough } from "../contexts/TutorialWalkthroughContext";
+import { REGRID_BATCH_REPORTS_ENABLED } from "../config/featureFlags";
 
 const MainHeader = () => {
   const location = useLocation();
   const navigate = useNavigate();
   const [isContactFormOpen, setIsContactFormOpen] = useState(false);
-  const { activeTab, setActiveTab } = useMapContext();
-  const { user, logout, deleteAccount, subscriptionStatus, role } = useUser();
+  const { activeTab, setActiveTab, isPrinting } = useMapContext();
+  const { user, logout, deleteAccount, subscriptionStatus } = useUser();
   const [isDropdownOpen, setIsDropdownOpen] = useState(false);
-  const [showHighlightPopup, setShowHighlightPopup] = useState(false);
-  const [showPortalRedirectPopup, setShowPortalRedirectPopup] = useState(false);
+  const [showAccountSettings, setShowAccountSettings] = useState(false);
+  const [accountSettingsSection, setAccountSettingsSection] = useState('overview');
   const [showDeleteConfirmPopup, setShowDeleteConfirmPopup] = useState(false);
   const [isDeletingAccount, setIsDeletingAccount] = useState(false);
   const [isMobile, setIsMobile] = useState(window.innerWidth <= 768);
 
+  const { start: startWalkthrough, startPrint: startPrintWalkthrough, isActive: tourActive, stepIndex: tourStepIndex } =
+    useTutorialWalkthrough();
   const isMapPage = location.pathname.startsWith('/map');
+  const isMapRoute = location.pathname === '/map';
+  const isPrintEditMode = location.pathname === '/print' && isPrinting;
   // Check if we're on a product page (map, search, report, print)
   const isProductPage = ['/map', '/search', '/report', '/print'].includes(location.pathname);
   
-  // Check if we're on the intro/landing page
-  const isIntroPage = location.pathname === '/' || location.pathname === '/updates' || location.pathname === '/pricing' || location.pathname === '/features' || location.pathname === '/faq';
+  // `src/pages/landingPages/*` — home + FAQ, pricing, features, changelog
+  const isMarketingPage = location.pathname === '/' || location.pathname === '/updates' || location.pathname === '/pricing' || location.pathname === '/features' || location.pathname === '/faq';
   
   // Hide header on sales one-pager
   const isOnePage = location.pathname === '/onepage';
@@ -104,105 +110,152 @@ const MainHeader = () => {
     }
   };
 
-  // Note: subscriptionStatus and role are now provided by UserContext via useUser() hook
+  const closeDropdown = () => setIsDropdownOpen(false);
+  const hasActiveSubscription = subscriptionStatus === 'active' || subscriptionStatus === 'plus' || subscriptionStatus === 'regular';
+  const dropdownCloseTimerRef = useRef(null);
 
-  const handleManageSubscription = async () => {
-    try {
-      setShowPortalRedirectPopup(true);
-      const functions = getFunctions();
-      const createPortalSession = httpsCallable(functions, "createPortalSession");
-      const result = await createPortalSession({});
-      const { url } = result.data;
-      window.location.href = url;
-    } catch (error) {
-      console.error("Failed to create portal session:", error);
-      alert("Unable to open portal. Please try again later.");
+  const clearDropdownCloseTimer = () => {
+    if (dropdownCloseTimerRef.current) {
+      clearTimeout(dropdownCloseTimerRef.current);
+      dropdownCloseTimerRef.current = null;
     }
   };
 
-  const closeDropdown = () => setIsDropdownOpen(false);
-  const hasActiveSubscription = subscriptionStatus === 'active' || subscriptionStatus === 'plus' || subscriptionStatus === 'regular';
-
-  const handleDesktopMouseLeave = () => {
-    setTimeout(() => {
-      if (!document.querySelector('.dropdown-menu:hover')) {
-        setIsDropdownOpen(false);
-      }
-    }, 100);
+  const scheduleDropdownClose = () => {
+    clearDropdownCloseTimer();
+    dropdownCloseTimerRef.current = setTimeout(() => {
+      setIsDropdownOpen(false);
+      dropdownCloseTimerRef.current = null;
+    }, 250);
   };
 
-  const renderDropdownMenu = (isMobileView = false) => (
-    <div
-      className="dropdown-menu"
-      onMouseEnter={isMobileView ? undefined : () => setIsDropdownOpen(true)}
-      onMouseLeave={isMobileView ? undefined : () => setIsDropdownOpen(false)}
-    >
-      <div className="dropdown-item">{user?.email}</div>
-      <div className={`subscription-status ${hasActiveSubscription ? 'active' : 'inactive'}`}>
-        {hasActiveSubscription ? '✅ Subscribed' : '❌ Not Subscribed'}
-      </div>
-      {hasActiveSubscription ? (
-        <button
-          className="dropdown-button"
-          onClick={() => {
-            navigate('/manage-subscription');
-            closeDropdown();
-          }}
-        >
-          Manage Subscription
-        </button>
-      ) : (
-        <button
-          className="dropdown-button resubscribe-button"
-          onClick={() => {
-            navigate('/signup');
-            closeDropdown();
-          }}
-        >
-          Subscribe
-        </button>
-      )}
-      <button
-        className="dropdown-button"
-        onClick={() => {
-          closeDropdown();
-          navigate("/reset-password");
-        }}
-      >
-        Change Password
-      </button>
-      <button
-        className="dropdown-button"
-        onClick={() => {
-          closeDropdown();
-          setShowHighlightPopup(true);
-        }}
-      >
-        Highlight Settings
-      </button>
-      <button
-        className="dropdown-button"
-        onClick={() => {
-          closeDropdown();
-          navigate('/tutorial');
-        }}
-      >
-        Tutorial
-      </button>
-      <button className="dropdown-button logout-button" onClick={handleLogout}>
-        Sign Out
-      </button>
-      <button 
-        className="dropdown-button delete-account-button" 
-        onClick={() => {
-          closeDropdown();
-          setShowDeleteConfirmPopup(true);
-        }}
-      >
-        Delete Account
-      </button>
-    </div>
+  useEffect(() => () => clearDropdownCloseTimer(), []);
+
+  useEffect(() => {
+    const params = new URLSearchParams(location.search);
+    const section = params.get('accountSection');
+    const validSections = new Set([
+      'overview',
+      'subscription',
+      'profile',
+      'security',
+      'preferences',
+      'help',
+      'account',
+    ]);
+    if (!section || !validSections.has(section) || !user) return;
+    setAccountSettingsSection(section);
+    setShowAccountSettings(true);
+    navigate({ pathname: location.pathname, search: '' }, { replace: true });
+  }, [location.search, location.pathname, navigate, user]);
+
+  const renderDropdownMenu = () => (
+    <AccountMenuDropdown
+      user={user}
+      subscriptionStatus={subscriptionStatus}
+      hasActiveSubscription={hasActiveSubscription}
+      onOpenAccountSettings={() => {
+        closeDropdown();
+        setAccountSettingsSection('overview');
+        setShowAccountSettings(true);
+      }}
+      onOpenMapPreferences={() => {
+        closeDropdown();
+        setAccountSettingsSection('preferences');
+        setShowAccountSettings(true);
+      }}
+      onOpenSubscription={() => {
+        closeDropdown();
+        setAccountSettingsSection('subscription');
+        setShowAccountSettings(true);
+      }}
+      onSubscribe={() => {
+        closeDropdown();
+        navigate('/signup');
+      }}
+      onChangePassword={() => {
+        closeDropdown();
+        navigate('/reset-password');
+      }}
+      onQuickTour={() => {
+        closeDropdown();
+        startWalkthrough();
+      }}
+      onSignOut={handleLogout}
+    />
   );
+
+  const renderAccountModals = () => (
+    <>
+      {showAccountSettings && (
+        <AccountSettingsPanel
+          key={accountSettingsSection}
+          initialSection={accountSettingsSection}
+          onClose={() => setShowAccountSettings(false)}
+          onQuickTour={startWalkthrough}
+          onSignOut={handleLogout}
+          onDeleteAccount={() => setShowDeleteConfirmPopup(true)}
+        />
+      )}
+      {showDeleteConfirmPopup && (
+        <div
+          className="popup-overlay"
+          onClick={() => !isDeletingAccount && setShowDeleteConfirmPopup(false)}
+        >
+          <div className="popup" onClick={(e) => e.stopPropagation()}>
+            <h3>Delete Account</h3>
+            <p>Are you sure you want to delete your account? This action cannot be undone.</p>
+            <p><strong>This will permanently delete:</strong></p>
+            <ul style={{ textAlign: 'left', margin: '10px 0' }}>
+              <li>Your account and all data</li>
+              <li>Your active subscription (will be canceled)</li>
+              <li>All saved settings and preferences</li>
+            </ul>
+            <div style={{ display: 'flex', gap: '10px', justifyContent: 'center', marginTop: '20px' }}>
+              <button
+                className="dropdown-button"
+                onClick={() => setShowDeleteConfirmPopup(false)}
+                disabled={isDeletingAccount}
+              >
+                Cancel
+              </button>
+              <button
+                className="dropdown-button delete-account-button"
+                onClick={handleDeleteAccount}
+                disabled={isDeletingAccount}
+              >
+                {isDeletingAccount ? 'Deleting...' : 'Yes, Delete My Account'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </>
+  );
+
+  const renderTutorialHelpButton = (className = '', onClick = () => startWalkthrough()) => (
+    <button
+      type="button"
+      className={`header-tutorial-help-button${className ? ` ${className}` : ''}`}
+      onClick={onClick}
+      aria-label="Start quick tour"
+      title="Quick tour"
+    >
+      ?
+    </button>
+  );
+
+  const handlePrintOpenSave = () => {
+    window.dispatchEvent(new CustomEvent('print-open-save-dialog'));
+  };
+
+  const handlePrintBackToMaps = () => {
+    window.dispatchEvent(new CustomEvent('print-exit-edit'));
+  };
+
+  const handlePrintShareMap = () => {
+    window.dispatchEvent(new CustomEvent('print-share-map'));
+  };
 
   const renderPersonIcon = () => (
     <svg
@@ -226,35 +279,38 @@ const MainHeader = () => {
   const renderAccountControls = (isMobileView = false, options = {}) => {
     const { iconOnly = false } = options;
     const isNative = isNativeApp();
-    const isIntro = location.pathname === '/';
+    const isLanding = location.pathname === '/';
     const isLoginPage = location.pathname === '/login';
     const isSignupPage = location.pathname === '/signup';
     
-    // Hide sign in button on native app intro page (it's blocked by status bar)
+    // Hide sign in button on native app landing page (it's blocked by status bar)
     // Also hide on login and signup pages (both mobile and app) - not needed and blocks X button
-    if (!user && ((isNative && isIntro) || isLoginPage || isSignupPage)) {
+    if (!user && ((isNative && isLanding) || isLoginPage || isSignupPage)) {
       return null;
     }
     
     if (user) {
-      const buttonProps = isMobileView
-        ? { onClick: toggleDropdown }
+      const wrapperProps = isMobileView
+        ? {}
         : {
-            onClick: toggleDropdown,
-            onMouseEnter: () => setIsDropdownOpen(true),
-            onMouseLeave: handleDesktopMouseLeave,
+            onMouseEnter: () => {
+              clearDropdownCloseTimer();
+              setIsDropdownOpen(true);
+            },
+            onMouseLeave: scheduleDropdownClose,
           };
 
       return (
-        <div className="user-dropdown">
+        <div className="user-dropdown" {...wrapperProps}>
           <button
-            className={`user-button${iconOnly ? ' icon-only' : ''}`}
+            className={`user-button${iconOnly ? ' icon-only' : ''}${isDropdownOpen ? ' is-open' : ''}`}
             aria-label="Account"
-            {...buttonProps}
+            aria-expanded={isDropdownOpen}
+            onClick={toggleDropdown}
           >
             {iconOnly ? renderPersonIcon() : 'Account'}
           </button>
-          {isDropdownOpen && renderDropdownMenu(isMobileView)}
+          {isDropdownOpen && renderDropdownMenu()}
         </div>
       );
     }
@@ -287,54 +343,30 @@ const MainHeader = () => {
     };
   }, [isMapPage, isDropdownOpen]);
 
+  const showMobileTourNavStrip =
+    isMobile && isMapPage && tourActive && tourStepIndex === 1;
+
   if (isMobile) {
     if (isMapPage) {
       return (
         <>
+          {showMobileTourNavStrip && (
+            <div className="mobile-tutorial-nav-strip" data-tour="product-nav">
+              <button type="button" className="mobile-tutorial-nav-btn" onClick={() => navigate('/map')}>
+                Map
+              </button>
+              <button type="button" className="mobile-tutorial-nav-btn" onClick={() => navigate('/search')}>
+                Search
+              </button>
+              <span className="mobile-tutorial-nav-hint">More tabs on wider screens</span>
+            </div>
+          )}
           <div className="mobile-account-floating">
+            {isMapRoute && renderTutorialHelpButton()}
             {renderAccountControls(true, { iconOnly: true })}
           </div>
           {isContactFormOpen && <ContactForm onClose={handleCloseContactForm} />}
-          {showHighlightPopup && (
-            <HighlightSettingsPopup onClose={() => setShowHighlightPopup(false)} />
-          )}
-          {showPortalRedirectPopup && (
-            <div className="popup-overlay">
-              <div className="popup">
-                <p> Taking you to your secure billing portal... Please wait.</p>
-              </div>
-            </div>
-          )}
-          {showDeleteConfirmPopup && (
-            <div className="popup-overlay" onClick={() => !isDeletingAccount && setShowDeleteConfirmPopup(false)}>
-              <div className="popup" onClick={(e) => e.stopPropagation()}>
-                <h3>Delete Account</h3>
-                <p>Are you sure you want to delete your account? This action cannot be undone.</p>
-                <p><strong>This will permanently delete:</strong></p>
-                <ul style={{ textAlign: 'left', margin: '10px 0' }}>
-                  <li>Your account and all data</li>
-                  <li>Your active subscription (will be canceled)</li>
-                  <li>All saved settings and preferences</li>
-                </ul>
-                <div style={{ display: 'flex', gap: '10px', justifyContent: 'center', marginTop: '20px' }}>
-                  <button 
-                    className="dropdown-button" 
-                    onClick={() => setShowDeleteConfirmPopup(false)}
-                    disabled={isDeletingAccount}
-                  >
-                    Cancel
-                  </button>
-                  <button 
-                    className="dropdown-button delete-account-button" 
-                    onClick={handleDeleteAccount}
-                    disabled={isDeletingAccount}
-                  >
-                    {isDeletingAccount ? 'Deleting...' : 'Yes, Delete My Account'}
-                  </button>
-                </div>
-              </div>
-            </div>
-          )}
+          {renderAccountModals()}
         </>
       );
     }
@@ -346,46 +378,7 @@ const MainHeader = () => {
           </div>
         </div>
         {isContactFormOpen && <ContactForm onClose={handleCloseContactForm} />}
-        {showHighlightPopup && (
-          <HighlightSettingsPopup onClose={() => setShowHighlightPopup(false)} />
-        )}
-        {showPortalRedirectPopup && (
-          <div className="popup-overlay">
-            <div className="popup">
-              <p> Taking you to your secure billing portal... Please wait.</p>
-            </div>
-          </div>
-        )}
-        {showDeleteConfirmPopup && (
-          <div className="popup-overlay" onClick={() => !isDeletingAccount && setShowDeleteConfirmPopup(false)}>
-            <div className="popup" onClick={(e) => e.stopPropagation()}>
-              <h3>Delete Account</h3>
-              <p>Are you sure you want to delete your account? This action cannot be undone.</p>
-              <p><strong>This will permanently delete:</strong></p>
-              <ul style={{ textAlign: 'left', margin: '10px 0' }}>
-                <li>Your account and all data</li>
-                <li>Your active subscription (will be canceled)</li>
-                <li>All saved settings and preferences</li>
-              </ul>
-              <div style={{ display: 'flex', gap: '10px', justifyContent: 'center', marginTop: '20px' }}>
-                <button 
-                  className="dropdown-button" 
-                  onClick={() => setShowDeleteConfirmPopup(false)}
-                  disabled={isDeletingAccount}
-                >
-                  Cancel
-                </button>
-                <button 
-                  className="dropdown-button delete-account-button" 
-                  onClick={handleDeleteAccount}
-                  disabled={isDeletingAccount}
-                >
-                  {isDeletingAccount ? 'Deleting...' : 'Yes, Delete My Account'}
-                </button>
-              </div>
-            </div>
-          </div>
-        )}
+        {renderAccountModals()}
       </>
     );
   }
@@ -397,7 +390,7 @@ const MainHeader = () => {
 
   return (
     <>
-      {isIntroPage && (
+      {isMarketingPage && (
         <div className="main-header intro-header">
           {/* Left - Logo (hidden on mobile) */}
           {!isMobile && (
@@ -438,8 +431,11 @@ const MainHeader = () => {
       )}
 
       {/* Main Header for product pages */}
-      {!isIntroPage && (
-        <div className="main-header">
+      {!isMarketingPage && (
+        <div
+          className={`main-header ${isProductPage ? 'map-mode' : ''}`}
+          data-tour={isProductPage ? 'product-nav' : undefined}
+        >
           {/* Left Side - Logo/Home */}
           <div className="header-left">
             <Link to="/" className="logo-link">
@@ -449,10 +445,20 @@ const MainHeader = () => {
                 <img src="/logo.png" alt="Community View Logo" className="logo-image" />
               )}
             </Link>
+            {isPrintEditMode && (
+              <button
+                type="button"
+                className="header-print-exit-btn"
+                onClick={handlePrintBackToMaps}
+                title="Exit map editing"
+              >
+                Exit
+              </button>
+            )}
           </div>
 
           {/* Center - Navigation Tabs (only on product pages) */}
-          {isProductPage && (
+          {isProductPage && !isPrintEditMode && (
             <div className="header-center">
               <Link
                 className={`header-tab ${currentActiveTab === "map" ? "active" : ""}`}
@@ -465,10 +471,11 @@ const MainHeader = () => {
                 className={`header-tab ${currentActiveTab === "search" ? "active" : ""}`}
                 onClick={() => handleTabChange("search")}
                 to="/search"
+                data-tour="header-tab-search"
               >
                 Search
               </Link>
-              {!isMobile && (
+              {!isMobile && REGRID_BATCH_REPORTS_ENABLED && (
                 <Link
                   className={`header-tab ${currentActiveTab === "report" ? "active" : ""}`}
                   onClick={() => handleTabChange("report")}
@@ -483,14 +490,35 @@ const MainHeader = () => {
                   onClick={() => handleTabChange("print")}
                   to="/print"
                 >
-                  Print
+                  Maps
                 </Link>
               )}
             </div>
           )}
 
-          {/* Right Side - Account (always visible) */}
+          {/* Right Side - Tutorial help (map only) + Account */}
           <div className="header-right">
+            {isPrintEditMode && (
+              <>
+                {renderTutorialHelpButton('print-header-help', startPrintWalkthrough)}
+                <div className="header-print-actions" data-tour="print-header-actions">
+                  <button type="button" className="header-print-action-btn" onClick={handlePrintOpenSave}>
+                    Save Map
+                  </button>
+                  <button
+                    type="button"
+                    className="header-print-action-btn header-print-action-btn-secondary"
+                    onClick={handlePrintBackToMaps}
+                  >
+                    Back to Maps
+                  </button>
+                  <button type="button" className="header-print-action-btn" onClick={handlePrintShareMap}>
+                    Share Map
+                  </button>
+                </div>
+              </>
+            )}
+            {!isPrintEditMode && isMapRoute && renderTutorialHelpButton()}
             {renderAccountControls()}
           </div>
         </div>
@@ -498,46 +526,7 @@ const MainHeader = () => {
 
       {/* Modals */}
       {isContactFormOpen && <ContactForm onClose={handleCloseContactForm} />}
-      {showHighlightPopup && (
-        <HighlightSettingsPopup onClose={() => setShowHighlightPopup(false)} />
-      )}
-      {showPortalRedirectPopup && (
-        <div className="popup-overlay">
-          <div className="popup">
-            <p> Taking you to your secure billing portal... Please wait.</p>
-          </div>
-        </div>
-      )}
-      {showDeleteConfirmPopup && (
-        <div className="popup-overlay" onClick={() => !isDeletingAccount && setShowDeleteConfirmPopup(false)}>
-          <div className="popup" onClick={(e) => e.stopPropagation()}>
-            <h3>Delete Account</h3>
-            <p>Are you sure you want to delete your account? This action cannot be undone.</p>
-            <p><strong>This will permanently delete:</strong></p>
-            <ul style={{ textAlign: 'left', margin: '10px 0' }}>
-              <li>Your account and all data</li>
-              <li>Your active subscription (will be canceled)</li>
-              <li>All saved settings and preferences</li>
-            </ul>
-            <div style={{ display: 'flex', gap: '10px', justifyContent: 'center', marginTop: '20px' }}>
-              <button 
-                className="dropdown-button" 
-                onClick={() => setShowDeleteConfirmPopup(false)}
-                disabled={isDeletingAccount}
-              >
-                Cancel
-              </button>
-              <button 
-                className="dropdown-button delete-account-button" 
-                onClick={handleDeleteAccount}
-                disabled={isDeletingAccount}
-              >
-                {isDeletingAccount ? 'Deleting...' : 'Yes, Delete My Account'}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+      {renderAccountModals()}
     </>
   );
 };

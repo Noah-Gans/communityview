@@ -2,13 +2,40 @@ import React, { createContext, useState, useRef, useContext } from 'react';
 import { useEffect } from 'react';
 import { useLocation } from 'react-router-dom';
 import queryString from 'query-string';
+import { createAnnotationFromTool } from './print/annotationModel';
 // Create the context
 const MapContext = createContext();
+
+const SUPPORTED_BASEMAP_IDS = new Set([
+  'outdoors-v12',
+  'imagery',
+  'satellite-streets-v12',
+  'streets-v11',
+]);
+
+const BASEMAP_ID_ALIASES = {
+  discover: 'outdoors-v12',
+  outdoors: 'outdoors-v12',
+  satellite: 'satellite-streets-v12',
+  streets: 'streets-v11',
+  'imagery-3d': 'imagery',
+  'esri-world-imagery': 'imagery',
+};
+
+function getBasemapIdFromSearch(search) {
+  const params = queryString.parse(search || '');
+  const fromUrl = params.basemap != null ? String(params.basemap).trim().toLowerCase() : '';
+  if (!fromUrl) return 'outdoors-v12';
+  if (BASEMAP_ID_ALIASES[fromUrl]) return BASEMAP_ID_ALIASES[fromUrl];
+  if (SUPPORTED_BASEMAP_IDS.has(fromUrl)) return fromUrl;
+  return 'outdoors-v12';
+}
 
 // Provider component
 export const MapProvider = ({ children }) => {
   console.log("REMOUNT!!!!")
-  const location = useLocation(); 
+  const location = useLocation();
+  const initialBasemapId = getBasemapIdFromSearch(location.search);
   const [activeTab, setActiveTab] = useState('intro'); // Manage tab state here
   const [isDrawing, setIsDrawing] = useState(false); // Add this state
   const isDrawingRef = useRef(false); // Reference for immediate access
@@ -26,13 +53,30 @@ export const MapProvider = ({ children }) => {
   const [layerStatus, setLayerStatus] = useState({});
   const [layerOrder, setLayerOrder] = useState([]); 
   const [layerLabels, setLayerLabels] = useState({}); // Track which layers have labels enabled 
+  /** Current selected basemap id (set by Map.js) so save/share persists actual map style choice. */
+  const [currentBasemapId, setCurrentBasemapId] = useState(initialBasemapId);
+  /** Ground-truth basemap for save/URL — updated synchronously when the user picks a basemap. */
+  const activeBasemapIdRef = useRef(initialBasemapId);
+  /** Set by Print when opening a saved map — forces a full basemap + layer restack in Map.js. */
+  const pendingPrintBasemapRestoreRef = useRef(null);
 
   //================ Print Vars ==================
   const [paperSize, setPaperSize] = useState('full'); // default to "full" screen
   const [isPrinting, setIsPrinting] = useState(false);
-  
+  /** "Create new map" → property-focused flow: select parcel(s), merge boundary, then full print UI. */
+  const [propertyMapWizardActive, setPropertyMapWizardActive] = useState(false);
+  /** Set when starting property wizard from Print: single parcel vs multi (copy + UX). */
+  const [propertyMapWizardIntent, setPropertyMapWizardIntent] = useState(null);
+
   const [printElements, setPrintElements] = useState([]);
-  const [selectedPrintElement, setSelectedPrintElement] = useState(['cow']);
+  const [selectedPrintElement, setSelectedPrintElement] = useState(null);
+  const [activePrintTool, setActivePrintTool] = useState('select');
+  /** True on /view/:token or /tour/:token — disable editing chrome and drag on print features. */
+  const [shareViewerReadOnly, setShareViewerReadOnly] = useState(false);
+  /** Print layout mode for PDF crop box workflow. */
+  const [printLayoutMode, setPrintLayoutMode] = useState(false);
+  /** Crop box in CSS px relative to #map canvas: {x,y,width,height}. */
+  const [printLayoutRect, setPrintLayoutRect] = useState(null);
   console.log(layerStatus)
 
   const pendingSelectionRef = useRef(null);
@@ -43,7 +87,10 @@ export const MapProvider = ({ children }) => {
     return savedColumns ? JSON.parse(savedColumns) : [];
   });
   const mapRef = useRef(null);
+  /** Map.js assigns an async fn so the property tour can await 3D satellite + ortho before zooming. */
+  const applyTourPropertyBasemapRef = useRef(null);
   const drawRef = useRef(null); // Store MapboxDraw instance
+  const suppressNextFeatureClickRef = useRef(false);
 
   useEffect(() => {
     console.log("✅ MapProvider mounted ONCE");
@@ -74,9 +121,9 @@ export const MapProvider = ({ children }) => {
       setLayerStatus(newLayerStatus);
       setLayerOrder(fromUrl);
     } else {
-      // If no layers param, pick defaults
-      setLayerStatus({ ownership: true });
-      setLayerOrder(['ownership']);
+      // Default: no Martin/Teton vector layers — Regrid parcels are the primary parcel source.
+      setLayerStatus({});
+      setLayerOrder([]);
     }
   // Empty array so it only runs **once** on mount
   }, []);
@@ -134,6 +181,14 @@ export const MapProvider = ({ children }) => {
     }));
   };
 
+  /** Turn off label toggle state without flipping (e.g. ownership layer hidden). */
+  const clearLayerLabels = (layerName) => {
+    setLayerLabels((prev) => {
+      if (!prev[layerName]) return prev;
+      return { ...prev, [layerName]: false };
+    });
+  };
+
   // =============== Print Element FUNCTIONS ===============
     
   useEffect(() => {
@@ -156,143 +211,34 @@ export const MapProvider = ({ children }) => {
     }
   }, [selectedPrintElement]);
   
-  // 🔵 Add a note
-    const addNote = () => {
-      const newNote = {
-        id: Date.now(),
-        type: 'note',
-        x: 50,
-        y: 50,
-        width: 200,
-        height: 100,
-        text: 'New Note',
-        style: {
-          backgroundColor: '#000000',
-          fontColor: '#000000',
-          fontSize: 14,
-        },
-      };
-      setPrintElements((prev) => [...prev, newNote]);
-      setSelectedPrintElement(newNote);
-    };
+  const getMapCenterLngLat = () => {
+    if (mapRef?.current && typeof mapRef.current.getCenter === 'function') {
+      const center = mapRef.current.getCenter();
+      return { lng: center.lng, lat: center.lat };
+    }
+    return { lng: -110.75, lat: 43.5 };
+  };
 
-    const addLegend = () => {
-      const newLegend = {
-        id: Date.now(),
-        type: 'legend',
-        x: 50,
-        y: 50,
-        width: 300,
-        height: 150,
-      };
-      setPrintElements((prev) => [...prev, newLegend]);
-      setSelectedPrintElement(newLegend);
-    };
+  const addPrintElementFromTool = (tool, options = {}, lngLatOverride) => {
+    const lngLat = lngLatOverride || getMapCenterLngLat();
+    const created = createAnnotationFromTool(tool, lngLat, options);
+    if (!created) return null;
 
-    const addPin = () => {
-      const newPin = {
-        id: Date.now(),
-        type: 'pin',
-        x: 120,
-        y: 120,
-        width: 40,
-        height: 60,
-        fill: '#ff0000',
-        stroke: '#000000',
-        strokeWidth: 2,
-        fillOpacity: 1,
-        strokeOpacity: 1,
-        rotation: 0
-      };
-      setPrintElements((prev) => [...prev, newPin]);
-      setSelectedPrintElement(newPin);
-    };
-    const addShape = (svgKey) => {
-      const newShape = {
-        id: Date.now(),
-        type: 'shape',
-        svgKey,
-        x: 100,
-        y: 100,
-        width: 60,
-        height: 60,
-        fill: '#ffffff',
-        stroke: '#000000',
-        strokeWidth: 1,
-        fillOpacity: 1,
-        strokeOpacity: 1,
-        rotation: 0
-      };
-      setPrintElements(prev => [...prev, newShape]);
-      setSelectedPrintElement(newShape);
-    };
-    
-    
-    const addArrowShape = () => {
-      const newArrow = {
-        id: Date.now(),
-        type: 'arrow',
-        x: 100,
-        y: 100,
-        width: 100,
-        height: 40,
-        rotation: 0,
-      };
-      setPrintElements((prev) => [...prev, newArrow]);
-      setSelectedPrintElement(newArrow);
-    };
+    setPrintElements((prev) => [...prev, created]);
+    setSelectedPrintElement(created);
+    return created;
+  };
 
-    const addCompass = () => {
-      const newCompass = {
-        id: Date.now(),
-        type: 'compass',
-        x: 40,
-        y: 40,
-      };
-      setPrintElements((prev) => [...prev, newCompass]);
-      setSelectedPrintElement(newCompass);
-    };
-
-
-
-    const addRectangle = () => {
-      const newRect = {
-        id: Date.now(),
-        type: 'rectangle',
-        x: 150,
-        y: 150,
-        width: 120,
-        height: 80,
-      };
-      setPrintElements((prev) => [...prev, newRect]);
-      setSelectedPrintElement(newRect);
-    };
-
-    const addTriangle = () => {
-      const newTriangle = {
-        id: Date.now(),
-        type: 'triangle',
-        x: 100,
-        y: 100,
-        width: 100,
-        height: 100,
-      };
-      setPrintElements((prev) => [...prev, newTriangle]);
-      setSelectedPrintElement(newTriangle);
-    };
-
-    const addDiamond = () => {
-      const newDiamond = {
-        id: Date.now(),
-        type: 'diamond',
-        x: 100,
-        y: 100,
-        width: 100,
-        height: 100,
-      };
-      setPrintElements((prev) => [...prev, newDiamond]);
-      setSelectedPrintElement(newDiamond);
-    };
+  // Legacy convenience wrappers used by existing UI
+  const addNote = () => addPrintElementFromTool('note');
+  const addLegend = () => addPrintElementFromTool('legend');
+  const addPin = () => addPrintElementFromTool('shape', { svgKey: 'pin' });
+  const addShape = (svgKey) => addPrintElementFromTool('shape', { svgKey });
+  const addArrowShape = () => addPrintElementFromTool('arrow');
+  const addCompass = () => addPrintElementFromTool('compass');
+  const addRectangle = () => addPrintElementFromTool('rectangle');
+  const addTriangle = () => addPrintElementFromTool('triangle');
+  const addDiamond = () => addPrintElementFromTool('diamond');
 
 
 
@@ -324,6 +270,7 @@ export const MapProvider = ({ children }) => {
     layerStatus,
     setLayerStatus,
     mapRef,
+    applyTourPropertyBasemapRef,
     selectedColumns,
     toggleColumn,
     setMapRef, // Provide setMapRef here
@@ -341,9 +288,13 @@ export const MapProvider = ({ children }) => {
     setSearchResults,
     focusFeatures,
     setFocusFeatures,
+    isGeoFilterActive,
+    setIsGeoFilterActive,
+    isGeoFilterActiveRef,
     hoveredFeatureId,
     setHoveredFeatureId,
-    drawRef, // Expose drawRef to allow access in Mapy.js
+    drawRef, // Expose drawRef to allow access in Map.js
+    suppressNextFeatureClickRef,
     isDrawing,
     setIsDrawing,
     isDrawingRef,
@@ -351,6 +302,10 @@ export const MapProvider = ({ children }) => {
     setPaperSize,
     setIsPrinting,
     isPrinting,
+    propertyMapWizardActive,
+    setPropertyMapWizardActive,
+    propertyMapWizardIntent,
+    setPropertyMapWizardIntent,
      // ✅ Add these missing ones:
     addNote,
     addLegend,    
@@ -360,9 +315,12 @@ export const MapProvider = ({ children }) => {
     addRectangle,
     addTriangle,
     addDiamond,
+    activePrintTool,
+    setActivePrintTool,
+    addPrintElementFromTool,
 
     printElements,
-    setSelectedPrintElement,
+    setPrintElements,
     updatePrintElement,
     deletePrintElement,
     clearPrintElements,
@@ -370,8 +328,18 @@ export const MapProvider = ({ children }) => {
     setSelectedPrintElement,
     addShape,
     layerLabels,
-    toggleLayerLabels
-    
+    toggleLayerLabels,
+    clearLayerLabels,
+    currentBasemapId,
+    setCurrentBasemapId,
+    activeBasemapIdRef,
+    pendingPrintBasemapRestoreRef,
+    shareViewerReadOnly,
+    setShareViewerReadOnly,
+    printLayoutMode,
+    setPrintLayoutMode,
+    printLayoutRect,
+    setPrintLayoutRect,
   };
 
   return <MapContext.Provider value={value}>{children}</MapContext.Provider>;

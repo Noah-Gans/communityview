@@ -7,6 +7,7 @@ import { useNavigate } from 'react-router-dom';
 import * as turf from '@turf/turf';
 import { getParcelLinks } from '../utils/parcelLinks';
 import { parseGFI, getCountyCodeFromFeature, getCountyParcelIdFromFeature } from '../utils/parseGFI';
+import { REGRID_BATCH_REPORTS_ENABLED } from '../config/featureFlags';
 
 const MOBILE_SHEET = {
   HIDDEN: 'hidden',
@@ -416,11 +417,10 @@ const SidePanel = memo(({
   };
   
   const onReportBuilderClick = () => {
-    console.log("Clicked")
-    setIsFilterTriggered(true)
+    setIsFilterTriggered(false);
     setActiveTab('report');
     navigate('/report');
-  }
+  };
   
   const toggleLegend = (layerName) => {
     setIsLegendOpen((prev) => ({
@@ -1454,16 +1454,21 @@ const SidePanel = memo(({
             {activeSidePanelTab === 'info' && (
               <div className="info-tab">
               {/* Fixed header for button */}
-              <div className="info-header">
-                <div className="sp-report-builder-container">
-                  <button
-                    className="sp-report-builder-button"
-                    onClick={() => onReportBuilderClick(selectedFeature)}
-                  >
-                    See Features in Report Builder
-                  </button>
+              {REGRID_BATCH_REPORTS_ENABLED &&
+                Array.isArray(selectedFeature) &&
+                selectedFeature.length > 1 && (
+                <div className="info-header">
+                  <div className="sp-report-builder-container">
+                    <button
+                      type="button"
+                      className="sp-report-builder-button"
+                      onClick={onReportBuilderClick}
+                    >
+                      See features in Report Builder
+                    </button>
+                  </div>
                 </div>
-              </div>
+              )}
               {/* Scrollable content */}
               <div className="info-content" ref={infoContentRef}>
                 {uniqueSelectedFeatures.length > 0 ? (
