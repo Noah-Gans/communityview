@@ -4,6 +4,7 @@ import { getAuth, initializeAuth, setPersistence, browserLocalPersistence, inMem
 import { getAnalytics } from "firebase/analytics"; // Optional, for analytics
 import { getFirestore } from "firebase/firestore";
 import { getFunctions } from "firebase/functions";
+import { getStorage } from "firebase/storage";
 
 // Your web app's Firebase configuration
 
@@ -131,6 +132,7 @@ export const authPersistenceReady = Promise.race([
 // export const analytics = getAnalytics(app);
 
 export const db = getFirestore(app);
+export const storage = getStorage(app);
 
 // Initialize Firebase Functions with error handling
 let functions;

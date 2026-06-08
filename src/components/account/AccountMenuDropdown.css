@@ -1,0 +1,132 @@
+.account-menu-dropdown {
+  position: absolute;
+  top: calc(100% + 4px);
+  right: 0;
+  z-index: 30010;
+  width: 280px;
+  padding: 8px 0 6px;
+  background: #ffffff;
+  border: 1px solid #e5e7eb;
+  border-radius: 12px;
+  box-shadow:
+    0 4px 6px -1px rgba(0, 0, 0, 0.08),
+    0 12px 28px -4px rgba(0, 0, 0, 0.12);
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Inter', sans-serif;
+  text-align: left;
+}
+
+.account-menu-dropdown::before {
+  content: '';
+  position: absolute;
+  top: -12px;
+  left: -8px;
+  right: -8px;
+  height: 12px;
+  background: transparent;
+  pointer-events: auto;
+}
+
+.account-menu-title {
+  margin: 0;
+  padding: 10px 14px 4px;
+  font-size: 13px;
+  font-weight: 600;
+  color: #111827;
+  letter-spacing: -0.01em;
+}
+
+.account-menu-email {
+  margin: 0 0 4px;
+  padding: 0 14px 8px;
+  font-size: 12px;
+  color: #6b7280;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.account-menu-divider {
+  height: 1px;
+  margin: 4px 0;
+  background: #f3f4f6;
+}
+
+.account-menu-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 10px 14px;
+  border: none;
+  background: transparent;
+  color: #111827;
+  font-size: 14px;
+  font-weight: 500;
+  line-height: 1.25;
+  cursor: pointer;
+  text-align: left;
+  transition: background-color 0.12s ease;
+}
+
+.account-menu-item:hover,
+.account-menu-item:focus-visible {
+  background: #f3f4f6;
+  outline: none;
+}
+
+.account-menu-item-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 20px;
+  height: 20px;
+  color: #4b5563;
+}
+
+.account-menu-item-label {
+  flex: 1;
+  min-width: 0;
+}
+
+.account-menu-item-hint {
+  flex-shrink: 0;
+  font-size: 12px;
+  font-weight: 500;
+  color: #9ca3af;
+  letter-spacing: 0.02em;
+}
+
+.account-menu-item-chevron {
+  display: flex;
+  align-items: center;
+  color: #d1d5db;
+  margin-left: auto;
+}
+
+.account-menu-item--danger .account-menu-item-icon,
+.account-menu-item--danger .account-menu-item-label {
+  color: #374151;
+}
+
+.account-menu-item--danger:hover {
+  background: #fef2f2;
+}
+
+.account-menu-item--danger:hover .account-menu-item-icon,
+.account-menu-item--danger:hover .account-menu-item-label {
+  color: #b91c1c;
+}
+
+@media (max-width: 768px) {
+  .account-menu-dropdown {
+    width: 260px;
+    right: 0;
+  }
+
+  .main-header.mobile-account-only .account-menu-dropdown,
+  .mobile-account-floating .account-menu-dropdown {
+    top: calc(100% + 4px);
+    bottom: auto;
+  }
+}

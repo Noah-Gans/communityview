@@ -1,0 +1,22 @@
+[
+  {
+    "origin": ["*"],
+    "method": ["GET", "HEAD", "OPTIONS"],
+    "responseHeader": [
+      "Content-Type",
+      "Content-Encoding",
+      "Content-Length",
+      "Accept-Ranges",
+      "Content-Range",
+      "ETag",
+      "Cache-Control",
+      "Last-Modified",
+      "x-goog-hash",
+      "x-goog-generation",
+      "x-goog-metageneration",
+      "x-goog-storage-class",
+      "x-goog-stored-content-encoding"
+    ],
+    "maxAgeSeconds": 3600
+  }
+]

@@ -12,11 +12,26 @@ import { useMapContext } from "../pages/MapContext";
  * Custom Hook to manage Mapbox Draw functionality.
  */
 export default function useMapboxDraw({ onPolygonCreated, onLineCreated, onPolygonFinalized }) {
-  const { mapRef, drawRef, isDrawingRef, setIsDrawing } = useMapContext();
+  const { mapRef, drawRef, isDrawingRef, setIsDrawing, suppressNextFeatureClickRef } = useMapContext();
   const [storedFeatures, setStoredFeatures] = useState(null);
   const holdBlock = useRef(false); // ✅ Now it's mutable
   const selectingParcelPolyMode = useRef(false); // ✅ Now it's mutable
   const tempPolygonRef = useRef(null);
+  const isFinalizingSelectionRef = useRef(false);
+
+  const finalizePolygonVisualState = (drawnFeature) => {
+    if (!drawRef.current) return;
+    const tryFinalize = () => {
+      // Switch to simple_select with no selected feature so polygon is finalized/inactive.
+      drawRef.current.changeMode("simple_select");
+    };
+
+    // Run on next frame, then retry once to avoid timing race with draw internals.
+    requestAnimationFrame(() => {
+      tryFinalize();
+      setTimeout(tryFinalize, 16);
+    });
+  };
   
   // 🆕 Hide all instructions
   const hideInstructions = () => {
@@ -159,6 +174,18 @@ const handleDrawRender = () => {
     storedFeatures.features.forEach((feat) => drawRef.current.add(feat));
 
     updateLabels(storedFeatures);
+
+    // Map.js listens for this and re-pins Regrid above basemap after Draw re-injects gl-draw-* layers.
+    queueMicrotask(() => {
+      try {
+        const m = mapRef.current;
+        if (m && typeof m.fire === 'function') {
+          m.fire('cv:regrid-restack');
+        }
+      } catch (_) {
+        /* ignore */
+      }
+    });
   };
 
   /**
@@ -210,6 +237,33 @@ const handleDrawRender = () => {
     if (drawnFeature.geometry.type === "Polygon") {
         console.log("✅ Polygon Drawn/Updated:", drawnFeature.geometry);
         tempPolygonRef.current = drawnFeature.geometry; // ✅ Update immediately
+        if (typeof onPolygonCreated === "function") {
+          onPolygonCreated(drawnFeature);
+        }
+        // Finalize immediately when polygon drawing completes (double-click).
+        if (selectingParcelPolyMode.current && typeof onPolygonFinalized === "function") {
+          if (isFinalizingSelectionRef.current) {
+            return;
+          }
+          isFinalizingSelectionRef.current = true;
+          if (suppressNextFeatureClickRef) {
+            suppressNextFeatureClickRef.current = true;
+          }
+          // Defer finalization to the next tick to avoid re-entrant draw mode recursion.
+          setTimeout(() => {
+            try {
+              console.log("🚀 Finalizing parcel selection on draw completion.");
+              onPolygonFinalized(drawnFeature.geometry);
+              selectingParcelPolyMode.current = false;
+              holdBlock.current = false;
+              isDrawingRef.current = false;
+              setIsDrawing(false);
+              finalizePolygonVisualState(drawnFeature);
+            } finally {
+              isFinalizingSelectionRef.current = false;
+            }
+          }, 0);
+        }
         
         // 🆕 Show final instruction after polygon completion
         if (isDrawingRef.current) {
@@ -250,6 +304,7 @@ useEffect(() => {
       console.log("📌 All Drawn Features:", drawRef.current.getAll());
   
       if (isDrawingRef.current) {
+
         if (
           drawRef.current.getMode() === "simple_select" &&
           drawRef.current.getSelected().features.length === 0
@@ -264,11 +319,6 @@ useEffect(() => {
                 
                 console.log(selectingParcelPolyMode.current)
                 console.log(tempPolygonRef.current)
-                if (selectingParcelPolyMode.current && tempPolygonRef.current) {
-                    console.log("🚀 Setting Final Polygon for Selection...");
-                    onPolygonFinalized(tempPolygonRef.current);
-                    selectingParcelPolyMode.current = false;
-                  }
             }
           
           // 🛑 Temporarily block next click

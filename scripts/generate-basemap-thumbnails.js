@@ -7,7 +7,7 @@
  * 3. Download the images and save them to public/basemaps/
  */
 
-const MAPBOX_ACCESS_TOKEN = 'pk.eyJ1Ijoibm9haC1nYW5zIiwiYSI6ImNsb255ajJteDB5Z2gya3BpdXU5M29oY3YifQ.VbPKEHZ91PNoSAH-raskhw';
+const MAPBOX_ACCESS_TOKEN = String(process.env.REACT_APP_MAPBOX_ACCESS_TOKEN || '').trim();
 const CENTER = '-110.76,43.48'; // Teton County center
 const ZOOM = 10;
 const WIDTH = 200;

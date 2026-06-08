@@ -3,6 +3,24 @@
 @tailwind components;
 @tailwind utilities;
 
+:root {
+  /* Brand palette */
+  --cv-green-bright: #14de9b;
+  --cv-orange: #de5e14;
+  --cv-red: #de1714;
+  --cv-green-deep: #385e51;
+  --cv-brown: #5e4638;
+
+  /* Semantic tokens */
+  --cv-color-accent: var(--cv-green-bright);
+  --cv-color-primary: var(--cv-orange); /* Use orange as your primary CTA */
+  --cv-color-danger: var(--cv-red); /* Keep red as alert/important actions */
+  --cv-color-surface: #f2f2ec;
+  --cv-color-text: #111827;
+  --cv-color-muted: #6b7280;
+  --cv-color-border: #d1d5db;
+}
+
 body {
   margin: 0;
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen',

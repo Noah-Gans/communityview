@@ -1,0 +1,6 @@
+# Netlify-style redirects (if using Netlify)
+# For GitHub Pages, use DNS/hosting provider redirects instead
+
+# Redirect all traffic from old domain to new domain
+# This file is for reference - actual redirects need to be set at DNS/hosting level
+

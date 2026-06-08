@@ -20,6 +20,15 @@
   box-shadow: 0 1px 3px rgba(255, 0, 0, 0.3);
 }
 
+.map-geo-print-stack {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: calc(100vh);
+  z-index: 1;
+}
+
 #map {
   position: absolute;
   top: 0px; /* Adjusted for MainHeader + ToolPanel height */
@@ -27,6 +36,10 @@
   height: calc(100vh); /* Adjust height for headers */
   width: 100%;
   z-index: 1;
+}
+
+.map-geo-print-stack #map {
+  height: 100%;
 }
 .area-tooltip {
   background-color: white;
@@ -66,7 +79,7 @@
 .location-zoom-button-container {
   position: absolute;
   bottom: 100px; /* Position above the layer selector */
-  left: 20px;
+  right: 20px;
   z-index: 9;
   pointer-events: auto;
 }
@@ -76,7 +89,7 @@
   height: 50px;
   border: none;
   border-radius: 8px;
-  background-color: white;
+  background-color: var(--cv-color-surface);
   box-shadow: 0 2px 6px rgba(0, 0, 0, 0.2);
   cursor: pointer;
   display: flex;
@@ -88,7 +101,8 @@
 
 .location-zoom-button:hover {
   transform: scale(1.05);
-  box-shadow: 0 4px 8px rgba(0, 0, 0, 0.3);
+  background-color: var(--cv-green-bright);
+  box-shadow: 0 4px 10px rgba(20, 222, 155, 0.45);
 }
 
 .location-icon {
@@ -100,9 +114,63 @@
 .layer-selector-container {
   position: absolute;
   bottom: 20px;
-  left: 20px; /* Ensure it's well inside the map container */
-  z-index: 9; /* Keep it above all other elements */
+  right: 20px; /* Ensure it's well inside the map container */
+  z-index: 20; /* Keep selector stack above floating controls */
   pointer-events: auto;
+}
+
+.map-floating-control-container {
+  position: absolute;
+  right: 20px;
+  z-index: 9;
+  pointer-events: auto;
+}
+
+.map-floating-control-3d-container {
+  bottom: 180px;
+}
+
+.map-floating-control-contours-container {
+  bottom: 260px;
+}
+
+.map-floating-control-button {
+  width: 50px;
+  height: 50px;
+  border: none;
+  border-radius: 8px;
+  background-color: var(--cv-color-surface);
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.2);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  transition: transform 0.2s, box-shadow 0.2s, background-color 0.2s;
+  color: #1f2937;
+}
+
+.map-floating-control-button:hover {
+  transform: scale(1.05);
+  background-color: var(--cv-green-bright);
+  box-shadow: 0 4px 10px rgba(20, 222, 155, 0.45);
+}
+
+.map-floating-control-button.active {
+  background-color: var(--cv-orange);
+  color: #ffffff;
+  box-shadow: 0 0 0 2px var(--cv-green-deep) inset, 0 4px 10px rgba(222, 94, 20, 0.45);
+}
+
+.map-floating-control-text {
+  font-size: 16px;
+  font-weight: 700;
+  line-height: 1;
+}
+
+.map-floating-control-icon {
+  width: 24px;
+  height: 24px;
 }
 
 .layer-selector-button {
@@ -110,7 +178,7 @@
   height: 50px;
   border: none;
   border-radius: 8px;
-  background-color: white;
+  background-color: var(--cv-color-surface);
   box-shadow: 0 2px 6px rgba(0, 0, 0, 0.2);
   cursor: pointer;
   display: flex;
@@ -123,6 +191,11 @@
 
 }
 
+.layer-selector-button:hover {
+  background-color: var(--cv-green-bright);
+  box-shadow: 0 4px 10px rgba(20, 222, 155, 0.45);
+}
+
 .layer-icon {
   width: 24px;
   height: 24px;
@@ -132,14 +205,14 @@
   display: none;
   position: absolute;
   bottom: 60px; /* Prevents overlap with the button */
-  left: 0;
+  right: 0;
   background-color: white;
   border-radius: 8px;
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
   padding: 15px;
   width: 360px; /* 3 columns × 110px + gaps */
   pointer-events: auto;
-  z-index: 10; /* Keep it above all other elements */
+  z-index: 30; /* Ensure popup renders above 3D/topo controls */
   max-height: 80vh;
   overflow-y: auto;
 }
@@ -199,6 +272,10 @@
 }
 
 .layer-selector-container:hover .layer-selector-popup {
+  display: block;
+}
+
+.layer-selector-container.tutorial-force-open .layer-selector-popup {
   display: block;
 }
 
@@ -304,7 +381,9 @@
   }
 
   body.sheet-hidden .location-zoom-button-container,
-  body.sheet-hidden .layer-selector-container {
+  body.sheet-hidden .layer-selector-container,
+  body.sheet-hidden .map-floating-control-3d-container,
+  body.sheet-hidden .map-floating-control-contours-container {
     bottom: 130px;
     z-index: 10;
   }
@@ -315,7 +394,9 @@
   }
 
   body.sheet-peek .location-zoom-button-container,
-  body.sheet-peek .layer-selector-container {
+  body.sheet-peek .layer-selector-container,
+  body.sheet-peek .map-floating-control-3d-container,
+  body.sheet-peek .map-floating-control-contours-container {
     bottom: calc(35vh + 16px);
     z-index: 10; /* Keep buttons above side panel in peek mode */
   }
@@ -326,7 +407,9 @@
   }
 
   body.sheet-full .location-zoom-button-container,
-  body.sheet-full .layer-selector-container {
+  body.sheet-full .layer-selector-container,
+  body.sheet-full .map-floating-control-3d-container,
+  body.sheet-full .map-floating-control-contours-container {
     bottom: calc(75vh + 16px);
     z-index: 5; /* Lower z-index so side panel covers them in full mode */
   }
@@ -350,8 +433,46 @@
     bottom: 50px;
     right: 10px; /* Move it to the right */
     left: auto; /* Override left positioning */
-    z-index: 10; /* Keep it above all other elements */
+    z-index: 20; /* Keep selector stack above floating controls */
     transition: bottom 0.3s ease, z-index 0.3s ease;
+  }
+
+  .map-floating-control-container {
+    right: 10px;
+    z-index: 10;
+    transition: bottom 0.3s ease, z-index 0.3s ease;
+  }
+
+  .map-floating-control-3d-container {
+    bottom: 110px;
+  }
+
+  .map-floating-control-contours-container {
+    bottom: 170px;
+  }
+
+  body.sheet-hidden .map-floating-control-3d-container {
+    bottom: 210px;
+  }
+
+  body.sheet-hidden .map-floating-control-contours-container {
+    bottom: 290px;
+  }
+
+  body.sheet-peek .map-floating-control-3d-container {
+    bottom: calc(35vh + 96px);
+  }
+
+  body.sheet-peek .map-floating-control-contours-container {
+    bottom: calc(35vh + 176px);
+  }
+
+  body.sheet-full .map-floating-control-3d-container {
+    bottom: calc(75vh + 96px);
+  }
+
+  body.sheet-full .map-floating-control-contours-container {
+    bottom: calc(75vh + 176px);
   }
 
   .layer-selector-popup {
@@ -366,6 +487,7 @@
     width: auto; /* Auto width with left/right constraints */
     max-width: calc(100vw - 20px);
     pointer-events: auto;
+    z-index: 30; /* Keep popup above 3D/topo controls on mobile */
     max-height: 45vh; /* Take up bottom half, leaving map visible */
     overflow-y: auto;
   }
