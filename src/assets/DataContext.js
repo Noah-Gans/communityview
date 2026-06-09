@@ -47,7 +47,6 @@ export const DataProvider = ({ children }) => {
     try {
       // Define the URLs for the GeoJSON files
       const urls = {
-        // ownership: removed - now handled by Tegola
         roads: 'https://storage.googleapis.com/first_bucket_store/layers/roads.geojson',
         trails: 'https://storage.googleapis.com/first_bucket_store/layers/trails.geojson',
         wildlife: 'https://storage.googleapis.com/first_bucket_store/layers/wildlife.geojson',
@@ -64,7 +63,6 @@ export const DataProvider = ({ children }) => {
         wells: 'https://storage.googleapis.com/first_bucket_store/layers/wells.geojson',
         schools: 'https://storage.googleapis.com/first_bucket_store/layers/schools.geojson',
         emergency: 'https://storage.googleapis.com/first_bucket_store/layers/emergency.geojson',
-        ownership_address: 'https://storage.googleapis.com/first_bucket_store/layers/ownership_address.geojson',
       };
 
       // Function to fetch a single GeoJSON layer

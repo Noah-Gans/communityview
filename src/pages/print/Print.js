@@ -165,12 +165,12 @@ export default function Print() {
     setIsPrinting(true);
   };
 
-  /** Satellite-style basemap (Mapbox satellite + county high-def raster) for map maker flows. */
+  /** Satellite basemap for map maker flows. */
   const applyMapMakerSatelliteBasemap = () => {
     queueMicrotask(() => {
       try {
-        if (typeof window.handleSetHighDefBasemap === 'function') {
-          window.handleSetHighDefBasemap(false);
+        if (typeof window.applyBasemapById === 'function') {
+          window.applyBasemapById('satellite-streets-v12');
         }
       } catch (_) {
         /* map may not be mounted yet */
@@ -303,7 +303,7 @@ export default function Print() {
       const map = await mapService.getMapById(mapId);
       if (mapLoadGenerationRef.current !== generation) return;
 
-      const savedBasemap = String(map.basemap || '').trim() || 'high-def-3inch';
+      const savedBasemap = String(map.basemap || '').trim() || 'satellite-streets-v12';
       if (process.env.NODE_ENV !== 'production') {
         console.log('[print] restore basemap from Firestore:', savedBasemap, map);
       }
@@ -385,8 +385,8 @@ export default function Print() {
       setSaveError(null);
 
       const basemap =
-        (activeBasemapIdRef?.current || currentBasemapId || 'high-def-3inch').trim() ||
-        'high-def-3inch';
+        (activeBasemapIdRef?.current || currentBasemapId || 'satellite-streets-v12').trim() ||
+        'satellite-streets-v12';
       const mapData = mapService.serializeMapState(
         {
           schemaVersion: 2,

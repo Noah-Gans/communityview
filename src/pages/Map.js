@@ -17,9 +17,7 @@ import {
   CONSERVATION_EASEMENTS_VECTOR_SOURCE_LAYER,
   getLayerStyle,
   getLabelLayerStyle,
-  REGRID_PARCEL_FILL_COLOR,
   applyRegridParcelOutlineForBasemap,
-  getRegridParcelOutlineColorForBasemap,
   getSoilMapLayerId,
   getVectorSourceLayerForMapLayer,
   PUBLIC_LAND_VECTOR_SOURCE_LAYER,
@@ -68,20 +66,9 @@ import {
   mergeRegridParcelFeaturesPreferApi,
   isRegridParcelPolygonFeature,
 } from '../utils/regridParcelBoundary';
-import { rewriteRegridTileUrlToProxy } from '../config/regridApi';
 import { fetchRegridParcelTileJson } from '../services/regridService';
 import { fetchParcelGeoJsonFeatureByLlUuid } from '../utils/regridParcelApi';
-import {
-  getRegridVectorMinZoomForMap,
-  REGRID_VECTOR_MIN_ZOOM_SPARSE,
-} from '../utils/regridParcelTileDensity';
-import {
-  ensureRegridZoningTileJson,
-  getCachedRegridZoningTileJson,
-  getRegridZoningSourceLayerId,
-  getRegridZoningTileUrls,
-  REGRID_ZONING_TILE_FILL_COLOR,
-} from '../utils/regridZoningTileLayer';
+import { getRegridVectorMinZoomForMap } from '../utils/regridParcelTileDensity';
 import {
   featuresShareSelectionId,
   getHostedFeatureClickId,
@@ -97,1264 +84,96 @@ import {
   isPropertyBoundaryPrintElement,
   rankPrintElementsWithPhotos,
 } from '../utils/propertyTourSlides';
+import { mapDebug } from '../utils/mapDebug';
 
-/** Route Regrid MVT requests through our Cloud Function tile proxy (no client token). */
-function ensureRegridTileProxyUrl(templateUrl) {
-  return rewriteRegridTileUrlToProxy(templateUrl);
-}
+import {
+  DEFAULT_BASEMAP_ID,
+  DEFAULT_MAP_VIEW,
+  getBasemapIdFromSearch,
+  normalizeBasemapId,
+  PERSISTENT_BASE_STYLE_ID,
+  TUTORIAL_DEFAULT_VIEW,
+  TUTORIAL_PARCEL_PRACTICE_VIEW,
+} from './map/mapConstants';
+import {
+  applyCompositeLabelStyleForBasemap,
+  ESRI_WORLD_IMAGERY_LAYER_ID,
+  getVectorLayerInsertBeforeId,
+  hasVisibleManagedBasemapRaster,
+  MANAGED_BASEMAP_RASTER_LAYER_IDS,
+  needsBasemapOverlayMaintenance,
+  restackDataLayersAboveBasemapOverlays,
+  SATELLITE_STREETS_OVERLAY_LAYER_ID,
+  SATELLITE_STREETS_OVERLAY_SOURCE_ID,
+  stackRasterBasemapAboveBackground,
+  STREETS_OVERLAY_LAYER_ID,
+  STREETS_OVERLAY_SOURCE_ID,
+  verifyBasemapAppliedOnMap,
+} from './map/mapBasemapUtils';
+import {
+  featureBelongsToMapLayer,
+  getHostedTileLayerUrl,
+  getQueryLayerIdsForTileLayer,
+  isRasterHostedTileLayer,
+  pickClickedFeature,
+  rasterTileLayerZoom,
+  reloadVectorSourceTileCaches,
+  setTileLayerVisibility,
+  tileLayerMapLayersPresent,
+  vectorTileLayerZoom,
+  addSoilStateLayers,
+} from './map/mapHostedTileLayers';
+import { isVectorPmtilesArchiveUrl } from './map/mapLayerShared';
+import {
+  getPrintPixelScale,
+  isPrintParcelBoundaryPolygon,
+  isPrintShapeIconPlacingTool,
+  minSqDistanceToPolygonRingScreen,
+  pointToSegmentDistanceSq,
+} from './map/mapPrintHitTest';
+import {
+  addRegridParcelLayersFromTileJson,
+  applyParcelVisualizationVisibility,
+  bringRegridParcelLayersBeforeSymbolLabels,
+  CV_REGRID_RESTACK_EVENT,
+  getFirstSymbolLayerId,
+  ensureRegridTileProxyUrl,
+  fireRegridRestack,
+  getCachedRegridTileJson,
+  getRegridVectorSourceLayerId,
+  layerStatusLiveRef,
+  parcelShowRegridLiveRef,
+  rebuildRegridParcelStackForDensity,
+  regridStyleBasemapRef,
+  reloadTileSources,
+  removeRegridParcelStack,
+  repaintLayersTurnedOn,
+  repaintRegridParcelsAfterShow,
+  scheduleDeferredTileRefresh,
+  schedulePostBasemapRegridRestack,
+  setCachedRegridTileJson,
+  syncRegridParcelLayersIntoMap,
+} from './map/regridParcelMapLayer';
+
 mapboxgl.accessToken = String(process.env.REACT_APP_MAPBOX_ACCESS_TOKEN || '').trim();
 
-/** Hosted PMTiles archive for Public Land (Mapbox GL ≥3.21 uses HTTPS + ``.pmtiles`` extension). */
-const PUBLIC_LAND_PMTILES_ARCHIVE_URL =
-  (typeof process !== 'undefined' &&
-    String(process.env.REACT_APP_PUBLIC_LAND_PMTILES_ARCHIVE_URL || '').trim()) ||
-  'https://storage.googleapis.com/community_view_layers/tiles/padus_fee_z7_z14.pmtiles';
-
-function isVectorPmtilesArchiveUrl(template) {
-  return (
-    typeof template === 'string' &&
-    /^https:\/\/.+\.pmtiles(\?|#|$)/i.test(template)
-  );
-}
-
-// Helper function to get Martin server URL based on environment
-// On device/simulator connecting via network, use Mac's IP address; on desktop browser, use localhost
-const getMartinServerUrl = () => {
-  // Always use HTTPS through nginx proxy (no port needed - HTTPS default is 443)
-  return 'https://34.10.19.103.nip.io';
-};
-
-function pointToSegmentDistanceSq(px, py, x1, y1, x2, y2) {
-  const dx = x2 - x1;
-  const dy = y2 - y1;
-  const lenSq = dx * dx + dy * dy || 1;
-  let t = ((px - x1) * dx + (py - y1) * dy) / lenSq;
-  t = Math.max(0, Math.min(1, t));
-  const nx = x1 + t * dx;
-  const ny = y1 + t * dy;
-  const ddx = px - nx;
-  const ddy = py - ny;
-  return ddx * ddx + ddy * ddy;
-}
-
-/** Minimum squared screen distance from (px,py) to a closed geo ring (WGS84). */
-function minSqDistanceToPolygonRingScreen(map, ring, px, py) {
-  if (!map || !Array.isArray(ring) || ring.length < 2) return Infinity;
-  let minSq = Infinity;
-  const n = ring.length;
-  for (let j = 0; j < n - 1; j++) {
-    const a = map.project(ring[j]);
-    const b = map.project(ring[j + 1]);
-    if (!a || !b || !Number.isFinite(a.x) || !Number.isFinite(b.x)) continue;
-    minSq = Math.min(minSq, pointToSegmentDistanceSq(px, py, a.x, a.y, b.x, b.y));
-  }
-  return minSq;
-}
-
-function isPrintParcelBoundaryPolygon(el) {
-  return (
-    el?.type === 'polygon' &&
-    (el?.mapStyleVariant === 'boundary' || el?.label === 'Property Boundary')
-  );
-}
-
-/** Catalog point tools: follow cursor before click to place. */
-function isPrintShapeIconPlacingTool(tool) {
-  return typeof tool === 'string' && tool.startsWith('shape_');
-}
-
-/** Scale on-screen print controls when zoomed out so they stay readable. */
-function getPrintPixelScale(map) {
-  if (!map || typeof map.getZoom !== 'function') return 1;
-  const z = map.getZoom();
-  const t = Math.max(0, Math.min(1, (12.5 - z) / 10));
-  return 0.48 + (1.38 - 0.48) * t;
-}
-
-// URLs for vector tile layers (Martin tile server + GCS)
-/** Per-layer zoom limits for vector archives (otherwise defaults apply in `updateLayers`). */
-const vectorTileLayerZoom = {
-  conservation_easements: { minzoom: 7, maxzoom: 14 },
-  public_land: { minzoom: 7, maxzoom: 14 },
-  soil: { minzoom: 12, maxzoom: 14 },
-  surface_water: { minzoom: 12, maxzoom: 14 },
-  wetlands: { minzoom: 12, maxzoom: 14 },
-  boundaries_counties: { minzoom: 7, maxzoom: 14 },
-  boundaries_congressional: { minzoom: 7, maxzoom: 14 },
-  boundaries_places: { minzoom: 7, maxzoom: 14 },
-  boundaries_urban_areas: { minzoom: 7, maxzoom: 14 },
-  boundaries_tribal_lands: { minzoom: 7, maxzoom: 14 },
-  opportunity_zones: { minzoom: 7, maxzoom: 14 },
-  principal_aquifers: { minzoom: 7, maxzoom: 14 },
-  transmission_lines: { minzoom: 7, maxzoom: 14 },
-};
-
-const tileLayerUrls = {
-  conservation_easements:
-    'https://storage.googleapis.com/community_view_layers/tiles/nced_z7_z14.pmtiles',
-  public_land: PUBLIC_LAND_PMTILES_ARCHIVE_URL,
-  soil: 'https://storage.googleapis.com/community_view_layers/tiles/soil_v20260501_113041_z12_z14.pmtiles',
-  surface_water:
-    'https://storage.googleapis.com/community_view_layers/tiles/surface_water_v20260501_113041_z12_z14.pmtiles',
-  wetlands:
-    'https://storage.googleapis.com/community_view_layers/tiles/wetlands_us49_z12_z14.pmtiles',
-  boundaries_counties:
-    'https://storage.googleapis.com/community_view_layers/tiles/boundaries_us_counties_z7_z14.pmtiles',
-  boundaries_congressional:
-    'https://storage.googleapis.com/community_view_layers/tiles/boundaries_us_congressional_z7_z14.pmtiles',
-  boundaries_places:
-    'https://storage.googleapis.com/community_view_layers/tiles/boundaries_us_places_z7_z14.pmtiles',
-  boundaries_urban_areas:
-    'https://storage.googleapis.com/community_view_layers/tiles/boundaries_us_urban_areas_z7_z14.pmtiles',
-  boundaries_tribal_lands:
-    'https://storage.googleapis.com/community_view_layers/tiles/boundaries_us_tribal_lands_z7_z14.pmtiles',
-  opportunity_zones:
-    'https://storage.googleapis.com/community_view_layers/tiles/opportunity_zones_us_z7_z14.pmtiles',
-  principal_aquifers:
-    'https://storage.googleapis.com/community_view_layers/tiles/principal_aquifers_us_z7_z14.pmtiles',
-  transmission_lines:
-    'https://storage.googleapis.com/community_view_layers/tiles/transmission_lines_hifld_us_z7_z14.pmtiles',
-};
-
-/** Raster PMTiles overlays (PNG/WebP tiles — not queryable MVT). */
-const rasterTileLayerUrls = {
-  wildfire_hazard:
-    'https://storage.googleapis.com/community_view_layers/tiles/wildfire_hazard_whp2023_cls_conus_z7_z14.pmtiles',
-};
-
-const rasterTileLayerZoom = {
-  wildfire_hazard: { minzoom: 7, maxzoom: 14 },
-};
-
-function getHostedTileLayerUrl(layerName) {
-  return tileLayerUrls[layerName] ?? rasterTileLayerUrls[layerName] ?? null;
-}
-
-function isRasterHostedTileLayer(layerName) {
-  return Boolean(rasterTileLayerUrls[layerName]);
-}
-
-function tileLayerMapLayersPresent(map, layerName) {
-  if (!map) return false;
-  if (layerName === 'soil') {
-    return SOIL_STATE_CODES.some((code) => map.getLayer(getSoilMapLayerId(code)));
-  }
-  if (layerName === 'surface_water') {
-    return Boolean(
-      map.getLayer('surface_water-layer') || map.getLayer('surface_water-flowline-layer')
-    );
-  }
-  if (layerName === 'conservation_easements') {
-    return Boolean(
-      map.getLayer('conservation_easements-layer') ||
-        map.getLayer('conservation_easements-outline-layer')
-    );
-  }
-  return Boolean(map.getLayer(`${layerName}-layer`));
-}
-
-function addSoilStateLayers(map, beforeId) {
-  SOIL_STATE_CODES.forEach((code) => {
-    const layerId = getSoilMapLayerId(code);
-    if (map.getLayer(layerId)) return;
-    map.addLayer(
-      {
-        id: layerId,
-        type: 'fill',
-        source: 'soil',
-        'source-layer': soilMvtSourceLayerId(code),
-        paint: SOIL_FILL_PAINT,
-        layout: { visibility: 'visible' },
-      },
-      beforeId
-    );
-  });
-}
-
-function setTileLayerVisibility(map, layerName, visibility) {
-  if (layerName === 'soil') {
-    SOIL_STATE_CODES.forEach((code) => {
-      const layerId = getSoilMapLayerId(code);
-      if (map.getLayer(layerId)) {
-        map.setLayoutProperty(layerId, 'visibility', visibility);
-      }
-    });
-    return;
-  }
-  if (layerName === 'surface_water') {
-    ['surface_water-layer', 'surface_water-flowline-layer'].forEach((layerId) => {
-      if (map.getLayer(layerId)) {
-        map.setLayoutProperty(layerId, 'visibility', visibility);
-      }
-    });
-    return;
-  }
-  if (layerName === 'conservation_easements') {
-    ['conservation_easements-layer', 'conservation_easements-outline-layer'].forEach((layerId) => {
-      if (map.getLayer(layerId)) {
-        map.setLayoutProperty(layerId, 'visibility', visibility);
-      }
-    });
-    return;
-  }
-  const layerId = `${layerName}-layer`;
-  if (map.getLayer(layerId)) {
-    map.setLayoutProperty(layerId, 'visibility', visibility);
-  }
-}
-
-function getQueryLayerIdsForTileLayer(layerName, map) {
-  if (layerName === 'soil') {
-    return SOIL_STATE_CODES.map(getSoilMapLayerId).filter((id) => map.getLayer(id));
-  }
-  if (layerName === 'surface_water') {
-    return ['surface_water-layer', 'surface_water-flowline-layer'].filter((id) => map.getLayer(id));
-  }
-  if (layerName === 'conservation_easements') {
-    return ['conservation_easements-layer', 'conservation_easements-outline-layer'].filter((id) =>
-      map.getLayer(id)
-    );
-  }
-  const single = `${layerName}-layer`;
-  return map.getLayer(single) ? [single] : [];
-}
-
-/** Whether a clicked/rendered feature belongs to a map layer toggle id (e.g. `ownership`, `public_land`). */
-function featureBelongsToMapLayer(feature, layerName) {
-  if (!feature || !layerName) return false;
-  if (layerName === 'ownership') {
-    return isRegridParcelPolygonFeature(feature);
-  }
-  if (layerName === 'soil') {
-    const lid = feature.layer?.id;
-    return typeof lid === 'string' && lid.startsWith('soil-');
-  }
-  if (layerName === 'surface_water') {
-    const lid = feature.layer?.id;
-    return lid === 'surface_water-layer' || lid === 'surface_water-flowline-layer';
-  }
-  if (layerName === 'conservation_easements') {
-    const lid = feature.layer?.id;
-    return lid === 'conservation_easements-layer' || lid === 'conservation_easements-outline-layer';
-  }
-  const lid = feature.layer?.id;
-  if (lid === `${layerName}-layer`) return true;
-  if (feature.source === layerName) return true;
-  return false;
-}
-
-/** Prefer the most recently toggled visible non-ownership layer when multiple features overlap. */
-function pickClickedFeature(features, prioritizedLayerNames, includeOwnershipFallback = false) {
-  if (!Array.isArray(features) || features.length === 0) return null;
-
-  const orderedLayers = Array.isArray(prioritizedLayerNames)
-    ? [...new Set(prioritizedLayerNames.filter(Boolean))].reverse()
-    : [];
-
-  for (const layerName of orderedLayers) {
-    const match = features.find((feature) => featureBelongsToMapLayer(feature, layerName));
-    if (match) return match;
-  }
-
-  if (includeOwnershipFallback) {
-    const ownershipFeature = features.find((feature) => featureBelongsToMapLayer(feature, 'ownership'));
-    if (ownershipFeature) return ownershipFeature;
-  }
-
-  return features[0] || null;
-}
-
-/** Same layer ids as custom imagery / ortho rasters — module scope for layer stack helpers. */
-const REGRID_OVERLAY_RASTER_LAYER_IDS = ['high-def-3inch-layer', 'teton-ortho-2024-layer', 'esri-world-imagery-layer'];
-
-const SATELLITE_STREETS_OVERLAY_SOURCE_ID = 'satellite-streets-overlay-source';
-const SATELLITE_STREETS_OVERLAY_LAYER_ID = 'satellite-streets-overlay-layer';
-const STREETS_OVERLAY_SOURCE_ID = 'streets-overlay-source';
-const STREETS_OVERLAY_LAYER_ID = 'streets-overlay-layer';
-const ESRI_WORLD_IMAGERY_LAYER_ID = 'esri-world-imagery-layer';
-
-/** Basemap rasters that must sit below hosted data + parcel layers. */
-const MANAGED_BASEMAP_RASTER_LAYER_IDS = [
-  ...REGRID_OVERLAY_RASTER_LAYER_IDS,
-  ESRI_WORLD_IMAGERY_LAYER_ID,
-  SATELLITE_STREETS_OVERLAY_LAYER_ID,
-  STREETS_OVERLAY_LAYER_ID,
-];
-
-function hasVisibleManagedBasemapRaster(map) {
-  if (!map?.getLayer) return false;
-  return MANAGED_BASEMAP_RASTER_LAYER_IDS.some((id) => {
-    if (!map.getLayer(id)) return false;
-    try {
-      return map.getLayoutProperty(id, 'visibility') !== 'none';
-    } catch (_) {
-      return false;
-    }
-  });
-}
-
-function isRasterLayerVisible(map, layerId) {
-  if (!map?.getLayer?.(layerId)) return false;
-  try {
-    return map.getLayoutProperty(layerId, 'visibility') !== 'none';
-  } catch (_) {
-    return false;
-  }
-}
-
-/** Outdoors landcover/hillshade still visible on top of Esri imagery when apply failed. */
-function hasVisibleMapboxStyleUnderlay(map) {
-  if (!map?.getStyle) return false;
-  try {
-    return (map.getStyle().layers || []).some((layer) => {
-      const id = layer?.id || '';
-      if (!id || id === 'background' || layer.type === 'symbol') return false;
-      if (REGRID_OVERLAY_RASTER_LAYER_IDS.includes(id)) return false;
-      if (
-        id === ESRI_WORLD_IMAGERY_LAYER_ID ||
-        id === SATELLITE_STREETS_OVERLAY_LAYER_ID ||
-        id === STREETS_OVERLAY_LAYER_ID
-      ) {
-        return false;
-      }
-      if (id.startsWith('gl-draw-') || id.includes('regrid') || id.endsWith('-layer')) return false;
-      if (id.startsWith('cv-') || id.includes('contour') || id === 'terrain-colors' || id === 'sky') {
-        return false;
-      }
-      return map.getLayoutProperty(layer.id, 'visibility') !== 'none';
-    });
-  } catch (_) {
-    return false;
-  }
-}
-
-/** True when the live map stack matches the requested basemap (not just React/URL state). */
-function verifyBasemapAppliedOnMap(map, basemapId) {
-  if (!map?.isStyleLoaded?.()) return false;
-  const id = String(basemapId || '').trim();
-  if (!id) return false;
-
-  if (id === 'imagery' || id === 'imagery-3d' || id === 'esri-world-imagery') {
-    // Esri raster visible is enough — underlay check false-negatives during zoom/layer churn.
-    return isRasterLayerVisible(map, ESRI_WORLD_IMAGERY_LAYER_ID);
-  }
-  if (id === 'satellite-streets-v12') {
-    return isRasterLayerVisible(map, SATELLITE_STREETS_OVERLAY_LAYER_ID);
-  }
-  if (id === 'streets-v11') {
-    return isRasterLayerVisible(map, STREETS_OVERLAY_LAYER_ID);
-  }
-  if (id === 'outdoors-v12' || id === PERSISTENT_BASE_STYLE_ID) {
-    return (
-      !isRasterLayerVisible(map, ESRI_WORLD_IMAGERY_LAYER_ID) &&
-      !isRasterLayerVisible(map, SATELLITE_STREETS_OVERLAY_LAYER_ID) &&
-      !isRasterLayerVisible(map, STREETS_OVERLAY_LAYER_ID)
-    );
-  }
-  return true;
-}
-
-/**
- * True when overlay rasters or outdoors underlay no longer match the selected basemap
- * (e.g. Discover landcover visible on top of Imagery after zoom / ownership restack).
- */
-function needsBasemapOverlayMaintenance(map, basemapId) {
-  if (!map?.isStyleLoaded?.()) return false;
-  const id = String(basemapId || '').trim();
-  if (!id) return false;
-
-  if (id === 'imagery' || id === 'imagery-3d' || id === 'esri-world-imagery') {
-    return (
-      !isRasterLayerVisible(map, ESRI_WORLD_IMAGERY_LAYER_ID) ||
-      hasVisibleMapboxStyleUnderlay(map)
-    );
-  }
-  if (id === 'satellite-streets-v12') {
-    return (
-      !isRasterLayerVisible(map, SATELLITE_STREETS_OVERLAY_LAYER_ID) ||
-      hasVisibleMapboxStyleUnderlay(map)
-    );
-  }
-  if (id === 'streets-v11') {
-    return (
-      !isRasterLayerVisible(map, STREETS_OVERLAY_LAYER_ID) ||
-      hasVisibleMapboxStyleUnderlay(map)
-    );
-  }
-  if (id === 'outdoors-v12' || id === PERSISTENT_BASE_STYLE_ID) {
-    return (
-      isRasterLayerVisible(map, ESRI_WORLD_IMAGERY_LAYER_ID) ||
-      isRasterLayerVisible(map, SATELLITE_STREETS_OVERLAY_LAYER_ID) ||
-      isRasterLayerVisible(map, STREETS_OVERLAY_LAYER_ID)
-    );
-  }
-  return false;
-}
-
-function stackRasterBasemapAboveBackground(map, layerId) {
-  if (!map?.getLayer?.(layerId)) return;
-  const styleLayers = map.getStyle()?.layers || [];
-  const anchor = styleLayers.find((l) => l.id !== 'background' && l.type !== 'sky')?.id;
-  if (!anchor) return;
-  try {
-    map.moveLayer(layerId, anchor);
-  } catch (_) {
-    /* ignore */
-  }
-}
-
-function isDarkImageryBasemap(basemapId) {
-  const id = String(basemapId || '')
-    .trim()
-    .toLowerCase();
-  if (!id) return false;
-  if (id.includes('imagery') || id.includes('satellite') || id.includes('ortho')) return true;
-  if (id.startsWith('high-def')) return true;
-  if (id === 'esri-world-imagery') return true;
-  return false;
-}
-
-/** Tune Mapbox composite labels for light vs dark basemaps (Satellite / Imagery / Discover). */
-function applyCompositeLabelStyleForBasemap(map, basemapId) {
-  if (!map?.getStyle) return;
-  const dark = isDarkImageryBasemap(basemapId);
-  const styleLayers = map.getStyle().layers || [];
-  styleLayers.forEach((layer) => {
-    if (layer.type !== 'symbol' || layer.source !== 'composite') return;
-    if (!map.getLayer(layer.id)) return;
-    try {
-      if (map.getLayoutProperty(layer.id, 'visibility') === 'none') return;
-      map.setPaintProperty(layer.id, 'text-color', dark ? '#f8fafc' : '#0f172a');
-      map.setPaintProperty(layer.id, 'text-halo-color', dark ? 'rgba(15, 23, 42, 0.88)' : '#ffffff');
-      map.setPaintProperty(layer.id, 'text-halo-width', dark ? 1.35 : 1.15);
-      map.setPaintProperty(layer.id, 'text-halo-blur', 0.35);
-    } catch (_) {
-      /* layer may be mid-style */
-    }
-  });
-}
-
-/**
- * Match `updateLayers` MVT placement: Mapbox GL v3 composite/slot styles can leave vector tiles
- * stale until a zoom change if layers are only appended with no `beforeId`. Public land uses this.
- */
-function getVectorLayerInsertBeforeId(map) {
-  if (!map?.getStyle) return undefined;
-  try {
-    const styleLayers = map.getStyle().layers || [];
-    const drawLayer = styleLayers.find((l) => l.id.startsWith('gl-draw-'));
-    if (hasVisibleManagedBasemapRaster(map)) {
-      if (drawLayer) return drawLayer.id;
-      const firstSym = styleLayers.find((l) => l.type === 'symbol');
-      return firstSym ? firstSym.id : undefined;
-    }
-    const firstSym = styleLayers.find((l) => l.type === 'symbol');
-    return firstSym ? firstSym.id : undefined;
-  } catch (_) {
-    return undefined;
-  }
-}
-
-/** Raise hosted MVT / draw layers above basemap raster overlays (Esri, Satellite, Streets, etc.). */
-function restackDataLayersAboveBasemapOverlays(map) {
-  if (!map?.getStyle || !hasVisibleManagedBasemapRaster(map)) return;
-  const ids = (map.getStyle().layers || [])
-    .map((layer) => layer.id)
-    .filter((id) => {
-      if (MANAGED_BASEMAP_RASTER_LAYER_IDS.includes(id)) return false;
-      if (id.includes('regrid')) return false;
-      if (id.endsWith('-layer') || id.startsWith('soil-')) return true;
-      return id.startsWith('gl-draw-');
-    });
-  ids.forEach((id) => {
-    try {
-      map.moveLayer(id);
-    } catch (_) {
-      /* ignore */
-    }
-  });
-}
-
-/** Default map view when URL has no lat/lng/zoom (Nebraska — Regrid-focused area). */
-const DEFAULT_MAP_VIEW = {
-  center: [-97.60393, 40.52867],
-  zoom: 13.935488214211315,
-};
-
-/** Default basemap when URL has no `basemap` param — outdoors, labeled "Discover" in UI. */
-const DEFAULT_BASEMAP_ID = 'outdoors-v12';
-const PERSISTENT_BASE_STYLE_ID = 'outdoors-v12';
-
-/** The four basemap options exposed in the UI. */
-const SUPPORTED_BASEMAP_IDS = new Set([
-  'outdoors-v12',
-  'imagery',
-  'satellite-streets-v12',
-  'streets-v11',
-]);
-
-/** Map legacy / alias URL values to a supported basemap id. */
-const BASEMAP_ID_ALIASES = {
-  discover: 'outdoors-v12',
-  outdoors: 'outdoors-v12',
-  satellite: 'satellite-streets-v12',
-  streets: 'streets-v11',
-  'imagery-3d': 'imagery',
-  'esri-world-imagery': 'imagery',
-};
-
-function normalizeBasemapId(raw) {
-  const id = String(raw || '').trim().toLowerCase();
-  if (!id) return DEFAULT_BASEMAP_ID;
-  if (BASEMAP_ID_ALIASES[id]) return BASEMAP_ID_ALIASES[id];
-  if (SUPPORTED_BASEMAP_IDS.has(id)) return id;
-  return DEFAULT_BASEMAP_ID;
-}
-
-/** Read `basemap` from the live browser URL (authoritative on refresh / new tab). */
-function getBasemapIdFromSearch(search) {
-  const params = queryString.parse(search || '');
-  const fromUrl = params.basemap != null ? String(params.basemap).trim() : '';
-  return normalizeBasemapId(fromUrl);
-}
-
-/** Module-level basemap id for Regrid paint helpers (updated from Map component). */
-const regridStyleBasemapRef = { current: DEFAULT_BASEMAP_ID };
-
-/** TileJSON from Regrid — cached so basemap/style swaps do not re-fetch over the network. */
-let cachedRegridTileJson = null;
-
-/** Active MVT source/layer minzoom — sparse (10) vs dense metro (13). See regridParcelTileDensity.js. */
-let activeRegridVectorMinZoom = REGRID_VECTOR_MIN_ZOOM_SPARSE;
-
-function removeRegridParcelLayersAndSource(map) {
-  if (!map) return;
-  try {
-    ['regrid-parcels-outline', 'regrid-parcels-layer'].forEach((id) => {
-      if (map.getLayer(id)) map.removeLayer(id);
-    });
-    if (map.getSource('regrid-parcels')) map.removeSource('regrid-parcels');
-  } catch (_) {
-    /* style may be mid-swap */
-  }
-}
-
-/** Full teardown — basemap style swap or ownership toggled off only. */
-function removeRegridParcelStack(map) {
-  removeRegridParcelLayersAndSource(map);
-}
-
-/**
- * Regrid TileJSON often puts MVT templates on `vector` (not `tiles`). Prefer `vector` when present.
- * @see https://support.regrid.com/api/using-the-tileserver-api
- */
-/** MVT tile templates from TileJSON (`vector` preferred). */
-function getRegridTileUrls(tileJson) {
-  if (!tileJson) return [];
-  let raw = [];
-  const v = tileJson.vector;
-  if (typeof v === 'string' && v.length) raw = [v];
-  else if (Array.isArray(v) && v.length) raw = v;
-  else if (Array.isArray(tileJson.tiles) && tileJson.tiles.length) {
-    raw = tileJson.tiles.filter((u) => typeof u === 'string' && /\.mvt/i.test(u));
-  }
-  return raw.map((u) => ensureRegridTileProxyUrl(u));
-}
-
-/** MVT `source-layer`: Regrid's Mapbox example uses TileJSON top-level `id` (not `vector_layers[0]`). */
-function getRegridVectorSourceLayerId(tileJson) {
-  if (!tileJson) return 'parcels';
-  if (typeof tileJson.id === 'string' && tileJson.id.length) {
-    return tileJson.id;
-  }
-  const vl = tileJson.vector_layers;
-  if (Array.isArray(vl) && vl[0] && typeof vl[0].id === 'string' && vl[0].id.length) {
-    return vl[0].id;
-  }
-  return 'parcels';
-}
-
-/**
- * Add Regrid MVT source + layers when TileJSON is known — same synchronous moment as Martin
- * layers in `updateLayers` (mirrors public_land: source exists before stack reorder / idle).
- */
-function addRegridParcelLayersFromTileJson(
-  map,
-  tileJson,
-  vectorMinZoom = activeRegridVectorMinZoom
-) {
-  const tileUrls = getRegridTileUrls(tileJson);
-  if (!map?.addSource || !tileUrls.length) return;
-  if (map.getSource('regrid-parcels')) {
-    const mapZoom = typeof map.getZoom === 'function' ? map.getZoom() : activeRegridVectorMinZoom;
-    if (mapZoom >= activeRegridVectorMinZoom) {
-      forceRegridParcelsSourceRefresh(map, tileUrls);
-    }
-    return;
-  }
-
-  activeRegridVectorMinZoom = vectorMinZoom;
-  const sourceLayerId = getRegridVectorSourceLayerId(tileJson);
-  const insertBeforeId = getVectorLayerInsertBeforeId(map);
-  const tileMaxZoom = tileJson.maxzoom || 21;
-
-  map.addSource('regrid-parcels', {
-    type: 'vector',
-    tiles: tileUrls,
-    minzoom: vectorMinZoom,
-    maxzoom: tileMaxZoom,
-  });
-
-  map.addLayer({
-    id: 'regrid-parcels-layer',
-    type: 'fill',
-    source: 'regrid-parcels',
-    'source-layer': sourceLayerId,
-    paint: {
-      'fill-color': REGRID_PARCEL_FILL_COLOR,
-      'fill-opacity': 0,
-    },
-    filter: [
-      'all',
-      [
-        'case',
-        ['<', ['zoom'], 14],
-        [
-          'all',
-          [
-            'case',
-            ['has', 'll_gissqft'],
-            [
-              '>',
-              ['*', ['get', 'll_gissqft'], 0.0000229568],
-              [
-                'interpolate',
-                ['linear'],
-                ['zoom'],
-                10,
-                2.0,
-                11,
-                1.0,
-                12,
-                0.5,
-                13,
-                0.25,
-              ],
-            ],
-            [
-              'case',
-              ['has', 'll_gisacre'],
-              [
-                '>',
-                ['get', 'll_gisacre'],
-                ['interpolate', ['linear'], ['zoom'], 10, 2.0, 11, 1.0, 12, 0.5, 13, 0.25],
-              ],
-              true,
-            ],
-          ],
-        ],
-        true,
-      ],
-    ],
-    layout: { visibility: 'visible' },
-    minzoom: vectorMinZoom,
-    maxzoom: tileMaxZoom,
-  }, insertBeforeId);
-
-  map.addLayer({
-    id: 'regrid-parcels-outline',
-    type: 'line',
-    source: 'regrid-parcels',
-    'source-layer': sourceLayerId,
-    paint: {
-      'line-color': getRegridParcelOutlineColorForBasemap(regridStyleBasemapRef.current),
-      'line-width': ['interpolate', ['linear'], ['zoom'], 10, 0.4, 13, 0.7, 15, 1.0],
-      'line-opacity': 1.0,
-      'line-simplify': [
-        'interpolate',
-        ['linear'],
-        ['zoom'],
-        10,
-        3.0,
-        11,
-        2.5,
-        12,
-        2.0,
-        13,
-        1.5,
-        14,
-        1.0,
-        16,
-        0.5,
-        18,
-        0.3,
-        20,
-        0.1,
-        21,
-        0.0,
-      ],
-    },
-    filter: [
-      'all',
-      [
-        'case',
-        ['<', ['zoom'], 14],
-        [
-          'all',
-          [
-            'case',
-            ['has', 'll_gissqft'],
-            [
-              '>',
-              ['*', ['get', 'll_gissqft'], 0.0000229568],
-              [
-                'interpolate',
-                ['linear'],
-                ['zoom'],
-                10,
-                2.0,
-                11,
-                1.0,
-                12,
-                0.5,
-                13,
-                0.25,
-              ],
-            ],
-            [
-              'case',
-              ['has', 'll_gisacre'],
-              [
-                '>',
-                ['get', 'll_gisacre'],
-                ['interpolate', ['linear'], ['zoom'], 10, 2.0, 11, 1.0, 12, 0.5, 13, 0.25],
-              ],
-              true,
-            ],
-          ],
-        ],
-        true,
-      ],
-    ],
-    layout: {
-      visibility: 'visible',
-      'line-join': 'round',
-      'line-cap': 'round',
-    },
-    minzoom: vectorMinZoom,
-    maxzoom: tileMaxZoom,
-  }, 'regrid-parcels-layer');
-
-  applyRegridParcelOutlineForBasemap(map, regridStyleBasemapRef.current);
-
-  // Source/layer minzoom blocks fetch below threshold — skip reload until zoom is in range.
-  const mapZoom = typeof map.getZoom === 'function' ? map.getZoom() : vectorMinZoom;
-  if (mapZoom >= vectorMinZoom) {
-    forceRegridParcelsSourceRefresh(map, tileUrls);
-  }
-}
-
-/** Rebuild MVT stack when map center moves between sparse/dense geofences (source minzoom must change). */
-function rebuildRegridParcelStackForDensity(map, vectorMinZoom) {
-  if (!map?.isStyleLoaded?.() || !cachedRegridTileJson) return;
-  if (vectorMinZoom === activeRegridVectorMinZoom && map.getSource('regrid-parcels')) return;
-  try {
-    removeRegridParcelLayersAndSource(map);
-  } catch (_) {
-    /* ignore */
-  }
-  addRegridParcelLayersFromTileJson(map, cachedRegridTileJson, vectorMinZoom);
-}
-
-function removeRegridZoningTileStack(map) {
-  if (!map) return;
-  try {
-    ['regrid-zoning-tiles-outline', 'regrid-zoning-tiles-fill'].forEach((id) => {
-      if (map.getLayer(id)) map.removeLayer(id);
-    });
-    if (map.getSource('regrid-zoning-tiles')) map.removeSource('regrid-zoning-tiles');
-  } catch (_) {
-    /* style may be mid-swap */
-  }
-}
-
-function getRegridZoningInsertBeforeId(map) {
-  if (map?.getLayer?.('regrid-parcels-layer')) return 'regrid-parcels-layer';
-  return getVectorLayerInsertBeforeId(map);
-}
-
-function addRegridZoningLayersFromTileJson(map, tileJson, vectorMinZoom = activeRegridVectorMinZoom) {
-  const tileUrls = getRegridZoningTileUrls(tileJson);
-  if (!map?.addSource || !tileUrls.length) return;
-  if (map.getSource('regrid-zoning-tiles')) return;
-
-  activeRegridVectorMinZoom = vectorMinZoom;
-  const sourceLayerId = getRegridZoningSourceLayerId(tileJson);
-  const insertBeforeId = getRegridZoningInsertBeforeId(map);
-  const tileMaxZoom = tileJson.maxzoom || 21;
-
-  map.addSource('regrid-zoning-tiles', {
-    type: 'vector',
-    tiles: tileUrls,
-    minzoom: vectorMinZoom,
-    maxzoom: tileMaxZoom,
-  });
-
-  map.addLayer(
-    {
-      id: 'regrid-zoning-tiles-fill',
-      type: 'fill',
-      source: 'regrid-zoning-tiles',
-      'source-layer': sourceLayerId,
-      paint: {
-        'fill-color': REGRID_ZONING_TILE_FILL_COLOR,
-        'fill-opacity': 0.42,
-        'fill-outline-color': REGRID_ZONING_TILE_FILL_COLOR,
-      },
-      layout: { visibility: 'visible' },
-      minzoom: vectorMinZoom,
-      maxzoom: tileMaxZoom,
-    },
-    insertBeforeId
-  );
-
-  map.addLayer(
-    {
-      id: 'regrid-zoning-tiles-outline',
-      type: 'line',
-      source: 'regrid-zoning-tiles',
-      'source-layer': sourceLayerId,
-      paint: {
-        'line-color': REGRID_ZONING_TILE_FILL_COLOR,
-        'line-width': ['interpolate', ['linear'], ['zoom'], 10, 0.25, 14, 0.6, 17, 1.0],
-        'line-opacity': 0.85,
-      },
-      layout: { visibility: 'visible', 'line-join': 'round', 'line-cap': 'round' },
-      minzoom: vectorMinZoom,
-      maxzoom: tileMaxZoom,
-    },
-    'regrid-zoning-tiles-fill'
-  );
-}
-
-function rebuildRegridZoningStackForDensity(map, vectorMinZoom) {
-  const tileJson = getCachedRegridZoningTileJson();
-  if (!map?.isStyleLoaded?.() || !tileJson || !map.getSource('regrid-zoning-tiles')) return;
-  try {
-    removeRegridZoningTileStack(map);
-  } catch (_) {
-    /* ignore */
-  }
-  addRegridZoningLayersFromTileJson(map, tileJson, vectorMinZoom);
-}
-
-function syncRegridZoningLayersIntoMap(map, enabled) {
-  if (!map?.isStyleLoaded?.()) return;
-  if (!enabled) {
-    removeRegridZoningTileStack(map);
-    return;
-  }
-  const vectorMinZoom = getRegridVectorMinZoomForMap(map);
-  const tileJson = getCachedRegridZoningTileJson();
-  if (!tileJson) return;
-  if (map.getSource('regrid-zoning-tiles')) {
-    if (vectorMinZoom !== activeRegridVectorMinZoom) {
-      rebuildRegridZoningStackForDensity(map, vectorMinZoom);
-    }
-    return;
-  }
-  addRegridZoningLayersFromTileJson(map, tileJson, vectorMinZoom);
-}
-
-function setRegridZoningLayersVisibility(map, visible) {
-  if (!map) return;
-  const vis = visible ? 'visible' : 'none';
-  ['regrid-zoning-tiles-fill', 'regrid-zoning-tiles-outline'].forEach((id) => {
-    if (map.getLayer(id)) {
-      try {
-        map.setLayoutProperty(id, 'visibility', vis);
-      } catch (_) {
-        /* ignore */
-      }
-    }
-  });
-}
-
-/**
- * Regrid is not in `tileLayerUrls`. Mirror `forceVectorTileSourceRefresh` by calling `setTiles` with
- * the TileJSON template list so the tile pyramid invalidates after `setStyle`.
- */
-function forceRegridParcelsSourceRefresh(map, tilesOverride) {
-  if (!map) return;
-  try {
-    const src = map.getSource('regrid-parcels');
-    if (!src) return;
-    const tiles = tilesOverride || getRegridTileUrls(cachedRegridTileJson);
-    // `setTiles` assigns URLs and calls `reload()` internally — same pattern as Martin MVT.
-    if (tiles && Array.isArray(tiles) && tiles.length && typeof src.setTiles === 'function') {
-      src.setTiles(tiles.slice());
-    } else if (typeof src.reload === 'function') {
-      src.reload();
-    }
-    reloadVectorSourceTileCaches(map, 'regrid-parcels');
-  } catch (_) {
-    /* source may be mid-style */
-  }
-}
-
-/**
- * Keep Regrid parcel source + layers on the map whenever ownership is on.
- * Tile requests are gated by source/layer `minzoom` (10 sparse / 13 dense) — never remove or
- * hide layers based on current map zoom, so Mapbox can fetch MVT tiles as soon as zoom allows.
- */
-function syncRegridParcelLayersIntoMap(map, parcelMapVisibility) {
-  if (!map?.isStyleLoaded?.()) return;
-  if (!parcelMapVisibility?.showRegrid) return;
-
-  const vectorMinZoom = getRegridVectorMinZoomForMap(map);
-  if (!cachedRegridTileJson) return;
-
-  if (!map.getSource('regrid-parcels')) {
-    addRegridParcelLayersFromTileJson(map, cachedRegridTileJson, vectorMinZoom);
-  } else if (vectorMinZoom !== activeRegridVectorMinZoom) {
-    rebuildRegridParcelStackForDensity(map, vectorMinZoom);
-  }
-}
-
-/** Fired after Mapbox Draw (or others) add layers post–style.load so we can re-pin Regrid. */
-const CV_REGRID_RESTACK_EVENT = 'cv:regrid-restack';
-
-function fireRegridRestack(map) {
-  try {
-    if (map && typeof map.fire === 'function') {
-      map.fire(CV_REGRID_RESTACK_EVENT);
-    }
-  } catch (_) {
-    /* ignore */
-  }
-}
-
-/** One restack after basemap — triple fire caused repeated hide/show + bumpZoom flicker. */
-function schedulePostBasemapRegridRestack(mapRef) {
-  requestAnimationFrame(() => fireRegridRestack(mapRef?.current));
-}
-
-/** First composite/style symbol layer — Regrid sits directly below this, then `bringLabelsToTop` pins all labels above data. */
-function getFirstSymbolLayerId(map) {
-  if (!map?.getStyle) return undefined;
-  try {
-    const firstSym = (map.getStyle().layers || []).find((layer) => layer.type === 'symbol');
-    return firstSym ? firstSym.id : undefined;
-  } catch (_) {
-    return undefined;
-  }
-}
-
-/**
- * Raise Regrid above hosted MVT fills but below Mapbox composite labels (and custom label layers).
- * Must not use bare `moveLayer(id)` — that hoists parcels above basemap symbols until the user pans.
- */
-function bringRegridParcelLayersBeforeSymbolLabels(map) {
-  if (!map) return;
-  const beforeId = getFirstSymbolLayerId(map);
-  [
-    'regrid-zoning-tiles-fill',
-    'regrid-zoning-tiles-outline',
-    'regrid-parcels-layer',
-    'regrid-parcels-outline',
-  ].forEach((id) => {
-    if (map.getLayer(id)) {
-      try {
-        map.moveLayer(id, beforeId);
-      } catch (_) {
-        /* layer may be mid-style */
-      }
-    }
-  });
-}
-
-/** Regrid parcel tiles: show when ownership is on, or during property-map wizard (ownership off but parcels needed). */
-function setRegridParcelLayersVisibility(map, visible) {
-  if (!map) return;
-  const vis = visible ? 'visible' : 'none';
-  ['regrid-parcels-layer', 'regrid-parcels-outline'].forEach((id) => {
-    if (map.getLayer(id)) {
-      try {
-        map.setLayoutProperty(id, 'visibility', vis);
-      } catch (_) {
-        /* ignore */
-      }
-    }
-  });
-}
-
-/** Ownership toggle only — layers stay on map when on; Mapbox `minzoom` on source/layers blocks tile fetch. */
-function applyParcelVisualizationVisibility(map, { showRegrid }) {
-  if (!map) return;
-  setRegridParcelLayersVisibility(map, Boolean(showRegrid));
-}
-
-function flushMapRepaintAfterLayerChange(map) {
-  if (!map) return;
-  try {
-    map.triggerRepaint?.();
-  } catch (_) {
-    /* ignore */
-  }
-  requestAnimationFrame(() => {
-    try {
-      map.triggerRepaint?.();
-    } catch (_) {
-      /* ignore */
-    }
-  });
-}
-
-/** Lighter than `forceRegridParcelsSourceRefresh` — enough for visibility-only toggles. */
-function nudgeVectorTileSource(map, sourceId) {
-  if (!map || !sourceId) return;
-  try {
-    const src = map.getSource(sourceId);
-    if (!src) return;
-    if (typeof src.reload === 'function') src.reload();
-    reloadVectorSourceTileCaches(map, sourceId);
-  } catch (_) {
-    /* ignore */
-  }
-}
-
-/** Latest layer toggle state — deferred repaints read this so OFF toggles are not undone by stale rAF. */
-const layerStatusLiveRef = { current: {} };
-const parcelShowRegridLiveRef = { current: false };
-
-/** Regrid MVT: sync visibility + nudge tile cache after ownership turns on (no full setTiles reload). */
-function repaintRegridParcelsAfterShow(map, attempt = 0) {
-  if (!parcelShowRegridLiveRef.current) return;
-  if (!map?.isStyleLoaded?.()) return;
-  if (!map.getSource('regrid-parcels')) {
-    if (attempt < 6) {
-      requestAnimationFrame(() => repaintRegridParcelsAfterShow(map, attempt + 1));
-    }
-    return;
-  }
-  setRegridParcelLayersVisibility(map, true);
-  nudgeVectorTileSource(map, 'regrid-parcels');
-  flushMapRepaintAfterLayerChange(map);
-  try {
-    map.once('idle', () => {
-      if (!parcelShowRegridLiveRef.current) return;
-      reloadVectorSourceTileCaches(map, 'regrid-parcels');
-      map.triggerRepaint?.();
-    });
-  } catch (_) {
-    /* ignore */
-  }
-}
-
-/**
- * Mapbox often skips fetching/redrawing MVT tiles after `visibility: none → visible` until pan/zoom.
- * Brief hide/show + source nudge matches the old “move the map” fix without a camera change.
- */
-function repaintTileLayerAfterTurnedOn(map, layerName) {
-  if (!map?.isStyleLoaded?.()) return;
-  if (layerName === 'ownership') {
-    repaintRegridParcelsAfterShow(map);
-    return;
-  }
-  if (layerName === 'regrid_zoning') {
-    if (!map.getSource('regrid-zoning-tiles')) return;
-    setRegridZoningLayersVisibility(map, false);
-    requestAnimationFrame(() => {
-      if (!layerStatusLiveRef.current?.regrid_zoning) return;
-      setRegridZoningLayersVisibility(map, true);
-      nudgeVectorTileSource(map, 'regrid-zoning-tiles');
-      flushMapRepaintAfterLayerChange(map);
-    });
-    return;
-  }
-  if (!getHostedTileLayerUrl(layerName) || !map.getSource(layerName)) return;
-  if (!tileLayerMapLayersPresent(map, layerName)) return;
-  setTileLayerVisibility(map, layerName, 'none');
-  requestAnimationFrame(() => {
-    if (!layerStatusLiveRef.current?.[layerName]) return;
-    setTileLayerVisibility(map, layerName, 'visible');
-    nudgeVectorTileSource(map, layerName);
-    flushMapRepaintAfterLayerChange(map);
-  });
-}
-
-function repaintLayersTurnedOn(map, layerStatus, turnedOnLayerNames, { regridFreshlyAdded = false } = {}) {
-  if (!map?.isStyleLoaded?.()) return;
-  const names = new Set(turnedOnLayerNames || []);
-  if (regridFreshlyAdded) names.add('ownership');
-  if (names.size === 0) return;
-  names.forEach((layerName) => repaintTileLayerAfterTurnedOn(map, layerName));
-}
-
-/**
- * Reloads the internal tile pyramid for a source (separate from `VectorTileSource#reload()`).
- * Needed after `setStyle` when tiles still do not repopulate until a user zoom.
- */
-function reloadVectorSourceTileCaches(map, sourceId) {
-  if (!map || !sourceId) return;
-  try {
-    const st = map.style;
-    if (!st || typeof st.getSourceCache !== 'function') return;
-    const cache = st.getSourceCache(sourceId);
-    if (cache && typeof cache.reload === 'function') {
-      cache.reload();
-    }
-    if (typeof st.updateSourceCaches === 'function') {
-      st.updateSourceCaches();
-    }
-  } catch (_) {
-    /* style may be mid-swap */
-  }
-}
-
-/** `reload()` + `setTiles(same)` + tile-cache reload — some style swaps need all three. */
-function forceVectorTileSourceRefresh(map, sourceId) {
-  if (!map || !sourceId) return;
-  try {
-    const src = map.getSource(sourceId);
-    if (!src) return;
-    if (typeof src.reload === 'function') {
-      src.reload();
-    }
-    const spec = getHostedTileLayerUrl(sourceId);
-    if (spec && isVectorPmtilesArchiveUrl(spec) && typeof src.setUrl === 'function') {
-      src.setUrl(spec);
-    } else if (spec && typeof src.setTiles === 'function') {
-      src.setTiles([spec]);
-    }
-    reloadVectorSourceTileCaches(map, sourceId);
-  } catch (_) {
-    /* source may be mid-style */
-  }
-}
-
-function reloadTileSources(map, sourceIds, includeRegridParcels) {
-  if (!map || !sourceIds?.size) return;
-  sourceIds.forEach((sourceId) => {
-    forceVectorTileSourceRefresh(map, sourceId);
-  });
-  if (includeRegridParcels) {
-    forceRegridParcelsSourceRefresh(map);
-  }
-}
-
-/**
- * After style/layer churn, do a deferred source refresh once when the map settles.
- * Only pass sources that were added or had their tile URL changed — not on visibility-only toggles.
- */
-function scheduleDeferredTileRefresh(map, mutatedSourceIds, includeRegridParcels) {
-  if (!map || !mutatedSourceIds?.size) return;
-  let didFlush = false;
-  const flush = () => {
-    if (didFlush) return;
-    didFlush = true;
-    reloadTileSources(map, mutatedSourceIds, includeRegridParcels);
-    try {
-      if (typeof map.triggerRepaint === 'function') map.triggerRepaint();
-    } catch (_) {
-      /* ignore */
-    }
-  };
-  try {
-    map.once('idle', flush);
-  } catch (_) {
-    /* ignore */
-  }
-  // Fallback in case idle doesn't fire promptly.
-  window.setTimeout(flush, 500);
-}
-
-/**
- * Verbose diagnostics (sourcedata + finishLayerStack snapshots).
- * Any of: localStorage / sessionStorage `cv_debug_ownership_tiles` = `1`
- * or URL contains `debugOwnershipTiles` (e.g. `?debugOwnershipTiles=1` or `&debugOwnershipTiles`).
- */
-function isCvOwnershipTileDebugEnabled() {
-  try {
-    if (typeof window === 'undefined') return false;
-    if (window.localStorage?.getItem('cv_debug_ownership_tiles') === '1') return true;
-    if (window.sessionStorage?.getItem('cv_debug_ownership_tiles') === '1') return true;
-    const href = String(window.location?.href || '');
-    if (/[?&#]debugOwnershipTiles\b/i.test(href)) return true;
-  } catch (_) {
-    return false;
-  }
-  return false;
-}
-
-/** Short line, always logged — filter console with `[cv:ownership-tiles]`. */
-function ownershipTilesTrace(phase, detail) {
-  try {
-    console.log('[cv:ownership-tiles]', phase, detail === undefined ? '' : detail);
-  } catch (_) {
-    /* ignore */
-  }
-}
-
-function traceMapboxStyleSwap(context, styleUrl) {
-  ownershipTilesTrace('basemap calling setStyle', { context, url: styleUrl });
-}
-
-/**
- * Legacy ownership diagnostics (kept for backward-compatible logs while migrating to Regrid-only parcels).
- */
-function summarizeOwnershipTileState(map, phase, extra = {}, opts = {}) {
-  const { always = false } = opts;
-  if (!map) return;
-  if (!always && !isCvOwnershipTileDebugEnabled()) return;
-  const src = map.getSource?.('ownership');
-  const hasLayer = Boolean(map.getLayer?.('regrid-parcels-layer'));
-  let sourceFeatures = null;
-  let renderedCount = null;
-  try {
-    if (src && map.querySourceFeatures) {
-      sourceFeatures = map.querySourceFeatures('ownership')?.length ?? 0;
-    }
-  } catch (e) {
-    sourceFeatures = `error: ${e?.message || e}`;
-  }
-  try {
-    if (hasLayer && map.queryRenderedFeatures) {
-      renderedCount = map.queryRenderedFeatures({ layers: ['regrid-parcels-layer'] })?.length ?? 0;
-    }
-  } catch (e) {
-    renderedCount = `error: ${e?.message || e}`;
-  }
-  let srcLoaded;
-  try {
-    srcLoaded = src && typeof src.loaded === 'function' ? src.loaded() : undefined;
-  } catch (_) {
-    srcLoaded = undefined;
-  }
-  ownershipTilesTrace(phase, {
-    zoom: typeof map.getZoom === 'function' ? map.getZoom() : undefined,
-    mapLoaded: typeof map.loaded === 'function' ? map.loaded() : undefined,
-    styleLoaded: typeof map.isStyleLoaded === 'function' ? map.isStyleLoaded() : undefined,
-    hasSource: Boolean(src),
-    hasOwnershipLayer: hasLayer,
-    sourceLoaded: srcLoaded,
-    querySourceFeatureCount: sourceFeatures,
-    queryRenderedFeatureCount: renderedCount,
-    ...extra,
-  });
-}
-
-/** Default view when starting the interactive tour (matches map init when no URL params). */
-const TUTORIAL_DEFAULT_VIEW = { center: DEFAULT_MAP_VIEW.center, zoom: DEFAULT_MAP_VIEW.zoom };
-/** Fillmore County, NE — parcel-dense area for tour step “parcel-practice” (matches shareable map URL). */
-const TUTORIAL_PARCEL_PRACTICE_VIEW = {
-  center: [-97.61354, 40.5307],
-  zoom: 16.147533670128382,
-};
+// -----------------------------------------------------------------------------
+// MapPage — standard layout:
+//   1. Context & external hooks
+//   2. Local state & refs
+//   3. Derived values (useMemo)
+//   4. Print / share callbacks
+//   5. Regrid & layer effects
+//   6. Map initialization
+//   7. Layer sync (updateLayers)
+//   8. Basemap handlers
+//   9. Feature selection & highlight (click, hover)
+//  10. Render
+// -----------------------------------------------------------------------------
 
 const MapPage = () => {
 
-  // =============== Constants and Component Def ===============
+  // --- 1. Context & external hooks ---
 
   const {
     selectedFeature,
@@ -1427,12 +246,15 @@ const MapPage = () => {
   const isPropertyTourRoute = routerLocation.pathname.startsWith('/tour/');
   const isBasemapTutorialStep = tourActive && tourMode === 'map' && tourStep?.id === 'basemap-control';
 
+  // --- 2. Local state & refs ---
+
   /** Synced from SharedMapViewPage (`property-tour-slide` event) for orbit boundary-only overlay. */
   const [propertyTourSlideId, setPropertyTourSlideId] = useState(null);
   const tourBoundaryOnlyPrint =
     isClientShareMapRoute &&
     (propertyTourSlideId === 'context' || propertyTourSlideId === 'vicinity');
 
+  /** On shared tour slides, only show the property boundary print element (hide other overlays). */
   const shouldRenderPrintElementOnMap = useCallback(
     (element) => {
       if (!element || element.hiddenOnMap) return false;
@@ -1545,7 +367,6 @@ const MapPage = () => {
           essential: true,
         });
       } catch (err) {
-        console.warn('Tutorial parcel practice view:', err);
       }
     };
 
@@ -1573,7 +394,6 @@ const MapPage = () => {
   const [sharePhotoPopupFullscreen, setSharePhotoPopupFullscreen] = useState(false);
   const [sharePhotoPopupIndex, setSharePhotoPopupIndex] = useState(0);
   const [sharePhotoPopupAnchorTick, setSharePhotoPopupAnchorTick] = useState(0);
-  const [isAutoFillMapLoading, setIsAutoFillMapLoading] = useState(false);
   /** Viewport (client) pixels for label preview while `showLabelOnMap` is off — fixed offset above cursor. */
   const [hoveredPrintCursorOverlayPx, setHoveredPrintCursorOverlayPx] = useState(null);
   /** Map-canvas px for ghost icon while placing a `shape_*` tool (matches click → unproject math). */
@@ -1582,7 +402,10 @@ const MapPage = () => {
   const [mapIsReady, setMapIsReady] = useState(false);
   const wasPrintingRef = useRef(false);
 
+  /** True when the active print tool is a polygon variant (boundary, general, etc.). */
   const isPolygonPlacingTool = (t) => t && (t === 'polygon' || t.startsWith('polygon_'));
+
+  /** True when the active print tool is a polyline variant or arrow. */
   const isPolylinePlacingTool = (t) => t && (t.startsWith('polyline_') || t === 'arrow');
   const overlayRenderRafRef = useRef(null);
   const sharePhotoTouchStartXRef = useRef(null);
@@ -1803,6 +626,7 @@ const MapPage = () => {
     };
   }, [isPrinting, activePrintTool, mapRef]);
 
+  /** Project a GeoJSON point to map-canvas pixel coordinates. */
   const projectPoint = (geometry) => {
     if (!geometry || geometry.type !== 'Point' || !mapRef.current) return null;
     const [lng, lat] = geometry.coordinates;
@@ -1810,6 +634,8 @@ const MapPage = () => {
     return { x: p.x, y: p.y };
   };
 
+
+  /** Attach screen x/y and projected rings for rendering a print element on the map overlay. */
   const withGeoProjectedFrame = (element) => {
     if (!element?.geometry || !mapRef.current) return element;
     if (element.geometry.type === 'Point') {
@@ -1853,6 +679,8 @@ const MapPage = () => {
     return element;
   };
 
+
+  /** After dragging a point icon on the overlay, write the new lng/lat back into geometry. */
   const syncProjectedEditToGeo = (nextElement) => {
     if (!nextElement || !mapRef.current) return nextElement;
 
@@ -1874,12 +702,16 @@ const MapPage = () => {
     return nextElement;
   };
 
+
+  /** Stroke/fill style for the in-progress polygon the user is placing. */
   const getPolygonDraftStyle = () => {
     const parsed = parsePrintPlacementTool(activePrintTool);
     const style = POLYGON_VARIANT_STYLES[parsed.variant] || POLYGON_VARIANT_STYLES.general;
     return style;
   };
 
+
+  /** Stroke/arrow style for the in-progress line the user is placing. */
   const getPolylineDraftStyle = () => {
     if (activePrintTool === 'arrow') {
       return {
@@ -1919,6 +751,8 @@ const MapPage = () => {
     };
   };
 
+
+  /** Area (m²) and perimeter (m) for a closed polygon from lng/lat vertices. */
   const getMetricsForPolygonLngLat = (lngLatPoints) => {
     if (!Array.isArray(lngLatPoints) || lngLatPoints.length < 3) return null;
     const ring = lngLatPoints.map((p) => [p.lng, p.lat]);
@@ -1929,6 +763,8 @@ const MapPage = () => {
     return { areaSqMeters, perimeterMeters };
   };
 
+
+  /** Total length (m) for a line from lng/lat vertices. */
   const getMetricsForLineLngLat = (lngLatPoints) => {
     if (!Array.isArray(lngLatPoints) || lngLatPoints.length < 2) return null;
     const coords = lngLatPoints.map((p) => [p.lng, p.lat]);
@@ -1936,6 +772,8 @@ const MapPage = () => {
     return { lengthMeters };
   };
 
+
+  /** Clicked Regrid parcel → fetch boundary if needed → add a Property Boundary print polygon. */
   const handleCreateBoundaryFromRegridParcel = async (feature) => {
     let geomFeature = feature;
     const ll = feature?.properties?.ll_uuid;
@@ -1966,287 +804,6 @@ const MapPage = () => {
     setActivePrintTool('select');
     setActiveSidePanelTab('print');
   };
-
-  const handleAutoFillMapFromBoundary = async () => {
-    if (isAutoFillMapLoading) return;
-    const boundary = [...(printElements || [])]
-      .reverse()
-      .find((el) => el?.type === 'polygon' && (el?.mapStyleVariant === 'boundary' || el?.label === 'Property Boundary'));
-    const ring = boundary?.geometry?.coordinates?.[0];
-    if (!ring || ring.length < 4) {
-      console.warn('Auto Fill Map: no boundary polygon found.');
-      return;
-    }
-
-    let boundaryPolygon = null;
-    try {
-      boundaryPolygon = turf.polygon([ring]);
-    } catch (_) {
-      console.warn('Auto Fill Map: invalid boundary geometry.');
-      return;
-    }
-
-    const safeIntersectPolygon = (polyA, polyB) => {
-      if (!polyA || !polyB) return null;
-      try {
-        // Turf versions differ: some accept (a, b), others expect a FeatureCollection.
-        const direct = turf.intersect(polyA, polyB);
-        if (direct) return direct;
-      } catch (_) {
-        /* fall through */
-      }
-      try {
-        return turf.intersect(turf.featureCollection([polyA, polyB]));
-      } catch (_) {
-        return null;
-      }
-    };
-
-    const clipLineToBoundary = (line, polygon) => {
-      if (!line || !polygon) return [];
-      try {
-        const boundaryLine = turf.polygonToLine(polygon);
-        const split = turf.lineSplit(line, boundaryLine);
-        const candidates = split?.features?.length ? split.features : [line];
-        return candidates.filter((seg) => {
-          const lenKm = turf.length(seg, { units: 'kilometers' });
-          if (!Number.isFinite(lenKm) || lenKm <= 0) return false;
-          const mid = turf.along(seg, lenKm / 2, { units: 'kilometers' });
-          return turf.booleanPointInPolygon(mid, polygon);
-        });
-      } catch (_) {
-        return [];
-      }
-    };
-
-    const polygonPiecesFromGeometry = (geom) => {
-      if (!geom) return [];
-      if (geom.type === 'Polygon') return [geom.coordinates];
-      if (geom.type === 'MultiPolygon') return geom.coordinates;
-      return [];
-    };
-
-    /** Auto Fill roads default to the neutral gray road style. */
-    const autoFillRoadToolAndLabel = () => ({
-      tool: 'polyline_single_track',
-      label: 'Road',
-    });
-
-    setIsAutoFillMapLoading(true);
-    try {
-      const latLngPairs = ring
-        .slice(0, -1)
-        .map((c) => `${Number(c[1]).toFixed(6)} ${Number(c[0]).toFixed(6)}`)
-        .join(' ');
-      if (!latLngPairs) return;
-
-      const query = `
-[out:json][timeout:25];
-(
-  way["highway"](poly:"${latLngPairs}");
-  way["waterway"](poly:"${latLngPairs}");
-  way["building"](poly:"${latLngPairs}");
-  way["natural"="water"](poly:"${latLngPairs}");
-);
-out geom;
-      `.trim();
-
-      const response = await fetch('https://overpass-api.de/api/interpreter', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8' },
-        body: `data=${encodeURIComponent(query)}`,
-      });
-      if (!response.ok) throw new Error(`Overpass error: ${response.status}`);
-      const data = await response.json();
-      const ways = (data?.elements || []).filter((e) => e?.type === 'way' && Array.isArray(e?.geometry));
-
-      let added = 0;
-      const MAX_FEATURES = 60;
-      const pendingFeatures = [];
-      let boundaryCenter = null;
-      try {
-        boundaryCenter = turf.centerOfMass(boundaryPolygon);
-      } catch (_) {
-        boundaryCenter = null;
-      }
-      for (const way of ways) {
-        const coords = way.geometry.map((g) => ({ lng: g.lon, lat: g.lat }));
-        if (coords.length < 2) continue;
-        const first = coords[0];
-        const last = coords[coords.length - 1];
-        const isClosed =
-          Math.abs(first.lng - last.lng) < 1e-8 && Math.abs(first.lat - last.lat) < 1e-8;
-
-        const tags = way.tags || {};
-        if (isClosed && coords.length >= 4) {
-          const ringCoords = coords.map((c) => [c.lng, c.lat]);
-          const normalizedRing =
-            Math.abs(ringCoords[0][0] - ringCoords[ringCoords.length - 1][0]) < 1e-8 &&
-            Math.abs(ringCoords[0][1] - ringCoords[ringCoords.length - 1][1]) < 1e-8
-              ? ringCoords
-              : [...ringCoords, ringCoords[0]];
-          let rawPolygon;
-          try {
-            rawPolygon = turf.polygon([normalizedRing]);
-          } catch (_) {
-            continue;
-          }
-          const clipped = safeIntersectPolygon(rawPolygon, boundaryPolygon);
-          const pieces = polygonPiecesFromGeometry(clipped?.geometry);
-          if (!pieces.length) continue;
-
-          const isBuilding = Boolean(tags.building);
-          const isWater = tags.natural === 'water';
-          for (const polyCoords of pieces) {
-            const outer = Array.isArray(polyCoords?.[0]) ? polyCoords[0] : null;
-            if (!outer || outer.length < 4) continue;
-            const lngLat = outer.slice(0, -1).map(([lng, lat]) => ({ lng, lat }));
-            if (lngLat.length < 3) continue;
-            const metrics = getMetricsForPolygonLngLat(lngLat);
-            const center = {
-              lng: lngLat.reduce((s, c) => s + c.lng, 0) / lngLat.length,
-              lat: lngLat.reduce((s, c) => s + c.lat, 0) / lngLat.length,
-            };
-            let buildingMeta = null;
-            if (isBuilding) {
-              const area = Number(metrics?.areaSqMeters || 0);
-              let centroid = null;
-              try {
-                const poly = turf.polygon([outer]);
-                centroid = turf.centerOfMass(poly);
-              } catch (_) {
-                centroid = null;
-              }
-              let distMeters = 999999;
-              if (centroid && boundaryCenter) {
-                try {
-                  distMeters =
-                    turf.distance(centroid, boundaryCenter, { units: 'kilometers' }) * 1000;
-                } catch (_) {
-                  distMeters = 999999;
-                }
-              }
-              const buildingTag = String(tags.building || '').toLowerCase();
-              const dwellingBoost =
-                buildingTag === 'house' ||
-                buildingTag === 'residential' ||
-                buildingTag === 'detached' ||
-                buildingTag === 'yes'
-                  ? 1.25
-                  : 1.0;
-              // Prefer larger buildings nearer parcel center; slight boost for home-like tags.
-              const homeScore = (Math.sqrt(Math.max(area, 1)) / (1 + distMeters * 0.01)) * dwellingBoost;
-              buildingMeta = { homeScore };
-            }
-
-            pendingFeatures.push({
-              tool: isWater ? 'polygon_water' : 'polygon_general',
-              options: {
-                coordinates: lngLat,
-                metrics,
-                label: isBuilding ? 'Barn/Shed' : isWater ? 'Water' : 'Area',
-                style: isBuilding
-                  ? { fill: '#d1d5db', fillOpacity: 0.25, stroke: '#6b7280', strokeWidth: 1.5 }
-                  : undefined,
-              },
-              center,
-              isBuilding,
-              buildingMeta,
-            });
-          }
-        } else {
-          const line = turf.lineString(coords.map((c) => [c.lng, c.lat]));
-          const clippedSegments = clipLineToBoundary(line, boundaryPolygon);
-          const isRoad = Boolean(tags.highway);
-          const roadSpec = isRoad ? autoFillRoadToolAndLabel() : null;
-          for (const seg of clippedSegments) {
-            const segCoords = (seg.geometry?.coordinates || []).map(([lng, lat]) => ({ lng, lat }));
-            if (segCoords.length < 2) continue;
-            const metrics = getMetricsForLineLngLat(segCoords);
-            const center = segCoords[Math.floor(segCoords.length / 2)];
-            pendingFeatures.push({
-              tool: isRoad ? roadSpec.tool : 'polyline_stream',
-              options: {
-                coordinates: segCoords,
-                metrics,
-                label: isRoad ? roadSpec.label : 'Stream',
-              },
-              center,
-              isBuilding: false,
-              buildingMeta: null,
-            });
-          }
-        }
-      }
-
-      // Pick one likely primary dwelling and relabel as Main Home.
-      const buildingCandidates = pendingFeatures
-        .map((f, idx) => ({ idx, ...f }))
-        .filter((f) => f.isBuilding && Number.isFinite(f.buildingMeta?.homeScore));
-      if (buildingCandidates.length > 0) {
-        buildingCandidates.sort((a, b) => (b.buildingMeta.homeScore || 0) - (a.buildingMeta.homeScore || 0));
-        const winnerIdx = buildingCandidates[0].idx;
-        pendingFeatures[winnerIdx] = {
-          ...pendingFeatures[winnerIdx],
-          options: {
-            ...pendingFeatures[winnerIdx].options,
-            label: 'Barn/Shed',
-            style: {
-              ...(pendingFeatures[winnerIdx].options.style || {}),
-              stroke: '#111827',
-              strokeWidth: Math.max(2, Number(pendingFeatures[winnerIdx].options?.style?.strokeWidth || 1.5)),
-            },
-          },
-        };
-
-        // Add a dedicated point marker for the inferred primary dwelling.
-        const homeCenter = pendingFeatures[winnerIdx].center;
-        if (homeCenter && Number.isFinite(homeCenter.lng) && Number.isFinite(homeCenter.lat)) {
-          pendingFeatures.push({
-            tool: 'shape_houseChimney',
-            options: {
-              label: 'Main Home',
-              fill: '#ffffff',
-              stroke: '#111827',
-              strokeWidth: 3,
-              fillOpacity: 1,
-              iconOpacity: 1,
-              iconScale: 0.64,
-              logoColor: '#111827',
-            },
-            center: homeCenter,
-            isBuilding: false,
-            buildingMeta: null,
-          });
-        }
-      }
-
-      for (const item of pendingFeatures) {
-        if (added >= MAX_FEATURES) break;
-        addPrintElementFromTool(item.tool, item.options, item.center);
-        added += 1;
-      }
-      console.log(`Auto Fill Map: added ${added} features`);
-    } catch (err) {
-      console.error('Auto Fill Map failed:', err);
-    } finally {
-      setIsAutoFillMapLoading(false);
-      setActivePrintTool('select');
-      setActiveSidePanelTab('print');
-    }
-  };
-
-  const hasBoundaryForAutoFill = useMemo(
-    () =>
-      (printElements || []).some(
-        (el) =>
-          el?.type === 'polygon' &&
-          (el?.mapStyleVariant === 'boundary' || el?.label === 'Property Boundary') &&
-          Array.isArray(el?.geometry?.coordinates?.[0]) &&
-          el.geometry.coordinates[0].length >= 4
-      ),
-    [printElements]
-  );
 
   /** Feature-geometry anchor for map labels (WGS84), independent of current zoom. */
   const getElementAnchorLngLat = (element) => {
@@ -2305,8 +862,12 @@ out geom;
     return local;
   };
 
+
+  /** Photo URLs attached to a print shape element. */
   const getElementPhotoGallery = useCallback((element) => getPhotoSrcListFromElement(element), []);
 
+
+  /** True for a point shape that has at least one photo in its gallery. */
   const isPhotoPointElement = useCallback(
     (element) =>
       !!element &&
@@ -2357,12 +918,16 @@ out geom;
     );
   }, [currentSharePhotoGallery]);
 
+
+  /** Close the floating photo card on shared/tour map views. */
   const closeSharePhotoPopup = useCallback(() => {
     setSharePhotoPopupFullscreen(false);
     setSharePhotoPopupElementId(null);
     setSharePhotoPopupIndex(0);
   }, []);
 
+
+  /** Prev/next photo within the same print element's gallery. */
   const stepSharePhotoPopup = useCallback(
     (delta) => {
       if (!currentSharePhotoGallery.length) return;
@@ -2374,6 +939,8 @@ out geom;
     [currentSharePhotoGallery.length]
   );
 
+
+  /** Prev/next photo point across ranked tour stops; flies the map to each place. */
   const stepSharePhotoFeature = useCallback(
     (delta) => {
       if (!shareViewerPhotoRanked || shareViewerPhotoRanked.length <= 1) return;
@@ -2431,6 +998,9 @@ out geom;
     };
   }, [shareViewerReadOnly, closeSharePhotoPopup]);
 
+  // --- 4. Print / share callbacks ---
+
+  /** Hit-test print elements at map-canvas pixels (topmost wins). Used for select tool. */
   const pickPrintElementAtScreen = useCallback(
     (px, py) => {
       if (!mapRef.current || !isPrinting) return null;
@@ -2483,6 +1053,8 @@ out geom;
     [printElements, isPrinting]
   );
 
+
+  /** Fit map bounds or fly to center for a print element's geometry. */
   const zoomToPrintElement = useCallback((element) => {
     const map = mapRef.current;
     if (!map || !element?.geometry) return;
@@ -2525,6 +1097,8 @@ out geom;
     }
   }, []);
 
+
+  /** Allow dropping a gallery photo onto the map while in print mode. */
   const handlePrintMapDragOver = useCallback(
     (e) => {
       if (!isPrinting) return;
@@ -2535,6 +1109,8 @@ out geom;
     [isPrinting]
   );
 
+
+  /** Drop a gallery photo onto the map → create a photo point print element. */
   const handlePrintMapDrop = useCallback(
     (e) => {
       if (!isPrinting || !mapRef.current) return;
@@ -2566,17 +1142,15 @@ out geom;
     if (!map) return;
 
     try {
-      let tileJson = cachedRegridTileJson;
+      let tileJson = getCachedRegridTileJson();
       if (!tileJson) {
         tileJson = await fetchRegridParcelTileJson();
-        cachedRegridTileJson = tileJson;
-        console.log('✅ Got Regrid TileJSON (cached for later style reloads):', tileJson);
+        setCachedRegridTileJson(tileJson);
       }
 
       const vectorMinZoom = getRegridVectorMinZoomForMap(map);
       addRegridParcelLayersFromTileJson(map, tileJson, vectorMinZoom);
       if (map.getSource('regrid-parcels')) {
-        console.log(`✅ Regrid MVT (min zoom ${vectorMinZoom} for current area)`);
       }
     } catch (error) {
       console.error('Error setting up Regrid tiles:', error);
@@ -2584,8 +1158,9 @@ out geom;
   }, [mapRef]);
 
   const [regridTileJsonVersion, setRegridTileJsonVersion] = useState(0);
-  const [regridZoningTileJsonVersion, setRegridZoningTileJsonVersion] = useState(0);
 
+
+  /** Whether Regrid parcel vectors should render (ownership on, print overlay, wizard). */
   const parcelMapVisibility = useMemo(() => {
     const printHidesParcels =
       isPrinting && !printParcelsOverlayVisible && !propertyMapWizardActive;
@@ -2599,25 +1174,32 @@ out geom;
   /** Latest visibility for async `style.load` / `idle` basemap callbacks (avoids stale closures). */
   const parcelMapVisibilityRef = useRef(parcelMapVisibility);
   parcelMapVisibilityRef.current = parcelMapVisibility;
-  const prevParcelShowRegridRef = useRef(null);
   const prevLayerStatusForRepaintRef = useRef(null);
   const layerStatusRef = useRef(layerStatus);
   layerStatusRef.current = layerStatus;
   layerStatusLiveRef.current = layerStatus;
   parcelShowRegridLiveRef.current = Boolean(parcelMapVisibility.showRegrid);
+  /**
+   * Regrid restacks move layers relative to basemap rasters — repaired after ownership sync
+   * (hosted layers use `getVectorLayerInsertBeforeId` inside `updateLayers` instead).
+   */
+  const maintainBasemapStackRef = useRef(() => {});
+  const syncOwnershipLayerStackRef = useRef(() => {});
+  const applyLabelLayersRef = useRef(() => {});
+  const hideLabelLayerSafeRef = useRef(() => {});
 
-  /** Prefetch TileJSON so `updateLayers` can add Regrid synchronously like Martin layers. */
+  /** Prefetch TileJSON so `updateLayers` can add Regrid synchronously with hosted PMTiles layers. */
   useEffect(() => {
     let cancelled = false;
     (async () => {
-      if (cachedRegridTileJson) {
+      if (getCachedRegridTileJson()) {
         if (!cancelled) setRegridTileJsonVersion((v) => v + 1);
         return;
       }
       try {
         const tileJson = await fetchRegridParcelTileJson();
         if (cancelled) return;
-        cachedRegridTileJson = tileJson;
+        setCachedRegridTileJson(tileJson);
         setRegridTileJsonVersion((v) => v + 1);
       } catch (e) {
         console.error('Regrid TileJSON prefetch failed:', e);
@@ -2628,83 +1210,7 @@ out geom;
     };
   }, []);
 
-  /** Prefetch Standardized Zoning custom MVT layer (POST /api/v1/sources). */
-  useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      if (getCachedRegridZoningTileJson()) {
-        if (!cancelled) setRegridZoningTileJsonVersion((v) => v + 1);
-        return;
-      }
-      try {
-        await ensureRegridZoningTileJson();
-        if (!cancelled) setRegridZoningTileJsonVersion((v) => v + 1);
-      } catch (e) {
-        console.error('Regrid zoning TileJSON prefetch failed:', e);
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-
-  useEffect(() => {
-    if (basemapRestoreBlockingLayersRef.current || basemapApplyInProgressRef.current) return;
-    if (!mapIsReady || !mapRef?.current?.isStyleLoaded?.()) return;
-    const map = mapRef.current;
-    const showRegrid = Boolean(parcelMapVisibility.showRegrid);
-    const regridShown = showRegrid && prevParcelShowRegridRef.current !== true;
-    prevParcelShowRegridRef.current = showRegrid;
-    syncRegridParcelLayersIntoMap(map, parcelMapVisibility);
-    applyParcelVisualizationVisibility(map, parcelMapVisibility);
-    if (showRegrid) {
-      bringRegridParcelLayersBeforeSymbolLabels(map);
-      fireRegridRestack(map);
-    }
-    if (regridShown) {
-      requestAnimationFrame(() => {
-        const m = mapRef.current;
-        if (!m?.isStyleLoaded?.() || !parcelMapVisibilityRef.current?.showRegrid) return;
-        syncRegridParcelLayersIntoMap(m, parcelMapVisibilityRef.current);
-        applyParcelVisualizationVisibility(m, parcelMapVisibilityRef.current);
-        repaintRegridParcelsAfterShow(m);
-      });
-    }
-  }, [mapIsReady, propertyMapWizardActive, parcelMapVisibility, mapRef, regridTileJsonVersion]);
-
-  const showRegridZoning = Boolean(layerStatus.regrid_zoning);
-
-  useEffect(() => {
-    if (basemapRestoreBlockingLayersRef.current || basemapApplyInProgressRef.current) return;
-    if (!mapIsReady || !mapRef?.current?.isStyleLoaded?.()) return;
-    const map = mapRef.current;
-
-    if (!showRegridZoning) {
-      removeRegridZoningTileStack(map);
-      return;
-    }
-
-    let cancelled = false;
-    (async () => {
-      try {
-        if (!getCachedRegridZoningTileJson()) {
-          await ensureRegridZoningTileJson();
-        }
-        if (cancelled || !mapRef.current) return;
-        syncRegridZoningLayersIntoMap(mapRef.current, true);
-        setRegridZoningLayersVisibility(mapRef.current, true);
-        bringRegridParcelLayersBeforeSymbolLabels(mapRef.current);
-      } catch (e) {
-        console.error('Regrid zoning tiles setup failed:', e);
-      }
-    })();
-
-    return () => {
-      cancelled = true;
-    };
-  }, [mapIsReady, showRegridZoning, regridZoningTileJsonVersion, regridTileJsonVersion]);
-
-  /** Rebuild parcel/zoning MVT when map center crosses sparse ↔ dense geofences (minzoom 10 vs 13). */
+  /** Rebuild parcel MVT when map center crosses sparse ↔ dense geofences (minzoom 10 vs 13). */
   useEffect(() => {
     if (!mapIsReady || !mapRef?.current) return undefined;
     const map = mapRef.current;
@@ -2715,12 +1221,8 @@ out geom;
       debounceId = window.setTimeout(() => {
         const m = mapRef.current;
         if (!m?.isStyleLoaded?.()) return;
-        syncRegridParcelLayersIntoMap(m, parcelMapVisibilityRef.current);
-        applyParcelVisualizationVisibility(m, parcelMapVisibilityRef.current);
-        if (layerStatusRef.current?.regrid_zoning) {
-          syncRegridZoningLayersIntoMap(m, true);
-          setRegridZoningLayersVisibility(m, true);
-        }
+        syncOwnershipLayerStackRef.current(m);
+        reapplySelectionHighlightIfNeededRef.current();
       }, 350);
     };
     map.on('moveend', onMoveEnd);
@@ -2739,10 +1241,6 @@ out geom;
   
   // 🔍 DEBUG: Monitor highlightSettings changes
   useEffect(() => {
-    console.log('🔍 highlightSettings changed in Map.js:', highlightSettings);
-    console.log('🔍 highlightSettings.fillColor:', highlightSettings?.fillColor);
-    console.log('🔍 highlightSettings.fillOpacity:', highlightSettings?.fillOpacity);
-    console.log('🔍 highlightSettings.lineColor:', highlightSettings?.lineColor);
     
     // 🔍 Update the ref with current values
     highlightSettingsRef.current = highlightSettings;
@@ -2750,8 +1248,18 @@ out geom;
   
   const [topLayer, setTopLayer] = useState(null);
   const [isMapLoading, setIsMapLoading] = useState(true); // Map loading state
-  const highlightLayerId = 'highlight-layer'; // ID for the highlight layer
+  const highlightLayerId = 'highlight-layer'; // legacy dynamic ids — cleaned up on remove
+  const SELECTION_HIGHLIGHT_SOURCE_ID = 'cv-map-selection-highlight';
+  const SELECTION_HIGHLIGHT_FILL_ID = 'cv-map-selection-highlight-fill';
+  const SELECTION_HIGHLIGHT_LINE_ID = 'cv-map-selection-highlight-line';
+  const EMPTY_FEATURE_COLLECTION = { type: 'FeatureCollection', features: [] };
   const highlightRenderTimeoutRef = useRef(null);
+  /** GeoJSON snapshot of the last successful highlight — survives pan/zoom re-query gaps. */
+  const selectionHighlightSnapshotRef = useRef(null);
+  const selectedFeatureRef = useRef([]);
+  selectedFeatureRef.current = selectedFeature;
+  const highlightFeatureRef = useRef(() => {});
+  const reapplySelectionHighlightIfNeededRef = useRef(() => {});
   const [selectedFilterPolygon, setSelectedFilterPolygon] = useState(null);
   const baseMapRef = useRef(DEFAULT_BASEMAP_ID);
   const currentStyleUrlRef = useRef(null);
@@ -2783,23 +1291,35 @@ out geom;
   const initialBasemapRestoreCompleteRef = useRef(false);
   /** Tracks last applied `?basemap=` for back/forward URL changes. */
   const prevUrlBasemapRef = useRef(null);
+  /** One-shot guard: apply `?basemap=` from URL after mapIsReady (same path as saved print maps). */
+  const initialUrlBasemapAppliedRef = useRef(false);
   /** While restoring a saved print map, defer layerStatus→updateLayers until basemap finishes. */
   const basemapRestoreBlockingLayersRef = useRef(false);
+  /** Writes lat/lng/zoom/basemap to the address bar (assigned after helpers exist). */
+  const syncMapUrlRef = useRef(() => {});
+  /** Immediate `?basemap=` write on picker change (must not wait for pan or apply verify). */
+  const writeBasemapToUrlRef = useRef(() => {});
 
   useEffect(() => {
     is3DEnabledRef.current = is3DEnabled;
   }, [is3DEnabled]);
 
+
+  /** Update basemap state/refs/UI and refresh Regrid parcel outline colors for the new basemap. */
   const publishBasemapSelection = useCallback(
-    (id) => {
-      const next = String(id || '').trim() || DEFAULT_BASEMAP_ID;
+    (id, { skipUrlWrite = false } = {}) => {
+      const next = normalizeBasemapId(id);
       if (pendingPrintBasemapRestoreRef) pendingPrintBasemapRestoreRef.current = null;
+      urlBasemapIdRef.current = next;
       baseMapRef.current = next;
       if (activeBasemapIdRef) activeBasemapIdRef.current = next;
       regridStyleBasemapRef.current = next;
       setBasemap(next);
       setCurrentBasemapId(next);
       applyRegridParcelOutlineForBasemap(mapRef.current, next);
+      if (!skipUrlWrite) {
+        writeBasemapToUrlRef.current(next);
+      }
     },
     [setCurrentBasemapId, activeBasemapIdRef, pendingPrintBasemapRestoreRef]
   );
@@ -3099,27 +1619,18 @@ out geom;
   .filter(Boolean);
 
   
-  /**
-   *  =============== Map Initialization ===============
-   *
-   * Creates Mapbox map and and then after it's done loading sets loading bool
-   * to false, setsMapRef in parent. Calls updateLayers which adds ownership becase
-   * of it's hard coded True in parent layerStatus
-   * @param {number} a - The first number.
-   * @param {number} b - The second number.
-   * @returns {number} The result of adding a and b.
-   */
+  // --- 6. Map initialization ---
+
   useEffect(() => {
-    console.log('Initializing Mapbox map...');
     // Use live browser URL — same source of truth as refresh / paste-into-new-tab.
     const params = queryString.parse(window.location.search);
     const effectiveBasemap = getBasemapIdFromSearch(window.location.search);
-    console.log('Parsed URL Params:', params, 'effectiveBasemap:', effectiveBasemap);
+    mapDebug.trace('map init', { basemap: effectiveBasemap, params });
     urlBasemapIdRef.current = effectiveBasemap;
     initialBasemapRestoreCompleteRef.current = false;
     needsInitialBasemapApplyRef.current = true;
-    console.log('Setting basemap from URL:', effectiveBasemap);
-    publishBasemapSelection(effectiveBasemap);
+    initialUrlBasemapAppliedRef.current = false;
+    publishBasemapSelection(effectiveBasemap, { skipUrlWrite: true });
     // All four supported basemaps share one Mapbox style; overlays are applied after load.
     const initialStyle = PERSISTENT_BASE_STYLE_ID;
     // Initialize the Mapbox map
@@ -3136,57 +1647,18 @@ out geom;
       maxZoom: 19,
       maxPitch: 85,
       preserveDrawingBuffer: true,
-      // Set up transformRequest globally to handle TMS coordinate conversion for high-def tiles
       transformRequest: (url, resourceType) => {
         try {
-          // Convert URL to string if it's an object
           const urlStr = typeof url === 'string' ? url : (url?.url || url?.toString() || String(url));
-          
-          // Only transform Tile requests for our high-def tiles
           if (resourceType === 'Tile' && urlStr && urlStr.includes('tiles.regrid.com')) {
             const proxyUrl = ensureRegridTileProxyUrl(urlStr);
             if (proxyUrl !== urlStr) {
               return { url: proxyUrl };
             }
           }
-
-          if (resourceType === 'Tile' && urlStr && urlStr.includes('teton_high_def_V2/tiles_all_3inch')) {
-            // Extract z, x, y from URL pattern: .../{z}/{x}/{y}.png
-            const urlMatch = urlStr.match(/tiles_all_3inch\/(\d+)\/(\d+)\/(\d+)\.png/);
-            if (urlMatch) {
-              const z = parseInt(urlMatch[1], 10);
-              const x = parseInt(urlMatch[2], 10);
-              const y_xyz = parseInt(urlMatch[3], 10); // This is XYZ Y from Mapbox
-              
-              // Convert XYZ Y to TMS Y (tiles stored in TMS format in GCS)
-              const tmsY = Math.pow(2, z) - 1 - y_xyz;
-              
-              // Reconstruct URL with TMS Y coordinate
-              const newUrl = urlStr.replace(
-                `tiles_all_3inch/${z}/${x}/${y_xyz}.png`,
-                `tiles_all_3inch/${z}/${x}/${tmsY}.png`
-              );
-              
-              // Log all conversions, especially around the cutoff point
-              if (z === 13 && y_xyz >= 2995) {
-                console.log(`🔄 Tile conversion (zoom 13, near cutoff): z=${z}, x=${x}, XYZ Y=${y_xyz} -> TMS Y=${tmsY}`);
-                console.log(`🔄 Original: ${urlStr}`);
-                console.log(`🔄 Converted: ${newUrl}`);
-              } else {
-                console.log(`🔄 Tile conversion: z=${z}, x=${x}, XYZ Y=${y_xyz} -> TMS Y=${tmsY}`);
-              }
-              
-              return { url: newUrl };
-            } else {
-              console.warn('⚠️ High-def tile URL did not match pattern:', urlStr);
-            }
-          }
-          
-          // For all other requests, return as-is
           return { url: urlStr };
-          
         } catch (error) {
-          console.error('❌ Error in transformRequest:', error);
+          console.error('Error in transformRequest:', error);
           const urlStr = typeof url === 'string' ? url : (url?.url || url?.toString() || String(url));
           return { url: urlStr };
         }
@@ -3194,7 +1666,6 @@ out geom;
     });
   
     mapRef.current.on('load', () => {
-      console.log('✅ Map loaded successfully.');
   
       if (!mapRef.current.hasImage('custom-pin')) {
         mapRef.current.loadImage('/pin_better.png', (error, image) => {
@@ -3203,7 +1674,6 @@ out geom;
             return;
           }
           mapRef.current.addImage('custom-pin', image);
-          console.log('✅ Custom pin added to map.');
         });
       }
 
@@ -3213,44 +1683,17 @@ out geom;
       let newLayerStatus = {}; 
       let layerList = [];
       
-      // Apply ?basemap= from URL once the style is ready (refresh / new tab / paste link).
-      mapRef.current.once('idle', () => {
-        const basemapId = getBasemapIdFromSearch(window.location.search);
-        console.log('✅ Map idle — applying URL basemap:', basemapId);
-        urlBasemapIdRef.current = basemapId;
-        publishBasemapSelection(basemapId);
-
-        const map = mapRef.current;
-        if (!map?.isStyleLoaded?.()) return;
-
-        const overlaysOk =
-          verifyBasemapAppliedOnMap(map, basemapId) &&
-          !needsBasemapOverlayMaintenance(map, basemapId);
-
-        if (overlaysOk) {
-          lastAppliedBasemapRef.current = basemapId;
-          initialBasemapRestoreCompleteRef.current = true;
-          needsInitialBasemapApplyRef.current = false;
-          return;
-        }
-
-        initialBasemapRestoreCompleteRef.current = false;
-        needsInitialBasemapApplyRef.current = true;
-        applyBasemapByIdRef.current(basemapId);
-      });
       window.mapRef = mapRef;
       window.updateExistingHighlights = updateExistingHighlights;
       // ✅ Step 2: Ensure Layers Are Loaded Before Querying Features
       const params = queryString.parse(routerLocation.search);
       if (params.highlights) {
-        console.log("Set inital Higlights")
         setInitialHighlightIds(params.highlights.split(","));
       }
     });
   
     return () => {
       if (mapRef.current) {
-        console.log('Cleaning up map and draw control...');
         mapRef.current.remove();
       }
     };
@@ -3262,11 +1705,9 @@ const computedWidth = '100vw';
 const computedHeight = '100vh';
 
   useEffect(() => {
-    console.log("notes updated", notes);
   }, [notes]);
 
 useEffect(() => {
-  console.log("isPrinting updated", isPrinting);
 }, [isPrinting]);
 
   /** WebGL map often prints blank until dimensions are synced with the print preview layout. */
@@ -3286,56 +1727,32 @@ useEffect(() => {
   }, [mapIsReady, mapRef]);
 
   // =============== Regrid Parcel Tiles Setup ===============
-  /**
-   * Regrid MVT layers are removed on style reload; `updateLayers` + sync re-add with Martin layers.
-   * Stack stays on map at all zoom levels when ownership is on — source/layer minzoom gates tile fetch.
-   */
+  /** Prefetch TileJSON if missing; layer add/sync runs in `updateLayers` like other layers. */
   useEffect(() => {
-    if (!mapRef.current || !mapIsReady) return;
+    if (!mapRef.current || !mapIsReady) return undefined;
 
-    const map = mapRef.current;
-
-    const runEnsure = async () => {
-      if (basemapRestoreBlockingLayersRef.current || basemapApplyInProgressRef.current) return;
-      if (!mapRef.current) return;
-      const m = mapRef.current;
-      if (!m.loaded() || !m.isStyleLoaded()) return;
-
-      const vis = parcelMapVisibilityRef.current ?? parcelMapVisibility;
-      if (
-        vis.showRegrid &&
-        !m.getSource('regrid-parcels') &&
-        !cachedRegridTileJson
-      ) {
+    const ensureTileJson = async () => {
+      if (getCachedRegridTileJson()) return;
+      try {
         await setupRegridTiles();
+      } catch (_) {
+        /* ignore */
       }
-      syncRegridParcelLayersIntoMap(m, vis);
-      applyParcelVisualizationVisibility(m, vis);
-
-      if (!mapRef.current) return;
-      bringRegridParcelLayersBeforeSymbolLabels(mapRef.current);
-      applyParcelVisualizationVisibility(mapRef.current, vis);
-      fireRegridRestack(mapRef.current);
     };
+    void ensureTileJson();
 
-    if (map.loaded() && map.isStyleLoaded()) {
-      runEnsure();
-    } else {
-      map.once('idle', runEnsure);
-    }
-
-    window.updateRegridParcels = runEnsure;
+    window.updateRegridParcels = () => {
+      if (basemapRestoreBlockingLayersRef.current || basemapApplyInProgressRef.current) return;
+      updateLayers();
+    };
 
     return () => {
       delete window.updateRegridParcels;
     };
-  }, [mapRef, mapIsReady, setupRegridTiles, parcelMapVisibility]);
+  }, [mapRef, mapIsReady, setupRegridTiles]);
 
-  
-  /**
-   * Helper function to get the appropriate identifier for a feature
-   * by determining which layer it belongs to and extracting the correct identifier
-   */
+
+  /** Extract a stable id (GFI, pidn, ll_uuid, etc.) from a clicked map feature for highlight restore. */
   const getFeatureIdentifierFromFeature = useCallback((feature) => {
     if (!feature || !feature.properties) {
       return null;
@@ -3343,12 +1760,15 @@ useEffect(() => {
 
     const props = feature.properties;
     
-    // Determine which layer this feature belongs to by checking GFI first (ownership)
+    if (props.ll_uuid) {
+      return props.ll_uuid;
+    }
+    if (props.parcelnumb) {
+      return props.parcelnumb;
+    }
     if (props.GFI) {
       return props.GFI;
     }
-    
-    // For ownership features with pidn
     if (props.pidn) {
       return props.pidn;
     }
@@ -3381,50 +1801,83 @@ useEffect(() => {
     return null;
   }, []);
 
-  useEffect(() => {  
-    const updateUrl = () => {
-      console.log("Updating URL");
-      if (restoringPrintBasemapRef.current) return;
-      if (!mapRef.current) return; // Prevent errors if mapRef is not set
-      // Public client routes use their own URLs; never replace ?tour=1 or /tour/:token with map ?lat=&lng=…
-      try {
-        const p = window.location?.pathname || '';
-        if (p.startsWith('/view/') || p.startsWith('/tour/')) return;
-      } catch {
-        /* ignore */
-      }
+  writeBasemapToUrlRef.current = (basemapId) => {
+    try {
+      const p = window.location?.pathname || '';
+      if (p.startsWith('/view/') || p.startsWith('/tour/')) return;
+    } catch {
+      return;
+    }
+    const next = normalizeBasemapId(basemapId);
+    const params = queryString.parse(routerLocation.search || '');
+    params.basemap = next;
+    const search = queryString.stringify(params);
+    const nextSearch = search ? `?${search}` : '';
+    if (routerLocation.search === nextSearch) {
+      prevUrlBasemapRef.current = next;
+      return;
+    }
+    prevUrlBasemapRef.current = next;
+    navigate({ pathname: routerLocation.pathname, search }, { replace: true });
+  };
 
-      const center = mapRef.current.getCenter();
-      const zoom = mapRef.current.getZoom();
-      
-      // Get identifiers for all selected features
-      const highlights = selectedFeature
-        .map((feature) => getFeatureIdentifierFromFeature(feature))
-        .filter(Boolean) // Removes null/undefined values
-        .join(',');
-        
-      const newParams = queryString.stringify({
-        lat: center.lat.toFixed(5),
-        lng: center.lng.toFixed(5),
-        zoom: zoom,
-        highlights,
-        layers: layerOrder.join(','), // ✅ Track layer order
-        basemap: normalizeBasemapId(activeBasemapIdRef?.current || baseMapRef.current)
-      });
-      if (routerLocation.search === `?${newParams}`) return;
-      navigate({ pathname: routerLocation.pathname, search: newParams }, { replace: true });
-    };
-  
-    // Attach updateUrl to map movement
-    mapRef.current.on('moveend', updateUrl);
-  
-    // ✅ Also call `updateUrl` immediately when `selectedFeature` or `layerOrder` changes
-    updateUrl();
-  
+  syncMapUrlRef.current = () => {
+    if (!mapRef.current) return;
+    try {
+      const p = window.location?.pathname || '';
+      if (p.startsWith('/view/') || p.startsWith('/tour/')) return;
+    } catch {
+      /* ignore */
+    }
+
+    const center = mapRef.current.getCenter();
+    const zoom = mapRef.current.getZoom();
+    const highlights = selectedFeature
+      .map((feature) => getFeatureIdentifierFromFeature(feature))
+      .filter(Boolean)
+      .join(',');
+
+    const liveBasemap = normalizeBasemapId(
+      activeBasemapIdRef?.current || baseMapRef.current || basemap || currentBasemapId
+    );
+    const pendingUrlBasemap = normalizeBasemapId(urlBasemapIdRef.current || '');
+    const basemapForUrl =
+      !initialBasemapRestoreCompleteRef.current &&
+      pendingUrlBasemap &&
+      pendingUrlBasemap !== liveBasemap
+        ? pendingUrlBasemap
+        : liveBasemap;
+
+    const newParams = queryString.stringify({
+      lat: center.lat.toFixed(5),
+      lng: center.lng.toFixed(5),
+      zoom: zoom,
+      highlights,
+      layers: layerOrder.join(','),
+      basemap: basemapForUrl,
+    });
+    if (routerLocation.search === `?${newParams}`) return;
+    navigate({ pathname: routerLocation.pathname, search: newParams }, { replace: true });
+  };
+
+  useEffect(() => {
+    if (!mapRef.current) return undefined;
+    const onMoveEnd = () => syncMapUrlRef.current();
+    mapRef.current.on('moveend', onMoveEnd);
+    syncMapUrlRef.current();
     return () => {
-      mapRef.current.off('moveend', updateUrl);
+      mapRef.current?.off('moveend', onMoveEnd);
     };
-  }, [layerOrder, selectedFeature, navigate, getFeatureIdentifierFromFeature, routerLocation.search]);
+  }, [
+    layerOrder,
+    selectedFeature,
+    basemap,
+    currentBasemapId,
+    navigate,
+    getFeatureIdentifierFromFeature,
+    routerLocation.pathname,
+    routerLocation.search,
+  ]);
   
 
 
@@ -3457,15 +1910,12 @@ useEffect(() => {
     if (!initialHighlightIds || initialHighlightIds.length === 0) return; // No highlights to restore
     if (!mapRef.current) return;
     
-    console.log("🎯 Attempting to restore highlights:", initialHighlightIds);
-    console.log("📊 Current layerStatus:", layerStatus);
 
     const existingLayers = Object.keys(layerStatus).filter(
       (layerName) => layerStatus[layerName] && tileLayerMapLayersPresent(mapRef.current, layerName)
     );
 
     if (!existingLayers.length) {
-      console.warn("⚠️ No active layers yet, waiting...");
       return;
     }
 
@@ -3473,11 +1923,6 @@ useEffect(() => {
     
     const restoreHighlights = () => {
       if (hasRestored) return; // Already restored
-      console.log("🗺️ Restoring highlights...");
-      console.log("🔍 Active layers:", existingLayers);
-      console.log("🔍 Highlight IDs to find:", initialHighlightIds);
-      console.log("🔍 Map center:", mapRef.current.getCenter());
-      console.log("🔍 Map zoom:", mapRef.current.getZoom());
       
       let allQueriedFeatures = [];
       existingLayers.forEach((layerName) => {
@@ -3488,31 +1933,20 @@ useEffect(() => {
             layers: queryLayerIds,
           });
 
-          console.log(`📍 Found ${renderedFeatures.length} rendered features in ${layerName}`);
-          
-          // Debug: show some GFIs from rendered features
-          if (renderedFeatures.length > 0 && layerName === 'ownership') {
-            const sampleGFIs = renderedFeatures.slice(0, 3).map(f => getFeatureIdentifierFromFeature(f));
-            console.log("📋 Sample GFIs in viewport:", sampleGFIs);
-          }
-          
           const matchedFeatures = renderedFeatures.filter((feature) => {
             const featureId = getFeatureIdentifierFromFeature(feature);
             return featureId && initialHighlightIds.includes(featureId);
           });
           
           if (matchedFeatures.length > 0) {
-            console.log(`✅ Matched ${matchedFeatures.length} features in ${layerName}`);
           }
           
           allQueriedFeatures.push(...matchedFeatures);
         } catch (error) {
-          console.warn(`⚠️ Error querying ${layerName}:`, error);
         }
       });
 
       if (allQueriedFeatures.length > 0) {
-        console.log(`✅ Restored ${allQueriedFeatures.length} highlighted features`);
         hasRestored = true;
         setSelectedFeatures(allQueriedFeatures);
         
@@ -3520,7 +1954,6 @@ useEffect(() => {
         if (highlightSettings) {
           highlightFeature(allQueriedFeatures);
         } else {
-          console.warn("⚠️ highlightSettings not ready, but restoring with defaults");
           // Still highlight with defaults
           highlightFeature(allQueriedFeatures, null, {
             fillColor: '#FF0000',
@@ -3531,10 +1964,6 @@ useEffect(() => {
           });
         }
       } else {
-        console.warn("⚠️ No features matched. Possible reasons:");
-        console.warn("   - Map needs to load more tiles at this zoom level");
-        console.warn("   - Features not in current viewport");
-        console.warn("   - Ownership layer not loaded yet");
       }
     };
 
@@ -3568,7 +1997,6 @@ useEffect(() => {
   
     const map = mapRef.current;
     const logZoom = () => {
-      console.log("Current zoom level:", map.getZoom());
     };
   
     map.on('zoom', logZoom);
@@ -3596,13 +2024,11 @@ useEffect(() => {
   const { drawPolygon, drawLine, selectParcelsWithPolygon, clearAllDrawings, deleteSelectedFeature} = useMapboxDraw({
     mapRef,
     onPolygonCreated: (polyFeature) => {
-      console.log("Polygon created:", polyFeature);
       // Possibly do area calc or passPolygonToReportBuilder
       // e.g. passPolygonToReportBuilder(polyFeature);
     },
 
     onPolygonFinalized: (finalPolyFeature) => {
-      console.log("🚀🚀🚀🚀🚀🚀🚀🚀 Finalized Polygon for Parcel Selection:", finalPolyFeature);
     
       // Store the polygon for future reference
       setSelectedFilterPolygon(finalPolyFeature);
@@ -3612,7 +2038,6 @@ useEffect(() => {
     
       // Select parcels inside the polygon
       mapRef.current.once("moveend", () => {
-        console.log("📌 Move complete, now selecting parcels.");
         // Use ref to get current highlightSettings (always fresh)
         selectParcelsInsidePolygon(finalPolyFeature, highlightSettingsRef.current);
       });
@@ -3621,6 +2046,7 @@ useEffect(() => {
   }, [highlightSettings]);
 
 
+  /** SW/NE bounds from a GeoJSON polygon outer ring. */
   function getBoundingBox(polygon) {
     const coords = polygon.coordinates[0]; // Outer ring
     let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
@@ -3635,6 +2061,8 @@ useEffect(() => {
     return [[minX, minY], [maxX, maxY]]; // [Southwest, Northeast]
   }
 
+
+  /** Animate map to fit a drawn filter polygon. */
   function zoomToPolygon(polygon) {
     const bounds = getBoundingBox(polygon);
     mapRef.current.fitBounds(bounds, {
@@ -3642,13 +2070,11 @@ useEffect(() => {
       duration: 800, // Smooth animation
     });
   
-    console.log("📍 Map zoomed to polygon bounds:", bounds);
   }
 
+
+  /** Query Regrid parcels inside a drawn polygon and highlight/select them. */
   function selectParcelsInsidePolygon(polygon, currentHighlightSettings) {
-    console.log("🔍 Querying features within selection polygon...");
-    console.log("🔍 selectParcelsInsidePolygon - currentHighlightSettings:", currentHighlightSettings);
-    console.log("🔍 selectParcelsInsidePolygon - currentHighlightSettings.fillColor:", currentHighlightSettings?.fillColor);
 
     const candidateLayers = layerStatus.ownership
       ? ["regrid-parcels-layer", "regrid-parcels-outline"]
@@ -3659,11 +2085,9 @@ useEffect(() => {
       : [];
 
     if (!queriedFeatures.length) {
-        console.warn("❌ No parcel features found in selectable layers.");
         return;
     }
 
-    console.log(`🗺️ Queried ${queriedFeatures.length} features from parcel layers.`);
 
     // Convert the drawn polygon to a Turf.js Polygon
     const selectionPolygon = turf.polygon(polygon.coordinates);
@@ -3692,7 +2116,6 @@ useEffect(() => {
           const overlapRatio = overlapArea / parcelArea;
           return overlapRatio >= MOSTLY_INSIDE_THRESHOLD;
         } catch (error) {
-          console.warn("Skipping feature with invalid geometry during polygon selection.", error);
           return false;
         }
     });
@@ -3719,7 +2142,6 @@ useEffect(() => {
       return true;
     });
 
-    console.log(`✅ ${uniqueSelectedFeatures.length} parcel features mostly inside selection polygon.`);
     
     // Highlight & Store Selected Features
     setSelectedFeatures(uniqueSelectedFeatures);
@@ -3733,15 +2155,35 @@ useEffect(() => {
 
 
  
-  /**=============== Adds layers to the map depending on layer status ===============
-   * Dynamically adds or removes map layers based on `layerStatus`.
-   * For each visible layer, we add a vector source and the corresponding map layer.
-   * We also move it "on top" if toggled last.
-   */
+  // --- 7. Layer sync (updateLayers) ---
+
   const lastAppliedLayerOrderRef = useRef('');
 
+  /** Regrid parcels — same moment as hosted MVT layers inside `updateLayers`. */
+  const syncOwnershipLayerStack = (map) => {
+    if (!map?.isStyleLoaded?.()) return;
+    const vis = parcelMapVisibilityRef.current;
+    if (vis?.showRegrid) {
+      if (!getCachedRegridTileJson()) return;
+      syncRegridParcelLayersIntoMap(map, vis);
+      applyParcelVisualizationVisibility(map, vis);
+      bringRegridParcelLayersBeforeSymbolLabels(map);
+      applyRegridParcelOutlineForBasemap(
+        map,
+        activeBasemapIdRef?.current || baseMapRef.current
+      );
+      maintainBasemapStackRef.current();
+      reapplySelectionHighlightIfNeededRef.current();
+    } else {
+      applyParcelVisualizationVisibility(map, { showRegrid: false });
+      hideLabelLayerSafeRef.current(map, 'ownership-label-layer');
+    }
+  };
+  syncOwnershipLayerStackRef.current = syncOwnershipLayerStack;
+
+  /** Add/remove/reorder hosted tile layers and Regrid parcels based on `layerStatus` and `layerOrder`. */
   const updateLayers = () => {
-    console.log('Updating layers with current layerStatus:', layerStatus);
+    mapDebug.trace('updateLayers', layerStatus);
 
   /** Tile URL/spec changed — needs reload. Fresh addSource already fetches tiles; reloading causes first-toggle flicker. */
     const sourcesNeedingTileReload = new Set();
@@ -3755,14 +2197,28 @@ useEffect(() => {
     // Update map layers based on layerStatus changes
     Object.keys(layerStatus).forEach((layerName) => {
       const isVisible = layerStatus[layerName];
-      // Legacy Martin ownership stack was removed; ownership toggle now controls Regrid visibility.
-      if (layerName === 'ownership' || layerName === 'regrid_zoning') return;
+
+      if (layerName === 'ownership') {
+        if (!isVisible && !parcelMapVisibility.showRegrid && selectedFeature?.length > 0) {
+          const updatedSelectedFeatures = selectedFeature.filter(
+            (feature) => !featureBelongsToMapLayer(feature, 'ownership')
+          );
+          if (updatedSelectedFeatures.length !== selectedFeature.length) {
+            if (updatedSelectedFeatures.length > 0) {
+              setSelectedFeatures(updatedSelectedFeatures);
+              highlightFeature(updatedSelectedFeatures);
+            } else {
+              setSelectedFeatures([]);
+              removeHighlight();
+            }
+          }
+        }
+        return;
+      }
+
       if (!getHostedTileLayerUrl(layerName)) return;
-      console.log(`Processing layer "${layerName}" - Visibility: ${isVisible}`);
-      console.log(!mapRef.current.getSource(layerName))
       // Check if the source for the layer exists, if not add it
       if (!mapRef.current.getSource(layerName)) {
-        console.log(`Adding source for layer "${layerName}"`);
         const zt =
           vectorTileLayerZoom[layerName] ||
           rasterTileLayerZoom[layerName] ||
@@ -3814,7 +2270,6 @@ useEffect(() => {
       // Add the layer if it is visible and not already added
       if (isVisible) {
         if (!tileLayerMapLayersPresent(mapRef.current, layerName)) {
-          console.log(`Adding layer "${layerName}" to the map`);
 
           let beforeId = getVectorLayerInsertBeforeId(mapRef.current);
           const styleLayers = mapRef.current.getStyle().layers || [];
@@ -3828,7 +2283,6 @@ useEffect(() => {
           if (layerName === 'soil') {
             try {
               addSoilStateLayers(mapRef.current, beforeId);
-              console.log('Added soil state sub-layers.');
             } catch (error) {
               console.error(`Error adding soil layers: ${error}`);
             }
@@ -3837,7 +2291,6 @@ useEffect(() => {
           if (style) {
             try {
               mapRef.current.addLayer(style, beforeId);
-              console.log(`Added layer "${layerName}-layer" with default styles.`);
               if (layerName === 'surface_water') {
                 const flowlineStyle = getLayerStyle('surface_water_flowline', null, baseMapRef);
                 if (flowlineStyle && !mapRef.current.getLayer('surface_water-flowline-layer')) {
@@ -3859,267 +2312,22 @@ useEffect(() => {
                   );
                 }
               }
-              
-              // ✅ If this is the ownership fill layer, ensure border is positioned after it
-              if (layerName === "ownership") {
-                // Use requestAnimationFrame to ensure the layer is fully added before positioning border
-                requestAnimationFrame(() => {
-                  if (mapRef.current.getLayer("regrid-parcels-layer") && mapRef.current.getLayer("regrid-parcels-outline")) {
-                    const styleLayers = mapRef.current.getStyle().layers || [];
-                    const ownershipLayerIndex = styleLayers.findIndex(l => l.id === "regrid-parcels-layer");
-                    if (ownershipLayerIndex !== -1) {
-                      // Find the next layer after regrid-parcels-layer
-                      let borderBeforeId = undefined;
-                      for (let i = ownershipLayerIndex + 1; i < styleLayers.length; i++) {
-                        const nextLayer = styleLayers[i];
-                        if (!nextLayer.id.includes("ownership") && !nextLayer.id.includes("border")) {
-                          if (nextLayer.id.startsWith('gl-draw-')) {
-                            borderBeforeId = nextLayer.id;
-                            break;
-                          }
-                          borderBeforeId = nextLayer.id;
-                          break;
-                        }
-                      }
-                      try {
-                        mapRef.current.moveLayer("regrid-parcels-outline", borderBeforeId);
-                        console.log("✅ Repositioned regrid-parcels-outline after ownership fill layer (post-add)");
-                      } catch (error) {
-                        console.warn("Could not reposition regrid-parcels-outline after ownership fill:", error);
-                      }
-                    }
-                  }
-                });
-              }
             } catch (error) {
               console.error(`Error adding layer: ${error}`);
             }
           } else {
-            console.warn(`No style found for layer: ${layerName}`);
           }
           }
 
         } else {
           // If the layer is already added, just make sure it's visible
-          console.log(`Setting visibility of "${layerName}" to "visible"`);
           setTileLayerVisibility(mapRef.current, layerName, 'visible');
-          if (layerName === "ownership") {
-            console.log("🔄 Ensuring correct ownership style after basemap change.");
-            if (!mapRef.current.getLayer("regrid-parcels-layer")) {
-              console.warn("⚠️ Ownership layer is missing when trying to style it.");
-              return;
-            }
-            try {
-              const updatedStyle = getLayerStyle("ownership", null, baseMapRef);
-              
-              // ✅ Ensure style exists before updating
-              if (!updatedStyle) {
-                console.error(`🚨 Ownership layer style is undefined! Skipping update.`);
-                return;
-              }
-              
-              const paint = updatedStyle.paint;
-              if (paint) {
-                if (mapRef.current.getLayer("regrid-parcels-layer")) {
-                  if (Object.prototype.hasOwnProperty.call(paint, 'fill-color')) {
-                    mapRef.current.setPaintProperty("regrid-parcels-layer", "fill-color", paint["fill-color"]);
-                  }
-                  if (Object.prototype.hasOwnProperty.call(paint, 'fill-opacity')) {
-                    mapRef.current.setPaintProperty("regrid-parcels-layer", "fill-opacity", paint["fill-opacity"]);
-                  }
-                  if (Object.prototype.hasOwnProperty.call(paint, 'fill-outline-color')) {
-                    mapRef.current.setPaintProperty("regrid-parcels-layer", "fill-outline-color", paint["fill-outline-color"]);
-                  }
-                } else {
-                  console.warn(`⚠️ Ownership layer not found when applying styles.`);
-                }
-              }
-            } catch (error) {
-              console.error(`🚨 Error updating ownership layer style:`, error);
-            }
-        }
-        }
-        // ✅ ADD BORDER WHEN OWNERSHIP IS TOGGLED ON
-        // Update ownership borders when the basemap changes
-        if (layerName === "ownership") {
-          console.log("🔄 Updating ownership boundary styles...");
-          
-          // ✅ Ensure ownership fill layer exists before adding borders
-          // If it doesn't exist yet, wait for it (this can happen on initial load)
-          if (!mapRef.current.getLayer("regrid-parcels-layer")) {
-            console.log("⏳ Ownership fill layer not found yet, waiting for it...");
-            // Wait a bit for the ownership fill layer to be added (it should be added in the same updateLayers call)
-            setTimeout(() => {
-              if (mapRef.current.getLayer("regrid-parcels-layer")) {
-                console.log("✅ Ownership fill layer found, proceeding with border setup...");
-                // Re-run the border setup logic
-                const outerBorderStyle = getLayerStyle("regrid-parcels-outline", null, baseMapRef);
-                const innerBorderStyle = getLayerStyle("regrid-parcels-outline", null, baseMapRef);
-                setupOwnershipBorders(outerBorderStyle, innerBorderStyle);
-              } else {
-                console.warn("⚠️ Ownership fill layer still not found after delay");
-              }
-            }, 100);
-            return; // Exit early, will be handled in setTimeout
-          }
-          
-          let outerBorderStyle = getLayerStyle("regrid-parcels-outline", null, baseMapRef);
-          let innerBorderStyle = getLayerStyle("regrid-parcels-outline", null, baseMapRef);
-
-          // Helper function to set up ownership borders
-          const setupOwnershipBorders = (outerStyle, innerStyle) => {
-
-          // ✅ Position border layer AFTER ownership fill layer (so it appears on top)
-          // Find the correct position: after regrid-parcels-layer, but below drawings
-          
-            // Helper function to find where to position border (after regrid-parcels-layer)
-            const getBorderBeforeId = () => {
-            // Refresh style layers array to get current layer order
-            const styleLayers = mapRef.current.getStyle().layers || [];
-            const drawLayer = styleLayers.find(l => l.id.startsWith('gl-draw-'));
-            
-            // If regrid-parcels-layer exists, position border right after it
-            if (mapRef.current.getLayer("regrid-parcels-layer")) {
-              const ownershipLayerIndex = styleLayers.findIndex(l => l.id === "regrid-parcels-layer");
-              if (ownershipLayerIndex !== -1) {
-                // Find the next layer after regrid-parcels-layer that's not a border layer
-                for (let i = ownershipLayerIndex + 1; i < styleLayers.length; i++) {
-                  const nextLayer = styleLayers[i];
-                  // Skip other ownership border layers
-                  if (!nextLayer.id.includes("ownership") && !nextLayer.id.includes("border")) {
-                    // If we found a draw layer, use it (so border is below drawings)
-                    if (nextLayer.id.startsWith('gl-draw-')) {
-                      return nextLayer.id;
-                    }
-                    // Otherwise, position before this layer (so border is right after regrid-parcels-layer)
-                    return nextLayer.id;
-                  }
-                }
-                // If no suitable layer found after regrid-parcels-layer, check for draw layers
-                if (drawLayer) {
-                  return drawLayer.id;
-                }
-                // Otherwise add at end (after regrid-parcels-layer)
-                return undefined;
-              }
-            }
-            // Ownership layer doesn't exist yet, position relative to high-def
-            if (mapRef.current.getLayer(HIGH_DEF_LAYER_ID) || mapRef.current.getLayer(TETON_ORTHO_LAYER_ID)) {
-              return drawLayer ? drawLayer.id : undefined;
-            }
-            return undefined;
-          };
-          
-          const borderBeforeId = getBorderBeforeId();
-
-          // ✅ Border layers - red border for debugging (3px thick)
-          if (mapRef.current.getLayer("regrid-parcels-outline")) {
-            console.log("🎨 Updating outer ownership boundary...");
-            Object.entries(outerStyle.paint || {}).forEach(([prop, val]) => {
-              if (prop === 'line-color') return;
-              mapRef.current.setPaintProperty("regrid-parcels-outline", prop, val);
-            });
-            applyRegridParcelOutlineForBasemap(
-              mapRef.current,
-              activeBasemapIdRef?.current || baseMapRef.current
-            );
-            Object.entries(outerStyle.layout || {}).forEach(([prop, val]) => {
-              mapRef.current.setLayoutProperty("regrid-parcels-outline", prop, val);
-            });
-            // ✅ Reposition border layer AFTER ownership fill layer to ensure it's on top
-            try {
-              const updatedBorderBeforeId = getBorderBeforeId();
-              mapRef.current.moveLayer("regrid-parcels-outline", updatedBorderBeforeId);
-              console.log("✅ Moved regrid-parcels-outline to position after ownership fill layer");
-            } catch (error) {
-              console.warn("Could not reposition regrid-parcels-outline:", error);
-            }
-          } else {
-            console.log("🆕 Adding outer ownership boundary for the first time.");
-            mapRef.current.addLayer(outerStyle, borderBeforeId);
-            applyRegridParcelOutlineForBasemap(
-              mapRef.current,
-              activeBasemapIdRef?.current || baseMapRef.current
-            );
-            console.log("✅ Added regrid-parcels-outline after ownership fill layer");
-            
-            // ✅ Ensure border is positioned correctly after ownership fill layer (if it exists)
-            // Use requestAnimationFrame to ensure layers are in the map before repositioning
-            requestAnimationFrame(() => {
-              if (mapRef.current.getLayer("regrid-parcels-layer") && mapRef.current.getLayer("regrid-parcels-outline")) {
-                const styleLayers = mapRef.current.getStyle().layers || [];
-                const ownershipLayerIndex = styleLayers.findIndex(l => l.id === "regrid-parcels-layer");
-                if (ownershipLayerIndex !== -1) {
-                  // Find the next layer after regrid-parcels-layer
-                  let updatedBorderBeforeId = undefined;
-                  for (let i = ownershipLayerIndex + 1; i < styleLayers.length; i++) {
-                    const nextLayer = styleLayers[i];
-                    if (!nextLayer.id.includes("ownership") && !nextLayer.id.includes("border")) {
-                      if (nextLayer.id.startsWith('gl-draw-')) {
-                        updatedBorderBeforeId = nextLayer.id;
-                        break;
-                      }
-                      updatedBorderBeforeId = nextLayer.id;
-                      break;
-                    }
-                  }
-                  try {
-                    mapRef.current.moveLayer("regrid-parcels-outline", updatedBorderBeforeId);
-                    console.log("✅ Repositioned regrid-parcels-outline after ownership fill layer (post-add-first-time)");
-                  } catch (error) {
-                    console.warn("Could not reposition regrid-parcels-outline after ownership fill (first time):", error);
-                  }
-                }
-              }
-            });
-          }
-
-          // ✅ Inner border is already hidden, just ensure it stays hidden
-          if (mapRef.current.getLayer("regrid-parcels-outline")) {
-            console.log("🎨 Ensuring inner ownership boundary is hidden...");
-            mapRef.current.setLayoutProperty("regrid-parcels-outline", "visibility", "none");
-            mapRef.current.setPaintProperty("regrid-parcels-outline", "line-width", 0);
-            mapRef.current.setPaintProperty("regrid-parcels-outline", "line-opacity", 0);
-          } else {
-            console.log("🆕 Adding inner ownership boundary (hidden)...");
-            mapRef.current.addLayer(innerStyle, borderBeforeId);
-            // Immediately hide it
-            mapRef.current.setLayoutProperty("regrid-parcels-outline", "visibility", "none");
-            mapRef.current.setPaintProperty("regrid-parcels-outline", "line-width", 0);
-            mapRef.current.setPaintProperty("regrid-parcels-outline", "line-opacity", 0);
-          }
-          };
-          
-          // Call the setup function
-          setupOwnershipBorders(outerBorderStyle, innerBorderStyle);
         }
 
-        
-
-        // Don't move layer to top if high-def layer exists - keep proper ordering
-        // Only update top layer state for tracking, but don't actually move layers
-        if (!mapRef.current.getLayer(HIGH_DEF_LAYER_ID) && !mapRef.current.getLayer(TETON_ORTHO_LAYER_ID)) {
         setTopLayer(layerName);
-        console.log('Top layer updated:', layerName);
-        } else {
-          // If high-def exists, ensure the layer stays in correct position (above high-def, below drawings)
-          try {
-            const styleLayers = mapRef.current.getStyle().layers || [];
-            const drawLayer = styleLayers.find(l => l.id.startsWith('gl-draw-'));
-            getQueryLayerIdsForTileLayer(layerName, mapRef.current).forEach((layerId) => {
-            if (mapRef.current.getLayer(layerId) && drawLayer) {
-              mapRef.current.moveLayer(layerId, drawLayer.id);
-              console.log(`Moved ${layerId} to correct position (above high-def, below drawings)`);
-            }
-            });
-          } catch (error) {
-            console.error('Error repositioning layer:', error);
-          }
-        }
       } else {
         // If the layer is supposed to be hidden, set its visibility to "none"
         if (tileLayerMapLayersPresent(mapRef.current, layerName)) {
-          console.log(`Setting visibility of "${layerName}" to "none"`);
           setTileLayerVisibility(mapRef.current, layerName, 'none');
 
           if (selectedFeature?.length > 0) {
@@ -4127,7 +2335,6 @@ useEffect(() => {
               (feature) => !featureBelongsToMapLayer(feature, layerName)
             );
             if (updatedSelectedFeatures.length !== selectedFeature.length) {
-              console.log(`Clearing selection for hidden layer: "${layerName}"`);
               if (updatedSelectedFeatures.length > 0) {
                 setSelectedFeatures(updatedSelectedFeatures);
                 highlightFeature(updatedSelectedFeatures);
@@ -4137,26 +2344,12 @@ useEffect(() => {
               }
             }
           }
-        } else {
-          console.log(`Layer "${layerName}-layer" is not present on the map, no action needed`);
         }
-        // ✅ REMOVE BORDER WHEN OWNERSHIP IS TOGGLED OFF
-        if (layerName === "ownership") {
-          // ✅ Fix: Use underscores to match the layer IDs used when adding
-          if (mapRef.current.getLayer("regrid-parcels-outline")) {
-              console.log("Removing ownership boundary layer.");
-              mapRef.current.removeLayer("regrid-parcels-outline");
-          }
-          if (mapRef.current.getLayer("regrid-parcels-outline")) {
-            console.log("Removing ownership boundary layer.");
-            mapRef.current.removeLayer("regrid-parcels-outline");
-        }
-       }
       }
 
     });
 
-    syncRegridParcelLayersIntoMap(mapRef.current, parcelMapVisibility);
+    syncOwnershipLayerStack(mapRef.current);
     const regridStackAdded =
       !hadRegridBefore && Boolean(mapRef.current?.getSource?.('regrid-parcels'));
 
@@ -4173,9 +2366,6 @@ useEffect(() => {
       });
       lastAppliedLayerOrderRef.current = layerOrderKey;
     }
-    console.log("Layer Order:")
-    console.log(layerOrder)
-    console.log(layerStatus)
 
     const finishLayerStack = () => {
       if (!mapRef.current) return;
@@ -4203,8 +2393,7 @@ useEffect(() => {
         requestAnimationFrame(() => {
           const m = mapRef.current;
           if (!m?.isStyleLoaded?.() || !parcelMapVisibility.showRegrid) return;
-          syncRegridParcelLayersIntoMap(m, parcelMapVisibility);
-          applyParcelVisualizationVisibility(m, parcelMapVisibility);
+          syncOwnershipLayerStack(m);
           repaintRegridParcelsAfterShow(m);
         });
       }
@@ -4213,20 +2402,13 @@ useEffect(() => {
         mapRef.current,
         activeBasemapIdRef?.current || baseMapRef.current
       );
+      applyLabelLayersRef.current();
+      reapplySelectionHighlightIfNeededRef.current();
       bringLabelsToTop();
       applyCompositeLabelStyleForBasemap(
         mapRef.current,
         activeBasemapIdRef?.current || baseMapRef.current
       );
-      const wantedBasemap = String(
-        activeBasemapIdRef?.current || baseMapRef.current || ''
-      ).trim();
-      if (
-        wantedBasemap &&
-        needsBasemapOverlayMaintenance(mapRef.current, wantedBasemap)
-      ) {
-        repairBasemapOverlaysRef.current(wantedBasemap);
-      }
       const needsTileReload = sourcesNeedingTileReload.size > 0;
 
       try {
@@ -4246,13 +2428,20 @@ useEffect(() => {
         scheduleDeferredTileRefresh(mapRef.current, sourcesNeedingTileReload, false);
       }
 
-      summarizeOwnershipTileState(mapRef.current, 'finishLayerStack');
-
-      const allLayers = mapRef.current.getStyle().layers;
-      console.log(
-        "Final mapbox layer stack (bottom -> top):",
-        allLayers.map((layer) => layer.id)
+      const wantedBasemap = normalizeBasemapId(
+        activeBasemapIdRef?.current || baseMapRef.current || urlBasemapIdRef.current
       );
+      if (
+        wantedBasemap &&
+        needsBasemapOverlayMaintenance(mapRef.current, wantedBasemap)
+      ) {
+        repairBasemapOverlaysRef.current(wantedBasemap);
+        try {
+          restackDataLayersAboveBasemapOverlays(mapRef.current);
+        } catch (_) {
+          /* ignore */
+        }
+      }
     };
 
     const map = mapRef.current;
@@ -4260,11 +2449,15 @@ useEffect(() => {
       finishLayerStack();
       return new Promise((resolve) => {
         const afterLoad = () => {
-          syncRegridParcelLayersIntoMap(mapRef.current, parcelMapVisibility);
+          syncOwnershipLayerStack(mapRef.current);
           finishLayerStack();
           resolve();
         };
         try {
+          if (map.loaded()) {
+            afterLoad();
+            return;
+          }
           map.once('load', afterLoad);
         } catch (_) {
           resolve();
@@ -4278,7 +2471,7 @@ useEffect(() => {
           map.once('style.load', runRegridWhenStyleReady);
           return;
         }
-        syncRegridParcelLayersIntoMap(map, parcelMapVisibility);
+        syncOwnershipLayerStack(map);
         finishLayerStack();
         resolve();
       };
@@ -4286,11 +2479,7 @@ useEffect(() => {
     });
   };
 
-  /**
-   * Same idea as `cycleOwnershipLayerLikeToggle`: after `setStyle`, drop the Regrid source + layers
-   * and add them again from TileJSON. Visibility-only retoggles were not enough; this matches how
-   * Martin layers recover (full re-add). Tile URLs are routed through the Regrid tile proxy.
-   */
+  /** After basemap style swap: tear down and re-add the full Regrid MVT stack from TileJSON. */
   const reinitializeRegridParcelsAfterBasemapSwap = useCallback(async () => {
     const map = mapRef.current;
     if (!map?.isStyleLoaded?.()) return;
@@ -4326,7 +2515,6 @@ useEffect(() => {
 
     try {
       removeRegridParcelStack(map);
-      removeRegridZoningTileStack(map);
     } catch (_) {
       /* ignore */
     }
@@ -4334,12 +2522,12 @@ useEffect(() => {
     await new Promise((r) => requestAnimationFrame(r));
 
     try {
-      if (!cachedRegridTileJson) {
+      if (!getCachedRegridTileJson()) {
         await setupRegridTiles();
       } else {
         addRegridParcelLayersFromTileJson(
           map,
-          cachedRegridTileJson,
+          getCachedRegridTileJson(),
           getRegridVectorMinZoomForMap(map)
         );
       }
@@ -4347,27 +2535,15 @@ useEffect(() => {
       /* ignore */
     }
 
-    if (layerStatusRef.current?.regrid_zoning) {
-      try {
-        if (!getCachedRegridZoningTileJson()) {
-          await ensureRegridZoningTileJson();
-        }
-        syncRegridZoningLayersIntoMap(map, true);
-      } catch (e) {
-        console.error('Regrid zoning tiles reinit after basemap failed:', e);
-      }
-    }
-
     const m = mapRef.current;
     if (!m) return;
     try {
       bringRegridParcelLayersBeforeSymbolLabels(m);
       applyParcelVisualizationVisibility(m, parcelMapVisibilityRef.current);
-      setRegridZoningLayersVisibility(m, Boolean(layerStatusRef.current?.regrid_zoning));
     } catch (_) {
       /* ignore */
     }
-    if (!m.getSource('regrid-parcels') && !m.getSource('regrid-zoning-tiles')) return;
+    if (!m.getSource('regrid-parcels')) return;
     // Avoid aggressive post-style tile invalidation here — it can create visible flicker
     // during basemap transitions. Regrid is already re-added and restacked above.
     try {
@@ -4378,44 +2554,10 @@ useEffect(() => {
     fireRegridRestack(m);
   }, [setupRegridTiles]);
 
-  /** Ownership MVT: `sourcedata` / `error` when `?debugOwnershipTiles=1` or localStorage cv_debug_ownership_tiles=1 */
-  useEffect(() => {
-    if (!mapIsReady || !mapRef?.current || !isCvOwnershipTileDebugEnabled()) return undefined;
-    const map = mapRef.current;
-    const onSourceData = (e) => {
-      if (e.sourceId !== 'ownership') return;
-      ownershipTilesTrace('map.sourcedata', {
-        isSourceLoaded: e.isSourceLoaded,
-        dataType: e.dataType,
-        sourceDataType: e.sourceDataType,
-        tile: e.tile?.tileID
-          ? {
-              overscaledZ: e.tile.tileID.overscaledZ,
-              wrap: e.tile.tileID.wrap,
-              canonical: e.tile.tileID.canonical,
-            }
-          : undefined,
-      });
-    };
-    const onError = (e) => {
-      const sid = e?.sourceId;
-      if (sid && sid !== 'ownership') return;
-      ownershipTilesTrace('map.error', { message: e?.error?.message || String(e?.error), sourceId: sid });
-    };
-    map.on('sourcedata', onSourceData);
-    map.on('error', onError);
-    return () => {
-      map.off('sourcedata', onSourceData);
-      map.off('error', onError);
-    };
-  }, [mapIsReady, mapRef]);
-
   /**=============== Handles On Click ===============
    * 
    */
   useEffect(() => {
-    console.log("CA")
-    console.log(layerStatus)
     if (!mapRef.current) return;
   
     let isDragging = false; // Track if user is dragging
@@ -4432,25 +2574,19 @@ useEffect(() => {
   
     /** ✅ Handles tap/clicks */
     const handleClick = (e) => {
-      console.log("Feature Click Activated");
-      console.log(layerStatus)
 
       if (suppressNextFeatureClickRef?.current) {
-        console.log("🛑 Suppressing one map click after polygon finalize.");
         suppressNextFeatureClickRef.current = false;
         return;
       }
   
       if (isDragging) {
-        console.log("🚫 Ignoring click - user was dragging");
         return;
       }
   
       if (isDrawingRef.current === true) {
-        console.log("🎨 User is drawing, ignoring feature click.");
         return;
       }
-      console.log(layerStatus)
       const existingLayers = Object.keys(layerStatus).filter(
         (layerName) => layerStatus[layerName] && tileLayerMapLayersPresent(mapRef.current, layerName)
       );
@@ -4479,7 +2615,6 @@ useEffect(() => {
           layers: queryLayers,
         });
   
-        console.log("Queried features at click:", features);
   
         if (features.length > 0) {
           mapRef.current.dragPan.disable(); // Temporarily disable dragPan
@@ -4495,19 +2630,15 @@ useEffect(() => {
             return;
           }
           // Print all attributes of the clicked parcel
-          console.log('All attributes of clicked parcel:', clickedFeature);
-          console.log('Parcel properties:', clickedFeature.properties);
           
           const hostedLayer = resolveHostedMapLayerFromFeature(clickedFeature);
           if (hostedLayer) {
-            console.log(`Clicked hosted layer "${hostedLayer}":`, clickedFeature.properties);
           }
 
           setSelectedFeatures((prevFeatures) => {
             const isAlreadySelected = prevFeatures.some((f) =>
               featuresShareSelectionId(f, clickedFeature)
             );
-            console.log("Is already selected:", isAlreadySelected);
             if (e.originalEvent.shiftKey) {
               if (isAlreadySelected) {
                 const updatedSelection = prevFeatures.filter(
@@ -4538,7 +2669,6 @@ useEffect(() => {
             setActiveSidePanelTab('info');
           }
         } else {
-          console.log("No features clicked. Clearing selection.");
           setSelectedFeatures([]);
           removeHighlight();
         }
@@ -4554,7 +2684,6 @@ useEffect(() => {
     mapRef.current.on('touchmove', handleTouchMove);
     mapRef.current.on('click', handleClick);
     mapRef.current.on('touchend', handleClick);
-    console.log("========== ", selectedFeature)
     return () => {
       // ✅ Cleanup event listeners
       if (mapRef.current) {
@@ -4576,11 +2705,26 @@ useEffect(() => {
     /**
      * Adds or removes a hover highlight for the specified feature ID in "regrid-parcels-layer".
      * 
-     * @param {string|null} hoveredId - The ID of the hovered feature's pidn or null if no hover.
+     * @param {string|null} hoveredId - Parcel id (ll_uuid, parcelnumb, GFI, etc.) or null if no hover.
      */
+    const parcelFeatureMatchesHoveredId = (feature, id) => {
+      if (!id || !feature?.properties) return false;
+      const hovered = String(id);
+      const props = feature.properties;
+      return [
+        props.ll_uuid,
+        props.parcelnumb,
+        props.parcel_id,
+        props.global_parcel_uid,
+        props.GFI,
+        props.pidn,
+      ]
+        .filter(Boolean)
+        .some((value) => String(value) === hovered);
+    };
+
     const highlightHoverFeature = (hoveredId) => {
       if (!mapRef.current || !mapRef.current.isStyleLoaded()) {
-        console.warn("Map style is not loaded yet. Cannot highlight features.");
         return;
       }
   
@@ -4596,7 +2740,6 @@ useEffect(() => {
       }
   
       if (!hoveredId) {
-        console.log("No feature is hovered. Hover highlight cleared.");
         return; // Exit if no feature is hovered
       }
   
@@ -4605,18 +2748,14 @@ useEffect(() => {
         layers: ['regrid-parcels-layer'], // Adjust layer name as needed
       });
   
-      // Find the feature(s) that match the hovered ID
-      const matchingFeatures = queriedFeatures.filter((f) => {
-        const queriedPidn = f.properties?.pidn || parsePidnFromDescription(f.properties?.description);
-        return queriedPidn === hoveredId;
-      });
+      const matchingFeatures = queriedFeatures.filter((f) =>
+        parcelFeatureMatchesHoveredId(f, hoveredId)
+      );
   
       if (matchingFeatures.length === 0) {
-        console.warn('No matching features found for the hovered feature in the ownership layer.');
         return;
       }
       
-      console.log('Matching feature for hovered ID:', matchingFeatures);
       // Since there will be at most one feature, use the first match directly
       let unifiedFeature; // Declare unifiedFeature outside the if-else block
 
@@ -4678,44 +2817,12 @@ useEffect(() => {
     };
   }, [hoveredFeatureId, layerStatus]);
   
-  /**
-   * Utility function to add tile boundaries to the map.
-   * 
-   * @param {string} description - The HTML description from a vector tile property
-   * @returns {string|null} The extracted PIDN value or null if not found
-   */
+  /** Debug helper: show Mapbox tile boundaries on the map canvas. */
   const addTileBoundaries = () => {
-    console.log('Adding tile boundaries layer for debugging...');
     mapRef.current.showTileBoundaries = true;
   };
 
-  /**
-   * =============== Parse PIDN ===============
-   * Utility function to parse the `pidn` out of an HTML-based `description` property.
-   * 
-   * @param {string} description - The HTML description from a vector tile property
-   * @returns {string|null} The extracted PIDN value or null if not found
-   */
-  const parsePidnFromDescription = (description) => {
-    if (!description) {
-      return null;
-    }
-  
-    const parser = new DOMParser();
-    const doc = parser.parseFromString(description, 'text/html');
-    const rows = doc.querySelectorAll('tr');
-  
-    for (const row of rows) {
-      const th = row.querySelector('th')?.textContent?.trim().toLowerCase();
-      const td = row.querySelector('td')?.textContent?.trim();
-      if (th === 'pidn') {
-        return td;
-      }
-    }
-  
-    return null; // Return null if pidn not found
-  };
-  
+
    /** =============== Add Layers After Basemap Change ===============
    * useEffect: If the map style reloads (due to changing base layers),
    * we re-run `updateLayers` to ensure our data layers are re-added/visible.
@@ -4724,14 +2831,11 @@ useEffect(() => {
     if (basemapRestoreBlockingLayersRef.current || basemapApplyInProgressRef.current) {
       return undefined;
     }
-    console.log("Updating Layers becase layerStatus was updated.")
-    console.log("=========", layerStatus, "=========")
     const map = mapRef.current;
     if (!map) return undefined;
     if (!map.isStyleLoaded()) {
       const onStyleLoad = () => {
         if (basemapRestoreBlockingLayersRef.current || basemapApplyInProgressRef.current) return;
-        console.log('Map style loaded. Updating layers...');
         updateLayers();
       };
       map.once('style.load', onStyleLoad);
@@ -4741,18 +2845,21 @@ useEffect(() => {
     }
     updateLayers();
     return undefined;
-  }, [layerStatus]);
+  }, [
+    layerStatus,
+    layerOrder,
+    regridTileJsonVersion,
+    propertyMapWizardActive,
+    isPrinting,
+    printParcelsOverlayVisible,
+  ]);
 
-  /**=============== Basemap Change ===============
-   * Persistent basemap model:
-   * - Keep one style (`outdoors-v12`) loaded.
-   * - Toggle managed raster overlays for Satellite/Streets/Imagery.
-   * - Keep ownership/Regrid stack above basemap overlays.
-   *
-   * @param {string} styleId - Basemap variant id (e.g., 'streets-v11')
-   */
+  // --- 8. Basemap handlers ---
+
+  /** Switch basemap overlay on the persistent outdoors style; re-sync layers, labels, and highlights. */
   const handleBasemapChange = (styleId, enable3D = false, onReady) => {
     if (!mapRef.current) return;
+    mapDebug.trace('handleBasemapChange', styleId);
     if (styleId === 'imagery' || styleId === 'imagery-3d') {
       handleSetImageryBasemap(styleId === 'imagery-3d', onReady);
       return;
@@ -4762,7 +2869,6 @@ useEffect(() => {
     if (enable3D) setIs3DEnabled(true);
 
     const runAfterOverlayReady = () => {
-      ownershipTilesTrace('basemap overlay applied', { context: 'handleBasemapChange', styleId });
       void updateLayers().then(() => {
         try {
           mapRef.current.resize();
@@ -4815,55 +2921,18 @@ useEffect(() => {
     });
   };
 
-  // =============== Custom Raster Basemap: Teton Ortho 2024 ===============
-  const TETON_ORTHO_SOURCE_ID = 'teton-ortho-2024-source';
-  const TETON_ORTHO_LAYER_ID = 'teton-ortho-2024-layer';
   const ESRI_WORLD_IMAGERY_SOURCE_ID = 'esri-world-imagery-source';
-  
-  // =============== Custom Raster Basemap: High Def 3 Inch ===============
-  const HIGH_DEF_SOURCE_ID = 'high-def-3inch-source';
-  const HIGH_DEF_LAYER_ID = 'high-def-3inch-layer';
-  const TETON_ORTHO_TILES = [
-    'https://gis.tetoncountywy.gov/server/rest/services/OrthosAndRasters/TetonAerial2024sixinch_z21/MapServer/tile/{z}/{y}/{x}?blankTile=false'
-  ];
-
-  const addTetonOrthoRaster = () => {
-    if (!mapRef.current) return;
-    // Add raster source if missing
-    if (!mapRef.current.getSource(TETON_ORTHO_SOURCE_ID)) {
-      mapRef.current.addSource(TETON_ORTHO_SOURCE_ID, {
-        type: 'raster',
-        tiles: TETON_ORTHO_TILES,
-        tileSize: 512, // fewer requests vs 256
-        minzoom: 6,
-        maxzoom: 21,
-        bounds: [-111.27, 43.44, -110.52, 43.98]
-      });
-    }
-    // Insert raster layer below labels if possible
-    const styleLayers = mapRef.current.getStyle().layers || [];
-    const beforeLabel = styleLayers.find(l => l.type === 'symbol' && l.id.includes('label'));
-    const beforeId = beforeLabel ? beforeLabel.id : undefined;
-    if (!mapRef.current.getLayer(TETON_ORTHO_LAYER_ID)) {
-      mapRef.current.addLayer({
-        id: TETON_ORTHO_LAYER_ID,
-        type: 'raster',
-        source: TETON_ORTHO_SOURCE_ID,
-        paint: {
-          'raster-opacity': 1
-        }
-      }, beforeId);
-    }
-  };
 
   const ESRI_WORLD_IMAGERY_TILES = [
     'https://services.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
   ];
 
+
+  /** True for app-owned layers (data, Regrid, draw, contours) vs native Mapbox style layers. */
   const isAppOverlayOrDataLayer = (layer) => {
     const id = layer?.id || '';
     if (!id) return false;
-    if (REGRID_OVERLAY_RASTER_LAYER_IDS.includes(id)) return true;
+    if (MANAGED_BASEMAP_RASTER_LAYER_IDS.includes(id)) return true;
     if (
       id === ESRI_WORLD_IMAGERY_LAYER_ID ||
       id === SATELLITE_STREETS_OVERLAY_LAYER_ID ||
@@ -4896,6 +2965,8 @@ useEffect(() => {
     });
   };
 
+
+  /** Add or show the Esri World Imagery raster basemap and hide the outdoors underlay. */
   const addEsriWorldImageryRaster = () => {
     if (!mapRef.current) return;
     const map = mapRef.current;
@@ -4931,6 +3002,8 @@ useEffect(() => {
     applyCompositeLabelStyleForBasemap(map, 'imagery');
   };
 
+
+  /** True when any non-symbol Mapbox base layer is still visible (blocks imagery from showing). */
   const hasVisiblePersistentStyleUnderlay = (map) => {
     if (!map?.getStyle) return false;
     try {
@@ -4946,6 +3019,8 @@ useEffect(() => {
     }
   };
 
+
+  /** True when Esri imagery layer is visible and the outdoors underlay is fully hidden. */
   const isImageryBasemapFullyApplied = (map) => {
     if (!map?.getLayer?.(ESRI_WORLD_IMAGERY_LAYER_ID)) return false;
     try {
@@ -4968,9 +3043,13 @@ useEffect(() => {
     }
   };
 
+
+  /** Raster tile URL template for a Mapbox-hosted style (satellite, streets, etc.). */
   const getMapboxStyleRasterTileUrl = (styleId) =>
     `https://api.mapbox.com/styles/v1/mapbox/${styleId}/tiles/256/{z}/{x}/{y}?access_token=${mapboxgl.accessToken}`;
 
+
+  /** Add a Mapbox style as a raster overlay on top of the persistent outdoors base. */
   const addMapboxStyleRasterOverlay = (sourceId, layerId, styleId) => {
     if (!mapRef.current) return;
     if (!mapRef.current.getSource(sourceId)) {
@@ -4996,13 +3075,13 @@ useEffect(() => {
     }
   };
 
+
+  /** Hide Esri / satellite / streets raster overlays (optionally keep Esri for imagery transitions). */
   const hideManagedBasemapOverlays = (keepEsriVisible = false) => {
     const map = mapRef.current;
     if (!map) return;
     [
-      TETON_ORTHO_LAYER_ID,
       ...(keepEsriVisible ? [] : [ESRI_WORLD_IMAGERY_LAYER_ID]),
-      HIGH_DEF_LAYER_ID,
       SATELLITE_STREETS_OVERLAY_LAYER_ID,
       STREETS_OVERLAY_LAYER_ID,
     ].forEach((id) => {
@@ -5015,6 +3094,8 @@ useEffect(() => {
     });
   };
 
+
+  /** Show or hide Mapbox composite symbol (label) layers from the base outdoors style. */
   const setPersistentBaseLabelsVisibility = (isVisible) => {
     const map = mapRef.current;
     if (!map || !map.getStyle) return;
@@ -5087,6 +3168,8 @@ useEffect(() => {
     return false;
   };
 
+
+  /** Ensure outdoors-v12 is loaded, then run overlay work after `style.load` (or immediately if already loaded). */
   const withPersistentOutdoorsBase = (work) => {
     const map = mapRef.current;
     if (!map || typeof work !== 'function') return;
@@ -5096,7 +3179,6 @@ useEffect(() => {
       return;
     }
     currentStyleUrlRef.current = nextStyleUrl;
-    traceMapboxStyleSwap('persistent-base', nextStyleUrl);
     map.setStyle(nextStyleUrl);
     let settled = false;
     const finish = () => {
@@ -5113,7 +3195,8 @@ useEffect(() => {
     window.setTimeout(finish, 10000);
   };
 
-  // Bring all symbol (label) layers to the very top of the stack
+
+  /** Move all symbol layers to the top of the Mapbox layer stack. */
   const bringLabelsToTop = useCallback(() => {
     const map = mapRef.current;
     if (!map?.getStyle) return;
@@ -5130,6 +3213,8 @@ useEffect(() => {
     });
   }, [mapRef]);
 
+
+  /** Detach pending `sourcedata` listeners used while waiting for label source readiness. */
   const clearLabelSourceWaitHandlers = useCallback((map) => {
     if (!map) return;
     labelSourceWaitHandlersRef.current.forEach((handler) => {
@@ -5171,7 +3256,6 @@ useEffect(() => {
       if (!map.isStyleLoaded?.()) return;
       bringRegridParcelLayersBeforeSymbolLabels(map);
       applyParcelVisualizationVisibility(map, parcelMapVisibility);
-      setRegridZoningLayersVisibility(map, Boolean(layerStatusRef.current?.regrid_zoning));
       bringLabelsToTop();
       applyCompositeLabelStyleForBasemap(map, regridStyleBasemapRef.current);
       const wantedBasemap = String(
@@ -5180,6 +3264,7 @@ useEffect(() => {
       if (wantedBasemap && needsBasemapOverlayMaintenance(map, wantedBasemap)) {
         repairBasemapOverlaysRef.current(wantedBasemap);
       }
+      reapplySelectionHighlightIfNeededRef.current();
     };
 
     map.on(CV_REGRID_RESTACK_EVENT, restack);
@@ -5188,6 +3273,8 @@ useEffect(() => {
     };
   }, [mapRef, mapIsReady, layerStatus, parcelMapVisibility, bringLabelsToTop, activeBasemapIdRef]);
 
+
+  /** Add/show/hide per-layer name labels (ownership owner names, etc.) based on `layerLabels` toggles. */
   const applyLabelLayers = useCallback(() => {
     const map = mapRef.current;
     if (!map) return;
@@ -5227,7 +3314,7 @@ useEffect(() => {
           const labelStyle =
             layerName === 'ownership'
               ? getLabelLayerStyle('ownership', {
-                  regridVectorSourceLayer: getRegridVectorSourceLayerId(cachedRegridTileJson),
+                  regridVectorSourceLayer: getRegridVectorSourceLayerId(getCachedRegridTileJson()),
                 })
               : getLabelLayerStyle(layerName);
           map.addLayer(labelStyle);
@@ -5253,9 +3340,13 @@ useEffect(() => {
 
       const sourceDataHandler = (e) => {
         if (e.sourceId !== labelSourceId || !e.isSourceLoaded) return;
-        if (!layerLabelsRef.current[layerName]) {
+        const labelsStillWanted =
+          Boolean(layerLabelsRef.current[layerName]) &&
+          (layerName !== 'ownership' || Boolean(layerStatusRef.current?.ownership));
+        if (!labelsStillWanted) {
           map.off('sourcedata', sourceDataHandler);
           labelSourceWaitHandlersRef.current.delete(layerName);
+          hideLabelLayerSafe(map, labelLayerId);
           return;
         }
         addOrShowLabelLayer();
@@ -5288,6 +3379,9 @@ useEffect(() => {
     hideLabelLayerSafe,
   ]);
 
+  applyLabelLayersRef.current = applyLabelLayers;
+  hideLabelLayerSafeRef.current = hideLabelLayerSafe;
+
   useEffect(() => {
     applyLabelLayers();
     return () => {
@@ -5295,47 +3389,8 @@ useEffect(() => {
     };
   }, [applyLabelLayers, clearLabelSourceWaitHandlers]);
 
-  const handleSetTetonOrthoBasemap = (onReady) => {
-    if (!mapRef.current) return;
-    baseMapRef.current = 'teton-ortho-2024';
-    setBasemap('teton-ortho-2024');
-    const nextStyleUrl = 'mapbox://styles/mapbox/outdoors-v12';
-    // Use satellite streets, then overlay raster
-    traceMapboxStyleSwap('teton-ortho', nextStyleUrl);
-    const onStyleReady = () => {
-      ownershipTilesTrace('basemap style.load fired', { context: 'teton-ortho' });
-      try {
-        addTetonOrthoRaster();
-      } catch (e) {
-        console.error('Failed to add Teton Ortho raster:', e);
-      }
-      void updateLayers().then(() => {
-        bringLabelsToTop();
-        if (selectedFeature?.length > 0) {
-          highlightFeature(selectedFeature);
-        }
-        restackDataAndParcelsOnce();
-        try {
-          onReady?.();
-        } catch (_) {
-          /* ignore */
-        }
-      });
-    };
-    if (currentStyleUrlRef.current === nextStyleUrl && mapRef.current.isStyleLoaded?.()) {
-      onStyleReady();
-      return;
-    }
-    currentStyleUrlRef.current = nextStyleUrl;
-    mapRef.current.setStyle(nextStyleUrl);
-    mapRef.current.once('style.load', onStyleReady);
-  };
 
-  const handleSetEsriWorldImageryBasemap = () => {
-    if (!mapRef.current) return;
-    handleSetImageryBasemap(false);
-  };
-
+  /** Switch to Esri World Imagery (optionally with 3D terrain); re-sync data layers when ready. */
   const handleSetImageryBasemap = (enable3D = false, onReady) => {
     if (!mapRef.current) {
       basemapApplyInProgressRef.current = false;
@@ -5378,7 +3433,6 @@ useEffect(() => {
             verifyBasemapAppliedOnMap(map, basemapId) &&
             !needsBasemapOverlayMaintenance(map, basemapId);
         }
-        if (!applied) return;
         done = true;
         lastAppliedBasemapRef.current = basemapId;
         needsInitialBasemapApplyRef.current = false;
@@ -5393,9 +3447,6 @@ useEffect(() => {
         }
       };
 
-      ownershipTilesTrace('basemap overlay applied', {
-        context: enable3D ? 'imagery-3d' : 'imagery',
-      });
       try {
         ensureImageryBasemapRef.current();
       } catch (e) {
@@ -5454,7 +3505,6 @@ useEffect(() => {
      */
     if (enable3D && baseMapRef.current === 'imagery' && styleReady) {
       publishBasemapSelection('imagery-3d');
-      traceMapboxStyleSwap('imagery-in-place-3d', 'no setStyle (persistent outdoors-v12)');
       runImageryBasemapBody();
       return;
     }
@@ -5465,149 +3515,8 @@ useEffect(() => {
     });
   };
 
-  // =============== Custom Raster Basemap: High Def 3 Inch ===============
-  const HIGH_DEF_TILES = [
-    'https://storage.googleapis.com/teton-county-gis-bucket/teton_high_def_V2/tiles_all_3inch/{z}/{x}/{y}.png'
-  ];
 
-  const addHighDefRaster = () => {
-    if (!mapRef.current) {
-      console.error('❌ addHighDefRaster: mapRef.current is null!');
-      return;
-    }
-    console.log('img️ Adding High Def 3 Inch raster layer...');
-    console.log('img️ Map style loaded?', mapRef.current.isStyleLoaded());
-    console.log('img️ Map loaded?', mapRef.current.loaded());
-    
-    // Remove existing layer and source if they exist (to ensure fresh config without bounds)
-    if (mapRef.current.getLayer(HIGH_DEF_LAYER_ID)) {
-      console.log('🗑️ Removing existing High Def layer...');
-      mapRef.current.removeLayer(HIGH_DEF_LAYER_ID);
-    }
-    if (mapRef.current.getSource(HIGH_DEF_SOURCE_ID)) {
-      console.log('🗑️ Removing existing High Def source...');
-      mapRef.current.removeSource(HIGH_DEF_SOURCE_ID);
-    }
-    
-    // Add raster source (always recreate to ensure latest config)
-    console.log('📦 Creating High Def source with tiles:', HIGH_DEF_TILES);
-    // Note: transformRequest is set globally at map initialization, so TMS conversion will happen automatically
-    
-    try {
-      mapRef.current.addSource(HIGH_DEF_SOURCE_ID, {
-        type: 'raster',
-        tiles: HIGH_DEF_TILES,
-        tileSize: 256,
-        minzoom: 6,
-        maxzoom: 19, // Match the Leaflet example maxZoom
-        // Remove scheme: 'tms' since we're handling conversion manually via transformRequest
-        // Removed bounds to allow all tiles to load (bounds were cutting off bottom tiles)
-      });
-      console.log('✅ High Def source added successfully');
-    } catch (error) {
-      console.error('❌ Error adding High Def source:', error);
-      return;
-    }
-      
-      // Listen for tile loading events
-      mapRef.current.on('sourcedata', (e) => {
-        if (e.sourceId === HIGH_DEF_SOURCE_ID) {
-          if (e.isSourceLoaded) {
-            console.log('✅ High Def source loaded successfully');
-          } else if (e.tile) {
-            if (e.tile.state === 'errored') {
-              console.error('❌ High Def tile error:', e.tile.url);
-            } else if (e.tile.state === 'loaded') {
-              console.log('✅ High Def tile loaded:', e.tile.url);
-            }
-          }
-        }
-      });
-    // Insert raster layer right after base map layers, but below all data layers and drawing layers
-    // Layer order (bottom to top): Base map -> High-def raster -> Data layers -> Drawing layers
-    const styleLayers = mapRef.current.getStyle().layers || [];
-    console.log('📋 Style layers count:', styleLayers.length);
-    
-    // Find where to insert: right after base map, but before any data layers
-    // We want high-def to be below data layers (like ownership) but above base map
-    let beforeId = undefined;
-    
-    // First, try to find data layers (end with -layer) - we want high-def BELOW these
-    const firstDataLayer = styleLayers.find(l => 
-      l.id.endsWith('-layer') && 
-      !l.id.startsWith('gl-draw-') &&
-      l.id !== 'measurement-labels-layer' &&
-      l.id !== HIGH_DEF_LAYER_ID
-    );
-    if (firstDataLayer) {
-      beforeId = firstDataLayer.id;
-      console.log('📍 Adding High Def layer before data layer (will be below data layers):', beforeId);
-    } else {
-      // Look for Mapbox Draw layers - we want high-def BELOW these too
-      const drawLayer = styleLayers.find(l => l.id.startsWith('gl-draw-'));
-      if (drawLayer) {
-        beforeId = drawLayer.id;
-        console.log('📍 Adding High Def layer before Mapbox Draw layer (will be below drawings):', beforeId);
-      } else {
-        // Look for measurement labels layer - we want high-def BELOW this
-        const measurementLayer = styleLayers.find(l => l.id === 'measurement-labels-layer');
-        if (measurementLayer) {
-          beforeId = measurementLayer.id;
-          console.log('📍 Adding High Def layer before measurement labels (will be below measurements):', beforeId);
-        } else {
-          // Look for symbol layers (labels) but skip Mapbox Draw and measurement labels
-          const firstLabelLayer = styleLayers.find(l => 
-            l.type === 'symbol' && 
-            l.id.includes('label') && 
-            !l.id.startsWith('gl-draw-') &&
-            l.id !== 'measurement-labels-layer'
-          );
-          if (firstLabelLayer) {
-            beforeId = firstLabelLayer.id;
-            console.log('📍 Adding High Def layer before label layer:', beforeId);
-          } else {
-            // Add at the very bottom (right after base map layers)
-            // No beforeId means it goes to the bottom of the stack
-            console.log('📍 Adding High Def layer at the bottom (after base map)');
-          }
-        }
-      }
-    }
-    
-    if (!mapRef.current.getLayer(HIGH_DEF_LAYER_ID)) {
-      try {
-        mapRef.current.addLayer({
-          id: HIGH_DEF_LAYER_ID,
-          type: 'raster',
-          source: HIGH_DEF_SOURCE_ID,
-          paint: {
-            'raster-opacity': 1
-          }
-        }, beforeId);
-        console.log('✅ High Def layer added successfully');
-      } catch (error) {
-        console.error('❌ Error adding High Def layer:', error);
-      }
-    } else {
-      console.log('ℹ️ High Def layer already exists, moving to correct position');
-      // If layer exists, move it to the correct position (below drawings)
-      try {
-        if (beforeId) {
-          mapRef.current.moveLayer(HIGH_DEF_LAYER_ID, beforeId);
-        } else {
-          // Move to bottom if no beforeId
-          const allLayers = mapRef.current.getStyle().layers || [];
-          if (allLayers.length > 0) {
-            mapRef.current.moveLayer(HIGH_DEF_LAYER_ID, allLayers[0].id);
-          }
-        }
-        console.log('✅ High Def layer moved to correct position (below drawings)');
-      } catch (error) {
-        console.error('❌ Error moving High Def layer:', error);
-      }
-    }
-  };
-
+  /** Remove Mapbox terrain contour line and hillshade layers from the map. */
   const removeContourLayers = useCallback(() => {
     const map = mapRef.current;
     if (!map) return;
@@ -5628,6 +3537,8 @@ useEffect(() => {
 
   const BUILDINGS_3D_LAYER_ID = 'cv-3d-buildings-layer';
 
+
+  /** Add or show extruded 3D buildings from the Mapbox composite source. */
   const ensure3DBuildingsLayer = useCallback(() => {
     const map = mapRef.current;
     if (!map || !map.isStyleLoaded?.()) return;
@@ -5669,6 +3580,8 @@ useEffect(() => {
     }
   }, [mapRef]);
 
+
+  /** Remove the 3D buildings extrusion layer. */
   const remove3DBuildingsLayer = useCallback(() => {
     const map = mapRef.current;
     if (!map) return;
@@ -5681,6 +3594,8 @@ useEffect(() => {
     }
   }, [mapRef]);
 
+
+  /** Add major/minor elevation contour lines from Mapbox terrain-v2. */
   const ensureContourLayers = useCallback(() => {
     const map = mapRef.current;
     if (!map) return;
@@ -5715,6 +3630,8 @@ useEffect(() => {
     }
   }, [mapRef]);
 
+
+  /** Apply 3D terrain/buildings/sky and contour layers based on `is3DEnabled` / `isContoursEnabled`. */
   const applyBasemapEnhancements = useCallback(() => {
     const map = mapRef.current;
     if (!map || !map.isStyleLoaded?.()) return;
@@ -5802,36 +3719,71 @@ useEffect(() => {
     }
   }, [mapRef, activeBasemapIdRef]);
 
-  /** @deprecated Use restackDataAndParcelsOnce — updateLayers already reloads tile sources. */
-  const refreshOwnershipAfterBasemapSwap = restackDataAndParcelsOnce;
+  maintainBasemapStackRef.current = () => {
+    const map = mapRef.current;
+    if (!map?.isStyleLoaded?.()) return;
+    const wanted = normalizeBasemapId(
+      urlBasemapIdRef.current || activeBasemapIdRef?.current || baseMapRef.current
+    );
+    if (!wanted || !needsBasemapOverlayMaintenance(map, wanted)) return;
+    repairBasemapOverlaysRef.current(wanted);
+    try {
+      restackDataLayersAboveBasemapOverlays(map);
+      if (parcelMapVisibilityRef.current?.showRegrid) {
+        bringRegridParcelLayersBeforeSymbolLabels(map);
+        applyParcelVisualizationVisibility(map, parcelMapVisibilityRef.current);
+      }
+      bringLabelsToTop();
+      applyCompositeLabelStyleForBasemap(map, wanted);
+    } catch (_) {
+      /* ignore */
+    }
+  };
+
+  /** Repair raster overlays + restack data/Regrid after basemap or ownership layer order changes. */
+  const finalizeBasemapVisualStackRef = useRef(() => {});
+  finalizeBasemapVisualStackRef.current = () => {
+    const map = mapRef.current;
+    if (!map?.isStyleLoaded?.()) return;
+    const wanted = normalizeBasemapId(
+      activeBasemapIdRef?.current || baseMapRef.current || urlBasemapIdRef.current
+    );
+    if (wanted) {
+      repairBasemapOverlaysRef.current(wanted);
+    }
+    restackDataAndParcelsOnce();
+    try {
+      applyParcelVisualizationVisibility(map, parcelMapVisibilityRef.current);
+    } catch (_) {
+      /* ignore */
+    }
+    syncMapUrlRef.current();
+  };
 
   /** Unblock layerStatus effect and run one final stack sync (saved print map open / basemap restore). */
   const finishBasemapApplyRef = useRef(() => {});
-  finishBasemapApplyRef.current = ({ layersAlreadySynced = false } = {}) => {
+  finishBasemapApplyRef.current = () => {
     basemapRestoreBlockingLayersRef.current = false;
     restoringPrintBasemapRef.current = false;
     basemapApplyInProgressRef.current = false;
+    initialBasemapRestoreCompleteRef.current = true;
     const map = mapRef.current;
-    if (!map) return;
+    if (!map) {
+      syncMapUrlRef.current();
+      return;
+    }
 
     const run = () => {
-      if (!layersAlreadySynced) {
-        void Promise.resolve(updateLayers()).then(() => {
-          try {
-            applyLabelLayers();
-          } catch (_) {
-            /* ignore */
-          }
-          restackDataAndParcelsOnce();
-        });
-        return;
-      }
-      restackDataAndParcelsOnce();
-      try {
-        applyParcelVisualizationVisibility(map, parcelMapVisibilityRef.current);
-      } catch (_) {
-        /* ignore */
-      }
+      void Promise.resolve(updateLayers()).then(() => {
+        try {
+          applyLabelLayers();
+        } catch (_) {
+          /* ignore */
+        }
+        restackDataAndParcelsOnce();
+        maintainBasemapStackRef.current();
+        syncMapUrlRef.current();
+      });
     };
 
     if (map.isStyleLoaded?.()) {
@@ -5876,25 +3828,17 @@ useEffect(() => {
     const map = mapRef.current;
     if (!mapIsReady || !map?.isStyleLoaded?.()) return undefined;
 
-    const getWantedBasemapId = () => {
-      const params = queryString.parse(window.location.search);
-      const fromUrl =
-        params.basemap != null && String(params.basemap).trim() !== ''
-          ? String(params.basemap).trim()
-          : '';
-      return String(
-        fromUrl ||
+    const getWantedBasemapId = () =>
+      normalizeBasemapId(
+        urlBasemapIdRef.current ||
           activeBasemapIdRef?.current ||
-          urlBasemapIdRef.current ||
-          currentBasemapId ||
           baseMapRef.current ||
-          DEFAULT_BASEMAP_ID
-      ).trim();
-    };
+          currentBasemapId ||
+          getBasemapIdFromSearch(window.location.search)
+      );
 
     const syncBasemapIfNeeded = () => {
       if (basemapRestoreBlockingLayersRef.current || basemapApplyInProgressRef.current) return;
-      // Init `once('idle')` owns the first URL → basemap apply; reconcile only repairs after that.
       if (!initialBasemapRestoreCompleteRef.current) return;
 
       const wanted = getWantedBasemapId();
@@ -5912,7 +3856,6 @@ useEffect(() => {
         return;
       }
 
-      // Lightweight overlay repair only — never setStyle on zoom / layer churn.
       if (repairBasemapOverlaysRef.current(wanted)) {
         lastAppliedBasemapRef.current = activeBasemapIdRef?.current || wanted;
       }
@@ -5957,129 +3900,6 @@ useEffect(() => {
     applyBasemapByIdRef.current(fromUrl);
   }, [routerLocation.search, mapIsReady, publishBasemapSelection]);
 
-  const handleSetHighDefBasemap = (enable3D = false, onReady) => {
-    if (!mapRef.current) {
-      try {
-        onReady?.();
-      } catch (_) {
-        /* ignore */
-      }
-      return;
-    }
-    setIs3DEnabled(enable3D);
-
-    /** Shared finish path after style is ready (or already satellite-streets with high-def flat). */
-    const runHighDefBasemapBody = () => {
-      let done = false;
-      const finishReady = () => {
-        if (done) return;
-        done = true;
-        try {
-          onReady?.();
-        } catch (_) {
-          /* ignore */
-        }
-      };
-      ownershipTilesTrace('basemap style.load fired', { context: 'high-def-3inch' });
-      try {
-        if (enable3D) {
-          try {
-            if (!mapRef.current.getSource('mapbox-dem')) {
-              mapRef.current.addSource('mapbox-dem', {
-                type: 'raster-dem',
-                url: 'mapbox://mapbox.terrain-rgb',
-                tileSize: 512,
-                maxzoom: 14,
-              });
-            }
-
-            mapRef.current.setTerrain({ source: 'mapbox-dem', exaggeration: 1.5 });
-
-            if (!mapRef.current.getLayer('sky')) {
-              mapRef.current.addLayer({
-                id: 'sky',
-                type: 'sky',
-                paint: {
-                  'sky-type': 'atmosphere',
-                  'sky-atmosphere-sun': [0.0, 0.0],
-                  'sky-atmosphere-sun-intensity': 15,
-                },
-              });
-            }
-
-            mapRef.current.setPitch(60);
-            mapRef.current.setBearing(-60);
-            console.log('✅ 3D terrain enabled for High Def basemap');
-          } catch (err) {
-            console.error('🔥 Error enabling 3D terrain:', err);
-          }
-        } else {
-          mapRef.current.setTerrain(null);
-          mapRef.current.setPitch(0);
-          mapRef.current.setBearing(0);
-        }
-
-        addHighDefRaster();
-      } catch (e) {
-        console.error('Failed to add High Def raster:', e);
-      }
-      /** Some basemap/style races can leave updateLayers unresolved on first tour load. */
-      const applyPostLayerEnhancements = () => {
-        applyLabelLayers();
-        bringLabelsToTop();
-        if (selectedFeature?.length > 0) {
-          highlightFeature(selectedFeature);
-        }
-        schedulePostBasemapRegridRestack(mapRef);
-        refreshOwnershipAfterBasemapSwap();
-      };
-      try {
-        const maybePromise = updateLayers();
-        Promise.resolve(maybePromise)
-          .then(() => {
-            applyPostLayerEnhancements();
-            finishReady();
-          })
-          .catch(() => {
-            applyPostLayerEnhancements();
-            finishReady();
-          });
-      } catch (_) {
-        applyPostLayerEnhancements();
-        finishReady();
-      }
-      // Failsafe: unblock tour camera even if Mapbox/style callbacks hang.
-      window.setTimeout(() => {
-        finishReady();
-      }, 1200);
-    };
-
-    /**
-     * Default client view is already `satellite-streets-v12` under high-def flat. Calling setStyle with
-     * the same URL often never fires `style.load`, so tour 3D upgrade would hang. Upgrade in place.
-     */
-    const map = mapRef.current;
-    let styleReady = false;
-    try {
-      styleReady = typeof map.isStyleLoaded === 'function' && map.isStyleLoaded();
-    } catch (_) {
-      styleReady = false;
-    }
-    if (enable3D && baseMapRef.current === 'high-def-3inch' && styleReady) {
-      baseMapRef.current = 'high-def-3inch-3d';
-      setBasemap('high-def-3inch-3d');
-      traceMapboxStyleSwap('high-def-3inch-in-place-3d', 'no setStyle (already satellite-streets)');
-      runHighDefBasemapBody();
-      return;
-    }
-
-    baseMapRef.current = enable3D ? 'high-def-3inch-3d' : 'high-def-3inch';
-    setBasemap(enable3D ? 'high-def-3inch-3d' : 'high-def-3inch');
-    traceMapboxStyleSwap('high-def-3inch', 'mapbox://styles/mapbox/satellite-streets-v12');
-    map.setStyle('mapbox://styles/mapbox/satellite-streets-v12');
-    map.once('style.load', runHighDefBasemapBody);
-  };
-
   if (applyTourPropertyBasemapRef) {
     applyTourPropertyBasemapRef.current = async () => {
       if (!mapRef.current) return;
@@ -6100,355 +3920,12 @@ useEffect(() => {
       ]);
     };
   }
-  
-  // Expose handler to window for URL parameter initialization
-  window.handleSetHighDefBasemap = handleSetHighDefBasemap;
-
-  /**=============== High Def with Topo Lines ===============
-   * Combines high-def imagery with contour lines (topo lines)
-   * 
-   * @param {boolean} enable3D - Whether to enable 3D terrain
-   */
-  const handleSetHighDefWithTopo = (enable3D = false, onReady) => {
-    if (!mapRef.current) return;
-    setIs3DEnabled(enable3D);
-    setIsContoursEnabled(true);
-    baseMapRef.current = enable3D ? 'high-def-3inch-topo-3d' : 'high-def-3inch-topo';
-    setBasemap(enable3D ? 'high-def-3inch-topo-3d' : 'high-def-3inch-topo');
-    
-    // Use satellite streets as base style
-    traceMapboxStyleSwap('high-def-topo', 'mapbox://styles/mapbox/satellite-streets-v12');
-    mapRef.current.setStyle('mapbox://styles/mapbox/satellite-streets-v12');
-    
-    mapRef.current.once('style.load', () => {
-      ownershipTilesTrace('basemap style.load fired', { context: 'high-def-topo' });
-      console.log('✅ Map style loaded; applying High Def + Topo');
-      
-      try {
-        // Enable 3D terrain if requested
-        if (enable3D) {
-          if (!mapRef.current.getSource('mapbox-dem')) {
-            mapRef.current.addSource('mapbox-dem', {
-              type: 'raster-dem',
-              url: 'mapbox://mapbox.terrain-rgb',
-              tileSize: 512,
-              maxzoom: 14,
-            });
-          }
-          mapRef.current.setTerrain({ source: 'mapbox-dem', exaggeration: 1.5 });
-          if (!mapRef.current.getLayer('sky')) {
-            mapRef.current.addLayer({
-              id: 'sky',
-              type: 'sky',
-              paint: {
-                'sky-type': 'atmosphere',
-                'sky-atmosphere-sun': [0.0, 0.0],
-                'sky-atmosphere-sun-intensity': 15,
-              },
-            });
-          }
-          mapRef.current.setPitch(60);
-          mapRef.current.setBearing(-60);
-        } else {
-          mapRef.current.setTerrain(null);
-          mapRef.current.setPitch(0);
-          mapRef.current.setBearing(0);
-        }
-        
-        // Add high-def raster layer
-        addHighDefRaster();
-        
-        // Remove existing contour layers if they exist
-        if (mapRef.current.getLayer('terrain-colors')) {
-          mapRef.current.removeLayer('terrain-colors');
-        }
-        if (mapRef.current.getLayer('contour-lines-major')) {
-          mapRef.current.removeLayer('contour-lines-major');
-        }
-        if (mapRef.current.getLayer('contour-lines-minor')) {
-          mapRef.current.removeLayer('contour-lines-minor');
-        }
-        if (mapRef.current.getLayer('contour-labels-major')) {
-          mapRef.current.removeLayer('contour-labels-major');
-        }
-        if (mapRef.current.getLayer('contour-labels-minor')) {
-          mapRef.current.removeLayer('contour-labels-minor');
-        }
-        
-        // Find a good place to insert the layers (before labels, after high-def)
-        const styleLayers = mapRef.current.getStyle().layers || [];
-        const beforeLayer = styleLayers.find(layer => 
-          layer.type === 'symbol' && layer.id.includes('label')
-        );
-        const beforeId = beforeLayer ? beforeLayer.id : undefined;
-        
-        // Add hillshade for terrain visualization (optional, can be removed if too dark)
-        try {
-          if (!mapRef.current.getLayer('terrain-colors')) {
-            if (!mapRef.current.getSource('terrain-hillshade')) {
-              mapRef.current.addSource('terrain-hillshade', {
-                type: 'raster-dem',
-                url: 'mapbox://mapbox.terrain-rgb',
-                tileSize: 512,
-                maxzoom: 14
-              });
-            }
-            
-            mapRef.current.addLayer({
-              id: 'terrain-colors',
-              type: 'hillshade',
-              source: 'terrain-hillshade',
-              paint: {
-                'hillshade-exaggeration': 0.5, // Lower exaggeration so it doesn't darken the high-def imagery too much
-                'hillshade-illumination-direction': 315,
-                'hillshade-illumination-anchor': 'viewport'
-              }
-            }, beforeId);
-          }
-        } catch (error) {
-          console.error('Error adding hillshade:', error);
-        }
-        
-        // Add contour lines source
-        if (!mapRef.current.getSource('contour-lines-source')) {
-          mapRef.current.addSource('contour-lines-source', {
-            type: 'vector',
-            url: 'mapbox://mapbox.mapbox-terrain-v2'
-          });
-        }
-        
-        // Wait for contour source to load
-        const addContourLayers = () => {
-          if (!mapRef.current.getSource('contour-lines-source')) return;
-          
-          const beforeLayer = mapRef.current.getStyle().layers.find(layer => 
-            layer.type === 'symbol' && layer.id.includes('label')
-          );
-          const beforeId = beforeLayer ? beforeLayer.id : undefined;
-          
-          try {
-            // Add major contour lines
-            mapRef.current.addLayer({
-              id: 'contour-lines-major',
-              type: 'line',
-              source: 'contour-lines-source',
-              'source-layer': 'contour',
-              filter: ['==', ['%', ['get', 'ele'], 100], 0],
-              paint: {
-                'line-color': '#FF4500',
-                'line-width': 1.5,
-                'line-opacity': 0.9
-              }
-            }, beforeId);
-            
-            // Add minor contour lines
-            mapRef.current.addLayer({
-              id: 'contour-lines-minor',
-              type: 'line',
-              source: 'contour-lines-source',
-              'source-layer': 'contour',
-              filter: ['!=', ['%', ['get', 'ele'], 100], 0],
-              paint: {
-                'line-color': '#FF4500',
-                'line-width': 1.0,
-                'line-opacity': 0.6
-              }
-            }, beforeId);
-            
-            // Add elevation labels
-            mapRef.current.addLayer({
-              id: 'contour-labels-major',
-              type: 'symbol',
-              source: 'contour-lines-source',
-              'source-layer': 'contour',
-              filter: ['==', ['%', ['get', 'ele'], 100], 0],
-              layout: {
-                'symbol-placement': 'line',
-                'text-field': [
-                  'concat',
-                  ['to-string', ['round', ['*', ['get', 'ele'], 3.28084]]],
-                  ' ft'
-                ],
-                'text-font': ['Open Sans Regular', 'Arial Unicode MS Regular'],
-                'text-size': 11,
-                'text-rotation-alignment': 'map',
-                'text-pitch-alignment': 'viewport'
-              },
-              paint: {
-                'text-color': '#333333',
-                'text-halo-color': '#ffffff',
-                'text-halo-width': 2,
-                'text-halo-blur': 1
-              }
-            }, beforeId);
-          } catch (err) {
-            console.log('Note: Contour lines may not be available', err);
-          }
-        };
-        
-        // Wait for contour source to load
-        mapRef.current.once('sourcedata', (e) => {
-          if (e.sourceId === 'contour-lines-source' && e.isSourceLoaded) {
-            addContourLayers();
-          }
-        });
-        
-        // Try to add immediately if source is already loaded
-        setTimeout(addContourLayers, 100);
-        
-      } catch (err) {
-        console.error("🔥 Error adding High Def + Topo:", err);
-      }
-      
-      void updateLayers().then(() => {
-        applyLabelLayers();
-        bringLabelsToTop();
-        if (selectedFeature?.length > 0) {
-          highlightFeature(selectedFeature);
-        }
-        schedulePostBasemapRegridRestack(mapRef);
-        refreshOwnershipAfterBasemapSwap();
-        try {
-          onReady?.();
-        } catch (_) {
-          /* ignore */
-        }
-      });
-    });
-  };
-  
-  // Expose handler to window for URL parameter initialization
-  window.handleSetHighDefWithTopo = handleSetHighDefWithTopo;
-
-  // =============== Custom Raster Basemap: Test ===============
-  const TEST_SOURCE_ID = 'test-source';
-  const TEST_LAYER_ID = 'test-layer';
-  const TEST_TILES = [
-    'http://localhost:8004/{z}/{x}/{y}.png'
-  ];
-
-  const addTestRaster = () => {
-    if (!mapRef.current) return;
-    console.log('img️ Adding test raster layer...');
-    
-    // Add raster source if missing
-    if (!mapRef.current.getSource(TEST_SOURCE_ID)) {
-      console.log('📦 Creating test source with tiles:', TEST_TILES);
-      mapRef.current.addSource(TEST_SOURCE_ID, {
-        type: 'raster',
-        tiles: TEST_TILES,
-        tileSize: 256,
-        minzoom: 0,
-        maxzoom: 22,
-        scheme: 'tms'  // Use TMS tile scheme (Y coordinate flipped)
-      });
-      
-      // Listen for tile loading events
-      mapRef.current.on('sourcedata', (e) => {
-        if (e.sourceId === TEST_SOURCE_ID) {
-          if (e.isSourceLoaded) {
-            console.log('✅ Test source loaded successfully');
-          } else if (e.tile) {
-            if (e.tile.state === 'errored') {
-              console.error('❌ Tile error:', e.tile.url);
-            } else if (e.tile.state === 'loaded') {
-              console.log('✅ Tile loaded:', e.tile.url);
-            }
-          }
-        }
-      });
-    }
-    
-    // Add test raster layer at the very bottom
-    if (!mapRef.current.getLayer(TEST_LAYER_ID)) {
-      console.log('🎨 Adding test raster layer to map');
-      mapRef.current.addLayer({
-        id: TEST_LAYER_ID,
-        type: 'raster',
-        source: TEST_SOURCE_ID,
-        paint: {
-          'raster-opacity': 1
-        }
-      });
-      console.log('✅ Test layer added:', TEST_LAYER_ID);
-      
-      // Move it to the bottom of the layer stack
-      const styleLayers = mapRef.current.getStyle().layers || [];
-      if (styleLayers.length > 1) {
-        try {
-          mapRef.current.moveLayer(TEST_LAYER_ID, styleLayers[0].id);
-          console.log('📐 Moved test layer to bottom');
-        } catch (e) {
-          console.warn('⚠️ Could not move test layer:', e);
-        }
-      }
-    } else {
-      console.log('ℹ️ Test layer already exists');
-    }
-    
-    // Hide all default style layers (background, fill, line, symbol, etc.) except our data layers
-    const styleLayers = mapRef.current.getStyle().layers || [];
-    styleLayers.forEach(layer => {
-      // Keep: test layer, our data layers (those ending in -layer), and labels we might add
-      if (layer.id === TEST_LAYER_ID || 
-          layer.id.includes('-layer') || 
-          layer.id.includes('-label')) {
-        return; // Skip hiding these
-      }
-      // Hide everything else (background, roads, buildings, etc.)
-      try {
-        mapRef.current.setLayoutProperty(layer.id, 'visibility', 'none');
-      } catch (e) {
-        // Some layers might not support visibility or already removed
-      }
-    });
-  };
-
-  const handleSetTestBasemap = () => {
-    if (!mapRef.current) return;
-    console.log('🔄 Switching to test basemap...');
-    baseMapRef.current = 'test';
-    setBasemap('test');
-    // Use light style as base (minimal layers), then hide everything and show only test raster
-    traceMapboxStyleSwap('test-basemap', 'mapbox://styles/mapbox/light-v10');
-    mapRef.current.setStyle('mapbox://styles/mapbox/light-v10');
-    mapRef.current.once('style.load', () => {
-      ownershipTilesTrace('basemap style.load fired', { context: 'test-basemap' });
-      console.log('✅ Map style loaded, adding test raster...');
-      try {
-        addTestRaster();
-        // Verify layer is visible
-        setTimeout(() => {
-          const layer = mapRef.current.getLayer(TEST_LAYER_ID);
-          if (layer) {
-            console.log('✅ Test layer exists on map');
-            const visibility = mapRef.current.getLayoutProperty(TEST_LAYER_ID, 'visibility');
-            console.log('👁️ Test layer visibility:', visibility);
-            const opacity = mapRef.current.getPaintProperty(TEST_LAYER_ID, 'raster-opacity');
-            console.log('🎨 Test layer opacity:', opacity);
-          } else {
-            console.error('❌ Test layer not found on map!');
-          }
-        }, 500);
-      } catch (e) {
-        console.error('❌ Failed to add test raster:', e);
-      }
-      void updateLayers().then(() => {
-        applyLabelLayers();
-        bringLabelsToTop();
-        if (selectedFeature?.length > 0) {
-          highlightFeature(selectedFeature);
-        }
-        schedulePostBasemapRegridRestack(mapRef);
-        refreshOwnershipAfterBasemapSwap();
-      });
-    });
-  };
 
   /** Same code path as the basemap picker — used when opening a saved print map or client share. */
   const applyBasemapByIdRef = useRef(() => {});
   applyBasemapByIdRef.current = (basemapId) => {
     const id = normalizeBasemapId(basemapId);
+    mapDebug.trace('applyBasemapById', id);
     basemapApplyGenerationRef.current += 1;
     basemapApplyInProgressRef.current = true;
     basemapRestoreBlockingLayersRef.current = true;
@@ -6456,7 +3933,7 @@ useEffect(() => {
     lastAppliedBasemapRef.current = null;
     if (pendingPrintBasemapRestoreRef) pendingPrintBasemapRestoreRef.current = null;
 
-    const onDone = ({ layersAlreadySynced = false } = {}) => {
+    const onDone = () => {
       const appliedId = String(activeBasemapIdRef?.current || id).trim();
       const map = mapRef.current;
       const verified =
@@ -6466,36 +3943,24 @@ useEffect(() => {
       if (verified) {
         lastAppliedBasemapRef.current = appliedId;
         needsInitialBasemapApplyRef.current = false;
-        initialBasemapRestoreCompleteRef.current = true;
       }
+      initialBasemapRestoreCompleteRef.current = true;
       if (activeBasemapIdRef) activeBasemapIdRef.current = appliedId;
-      finishBasemapApplyRef.current({ layersAlreadySynced });
+      finishBasemapApplyRef.current();
     };
 
     publishBasemapSelection(id);
 
     if (id === 'imagery') {
-      handleSetImageryBasemap(false, () => onDone({ layersAlreadySynced: true }));
+      handleSetImageryBasemap(false, onDone);
       return;
     }
     if (id === 'outdoors-v12' || id === 'satellite-streets-v12' || id === 'streets-v11') {
-      handleBasemapChange(id, false, () => onDone({ layersAlreadySynced: true }));
-      return;
-    }
-    if (id.includes('high-def-3inch-topo')) {
-      handleSetHighDefWithTopo(id.includes('3d'), () => onDone({ layersAlreadySynced: true }));
-      return;
-    }
-    if (id.startsWith('high-def-3inch')) {
-      handleSetHighDefBasemap(id.includes('3d'), () => onDone({ layersAlreadySynced: true }));
-      return;
-    }
-    if (id === 'teton-ortho-2024') {
-      handleSetTetonOrthoBasemap(() => onDone({ layersAlreadySynced: true }));
+      handleBasemapChange(id, false, onDone);
       return;
     }
 
-    handleBasemapChange(id, false, () => onDone({ layersAlreadySynced: true }));
+    handleBasemapChange(id, false, onDone);
   };
 
   useEffect(() => {
@@ -6505,11 +3970,29 @@ useEffect(() => {
     };
   }, []);
 
+  /** After map is ready, apply `?basemap=` from URL (ownership stacks in `updateLayers` like other layers). */
+  useEffect(() => {
+    if (!mapIsReady || !mapRef.current?.isStyleLoaded?.()) return undefined;
+    if (initialUrlBasemapAppliedRef.current) return undefined;
+    initialUrlBasemapAppliedRef.current = true;
+
+    const basemapId = getBasemapIdFromSearch(window.location.search);
+    urlBasemapIdRef.current = basemapId;
+    initialBasemapRestoreCompleteRef.current = false;
+    needsInitialBasemapApplyRef.current = true;
+    mapDebug.trace('applyBasemapById (url on mapIsReady)', basemapId);
+    applyBasemapByIdRef.current(basemapId);
+    return undefined;
+  }, [mapIsReady]);
+
+
+  /** UI basemap picker entry point — records URL state and delegates to `applyBasemapByIdRef`. */
   const selectBasemapById = (id) => {
-    urlBasemapIdRef.current = String(id || '').trim() || DEFAULT_BASEMAP_ID;
+    const next = normalizeBasemapId(id);
+    urlBasemapIdRef.current = next;
     needsInitialBasemapApplyRef.current = false;
-    initialBasemapRestoreCompleteRef.current = true;
-    applyBasemapByIdRef.current(id);
+    writeBasemapToUrlRef.current(next);
+    applyBasemapByIdRef.current(next);
   };
 
   // Basemap configuration with thumbnails — all options use selectBasemapById (single apply path).
@@ -6527,498 +4010,34 @@ useEffect(() => {
     fallback,
   }));
 
+
+  /** Print layout basemap dropdown — same apply path as the main map basemap picker. */
   const handlePrintBasemapSelect = (optionId) => {
     applyBasemapByIdRef.current(optionId);
   };
 
-  /**=============== Basemap Change with Contours (USGS-style) ===============
-   * Switches the Mapbox style and adds contour lines for USGS-style topo maps
-   * 
-   * @param {string} styleId - The mapbox style ID (e.g., 'streets-v11')
-   */
-  const handleBasemapChangeWithTerrain = (styleId) => {
-    if (!mapRef.current) return;
-    setIs3DEnabled(false);
-    setIsContoursEnabled(true);
-  
-    const variantId = `${styleId}-terrain`;
-    baseMapRef.current = variantId;
-    setBasemap(variantId);
-  
-    // Always reload the style
-    traceMapboxStyleSwap('terrain', `mapbox://styles/mapbox/${styleId}`);
-    mapRef.current.setStyle(`mapbox://styles/mapbox/${styleId}`);
-  
-    mapRef.current.once('style.load', () => {
-      ownershipTilesTrace('basemap style.load fired', { context: 'terrain', styleId });
-      console.log('✅ Map style loaded; adding contour lines');
-  
-      try {
-        // Remove existing layers if they exist
-        if (mapRef.current.getLayer('terrain-colors')) {
-          mapRef.current.removeLayer('terrain-colors');
-        }
-        if (mapRef.current.getLayer('contour-lines-major')) {
-          mapRef.current.removeLayer('contour-lines-major');
-        }
-        if (mapRef.current.getLayer('contour-lines-minor')) {
-          mapRef.current.removeLayer('contour-lines-minor');
-        }
-        if (mapRef.current.getLayer('contour-labels-major')) {
-          mapRef.current.removeLayer('contour-labels-major');
-        }
-        if (mapRef.current.getLayer('contour-labels-minor')) {
-          mapRef.current.removeLayer('contour-labels-minor');
-        }
-        
-        // Find a good place to insert the layers (before labels)
-        const beforeLayer = mapRef.current.getStyle().layers.find(layer => 
-          layer.type === 'symbol' && layer.id.includes('label')
-        );
-        const beforeId = beforeLayer ? beforeLayer.id : undefined;
-        
-        // Add hillshade for terrain visualization
-        try {
-          if (!mapRef.current.getLayer('terrain-colors')) {
-            // Add terrain-rgb as DEM source for hillshade
-            if (!mapRef.current.getSource('terrain-hillshade')) {
-              mapRef.current.addSource('terrain-hillshade', {
-                type: 'raster-dem',
-                url: 'mapbox://mapbox.terrain-rgb',
-                tileSize: 512,
-                maxzoom: 14
-              });
-            }
-            
-            // Add hillshade layer for terrain relief
-            mapRef.current.addLayer({
-              id: 'terrain-colors',
-              type: 'hillshade',
-              source: 'terrain-hillshade',
-              paint: {
-                'hillshade-exaggeration': 1.5,
-                'hillshade-illumination-direction': 315,
-                'hillshade-illumination-anchor': 'viewport'
-              }
-            }, beforeId);
-            
-            console.log('✅ Hillshade layer added - shows terrain relief with lighting');
-          }
-        } catch (error) {
-          console.error('Error adding hillshade:', error);
-        }
-        
-        // Add contour lines source from Mapbox terrain-v2
-        if (!mapRef.current.getSource('contour-lines-source')) {
-          mapRef.current.addSource('contour-lines-source', {
-            type: 'vector',
-            url: 'mapbox://mapbox.mapbox-terrain-v2'
-          });
-        }
-        
-        // Wait for contour source to load
-        const addContourLayers = () => {
-          if (!mapRef.current.getSource('contour-lines-source')) return;
-          
-          // Find a good place to insert the layers (before labels)
-          const beforeLayer = mapRef.current.getStyle().layers.find(layer => 
-            layer.type === 'symbol' && layer.id.includes('label')
-          );
-          const beforeId = beforeLayer ? beforeLayer.id : undefined;
-          
-          try {
-            // Add major contour lines (every 100m) - thicker, orange-red
-            mapRef.current.addLayer({
-              id: 'contour-lines-major',
-              type: 'line',
-              source: 'contour-lines-source',
-              'source-layer': 'contour',
-              filter: ['==', ['%', ['get', 'ele'], 100], 0], // Multiple of 100
-              paint: {
-                'line-color': '#FF4500',  // Orange-red color
-                'line-width': 1.5,
-                'line-opacity': 0.9
-              }
-            }, beforeId);
-            
-            // Add minor contour lines (every 50m) - bolder now
-            mapRef.current.addLayer({
-              id: 'contour-lines-minor',
-              type: 'line',
-              source: 'contour-lines-source',
-              'source-layer': 'contour',
-              filter: ['!=', ['%', ['get', 'ele'], 100], 0], // Not a multiple of 100
-              paint: {
-                'line-color': '#FF4500',  // Orange-red color
-                'line-width': 1.0,        // Increased from 0.7 to 1.0 for better visibility
-                'line-opacity': 0.6       // Increased from 0.5 to 0.6 for better visibility
-              }
-            }, beforeId);
-            
-            // Add elevation labels for major contours (in feet)
-            mapRef.current.addLayer({
-              id: 'contour-labels-major',
-              type: 'symbol',
-              source: 'contour-lines-source',
-              'source-layer': 'contour',
-              filter: ['==', ['%', ['get', 'ele'], 100], 0], // Multiple of 100
-              layout: {
-                'symbol-placement': 'line',
-                'text-field': [
-                  'concat',
-                  ['to-string', ['round', ['*', ['get', 'ele'], 3.28084]]],
-                  ' ft'
-                ],
-                'text-font': ['Open Sans Regular', 'Arial Unicode MS Regular'],
-                'text-size': 11,
-                'text-rotation-alignment': 'map',
-                'text-pitch-alignment': 'viewport'
-              },
-              paint: {
-                'text-color': '#333333',
-                'text-halo-color': '#ffffff',
-                'text-halo-width': 2,
-                'text-halo-blur': 1
-              }
-            }, beforeId);
-            
-            // Add elevation labels for minor contours (in feet, less frequent)
-            mapRef.current.addLayer({
-              id: 'contour-labels-minor',
-              type: 'symbol',
-              source: 'contour-lines-source',
-              'source-layer': 'contour',
-              filter: ['!=', ['%', ['get', 'ele'], 100], 0], // Not a multiple of 100
-              layout: {
-                'symbol-placement': 'line',
-                'text-field': [
-                  'concat',
-                  ['to-string', ['round', ['*', ['get', 'ele'], 3.28084]]],
-                  ' ft'
-                ],
-                'text-font': ['Open Sans Regular', 'Arial Unicode MS Regular'],
-                'text-size': 9,
-                'text-rotation-alignment': 'map',
-                'text-pitch-alignment': 'viewport',
-                'symbol-spacing': 400  // Less frequent labels for minor contours
-              },
-              paint: {
-                'text-color': '#666666',
-                'text-halo-color': '#ffffff',
-                'text-halo-width': 1.5,
-                'text-halo-blur': 1
-              }
-            }, beforeId);
-            
-            console.log('✅ Contour lines and labels added successfully');
-          } catch (err) {
-            console.log('Note: Contour lines may not be available in your region', err);
-          }
-        };
-        
-        // Wait for contour source to load
-        mapRef.current.once('sourcedata', (e) => {
-          if (e.sourceId === 'contour-lines-source' && e.isSourceLoaded) {
-            addContourLayers();
-          }
-        });
-        
-        // Try to add immediately if source is already loaded
-        setTimeout(addContourLayers, 100);
-        
-        console.log('✅ Colored elevation visualization added (yellow to red gradient)');
-        
-      } catch (err) {
-        console.error("🔥 Error adding contour lines:", err);
-      }
-  
-      void updateLayers().then(() => {
-        if (selectedFeature?.length > 0) {
-          highlightFeature(selectedFeature);
-        }
-        schedulePostBasemapRegridRestack(mapRef);
-        refreshOwnershipAfterBasemapSwap();
-      });
-    });
-  };
-  
-  /**=============== Basemap Change with Terrain + 3D ===============
-   * Switches the Mapbox style and adds contour lines with 3D terrain
-   * 
-   * @param {string} styleId - The mapbox style ID (e.g., 'streets-v11')
-   */
-  const handleBasemapChangeWithTerrain3D = (styleId) => {
-    if (!mapRef.current) return;
-    setIs3DEnabled(true);
-    setIsContoursEnabled(true);
-  
-    const variantId = `${styleId}-terrain-3d`;
-    baseMapRef.current = variantId;
-    setBasemap(variantId);
-  
-    // Always reload the style
-    traceMapboxStyleSwap('terrain-3d', `mapbox://styles/mapbox/${styleId}`);
-    mapRef.current.setStyle(`mapbox://styles/mapbox/${styleId}`);
-  
-    mapRef.current.once('style.load', () => {
-      ownershipTilesTrace('basemap style.load fired', { context: 'terrain-3d', styleId });
-      console.log('✅ Map style loaded; adding 3D terrain + contour lines');
-  
-      try {
-        // Enable 3D terrain first
-        if (!mapRef.current.getSource('mapbox-dem')) {
-          mapRef.current.addSource('mapbox-dem', {
-            type: 'raster-dem',
-            url: 'mapbox://mapbox.terrain-rgb',
-            tileSize: 512,
-            maxzoom: 14,
-          });
-        }
-  
-        mapRef.current.setTerrain({ source: 'mapbox-dem', exaggeration: 1.5 });
-  
-        if (!mapRef.current.getLayer('sky')) {
-          mapRef.current.addLayer({
-            id: 'sky',
-            type: 'sky',
-            paint: {
-              'sky-type': 'atmosphere',
-              'sky-atmosphere-sun': [0.0, 0.0],
-              'sky-atmosphere-sun-intensity': 15,
-            },
-          });
-        }
-  
-        mapRef.current.setPitch(60);
-        mapRef.current.setBearing(-60);
-
-        // Remove existing layers if they exist
-        if (mapRef.current.getLayer('terrain-colors')) {
-          mapRef.current.removeLayer('terrain-colors');
-        }
-        if (mapRef.current.getLayer('contour-lines-major')) {
-          mapRef.current.removeLayer('contour-lines-major');
-        }
-        if (mapRef.current.getLayer('contour-lines-minor')) {
-          mapRef.current.removeLayer('contour-lines-minor');
-        }
-        if (mapRef.current.getLayer('contour-labels-major')) {
-          mapRef.current.removeLayer('contour-labels-major');
-        }
-        if (mapRef.current.getLayer('contour-labels-minor')) {
-          mapRef.current.removeLayer('contour-labels-minor');
-        }
-        
-        // Find a good place to insert the layers (before labels)
-        const beforeLayer = mapRef.current.getStyle().layers.find(layer => 
-          layer.type === 'symbol' && layer.id.includes('label')
-        );
-        const beforeId = beforeLayer ? beforeLayer.id : undefined;
-        
-        // Add hillshade for terrain visualization
-        try {
-          if (!mapRef.current.getLayer('terrain-colors')) {
-            // Add terrain-rgb as DEM source for hillshade (reuse existing source)
-            if (!mapRef.current.getSource('terrain-hillshade')) {
-              mapRef.current.addSource('terrain-hillshade', {
-                type: 'raster-dem',
-                url: 'mapbox://mapbox.terrain-rgb',
-                tileSize: 512,
-                maxzoom: 14
-              });
-            }
-            
-            // Add hillshade layer for terrain relief
-            mapRef.current.addLayer({
-              id: 'terrain-colors',
-              type: 'hillshade',
-              source: 'terrain-hillshade',
-              paint: {
-                'hillshade-exaggeration': 1.5,
-                'hillshade-illumination-direction': 315,
-                'hillshade-illumination-anchor': 'viewport'
-              }
-            }, beforeId);
-            
-            console.log('✅ Hillshade layer added - shows terrain relief with lighting');
-          }
-        } catch (error) {
-          console.error('Error adding hillshade:', error);
-        }
-        
-        // Add contour lines source from Mapbox terrain-v2
-        if (!mapRef.current.getSource('contour-lines-source')) {
-          mapRef.current.addSource('contour-lines-source', {
-            type: 'vector',
-            url: 'mapbox://mapbox.mapbox-terrain-v2'
-          });
-        }
-        
-        // Wait for contour source to load
-        const addContourLayers = () => {
-          if (!mapRef.current.getSource('contour-lines-source')) return;
-          
-          // Find a good place to insert the layers (before labels)
-          const beforeLayer = mapRef.current.getStyle().layers.find(layer => 
-            layer.type === 'symbol' && layer.id.includes('label')
-          );
-          const beforeId = beforeLayer ? beforeLayer.id : undefined;
-          
-          try {
-            // Add major contour lines (every 100m) - thicker, orange-red
-            mapRef.current.addLayer({
-              id: 'contour-lines-major',
-              type: 'line',
-              source: 'contour-lines-source',
-              'source-layer': 'contour',
-              filter: ['==', ['%', ['get', 'ele'], 100], 0], // Multiple of 100
-              paint: {
-                'line-color': '#FF4500',  // Orange-red color
-                'line-width': 1.5,
-                'line-opacity': 0.9
-              }
-            }, beforeId);
-            
-            // Add minor contour lines (every 50m) - bolder now
-            mapRef.current.addLayer({
-              id: 'contour-lines-minor',
-              type: 'line',
-              source: 'contour-lines-source',
-              'source-layer': 'contour',
-              filter: ['!=', ['%', ['get', 'ele'], 100], 0], // Not a multiple of 100
-              paint: {
-                'line-color': '#FF4500',  // Orange-red color
-                'line-width': 1.0,        // Increased from 0.7 to 1.0 for better visibility
-                'line-opacity': 0.6       // Increased from 0.5 to 0.6 for better visibility
-              }
-            }, beforeId);
-            
-            // Add elevation labels for major contours (in feet)
-            mapRef.current.addLayer({
-              id: 'contour-labels-major',
-              type: 'symbol',
-              source: 'contour-lines-source',
-              'source-layer': 'contour',
-              filter: ['==', ['%', ['get', 'ele'], 100], 0], // Multiple of 100
-              layout: {
-                'symbol-placement': 'line',
-                'text-field': [
-                  'concat',
-                  ['to-string', ['round', ['*', ['get', 'ele'], 3.28084]]],
-                  ' ft'
-                ],
-                'text-font': ['Open Sans Regular', 'Arial Unicode MS Regular'],
-                'text-size': 11,
-                'text-rotation-alignment': 'map',
-                'text-pitch-alignment': 'viewport'
-              },
-              paint: {
-                'text-color': '#333333',
-                'text-halo-color': '#ffffff',
-                'text-halo-width': 2,
-                'text-halo-blur': 1
-              }
-            }, beforeId);
-            
-            // Add elevation labels for minor contours (in feet, less frequent)
-            mapRef.current.addLayer({
-              id: 'contour-labels-minor',
-              type: 'symbol',
-              source: 'contour-lines-source',
-              'source-layer': 'contour',
-              filter: ['!=', ['%', ['get', 'ele'], 100], 0], // Not a multiple of 100
-              layout: {
-                'symbol-placement': 'line',
-                'text-field': [
-                  'concat',
-                  ['to-string', ['round', ['*', ['get', 'ele'], 3.28084]]],
-                  ' ft'
-                ],
-                'text-font': ['Open Sans Regular', 'Arial Unicode MS Regular'],
-                'text-size': 9,
-                'text-rotation-alignment': 'map',
-                'text-pitch-alignment': 'viewport',
-                'symbol-spacing': 400  // Less frequent labels for minor contours
-              },
-              paint: {
-                'text-color': '#666666',
-                'text-halo-color': '#ffffff',
-                'text-halo-width': 1.5,
-                'text-halo-blur': 1
-              }
-            }, beforeId);
-            
-            console.log('✅ Contour lines and elevation labels added successfully');
-          } catch (err) {
-            console.log('Note: Contour lines may not be available in your region', err);
-          }
-        };
-        
-        // Wait for contour source to load
-        mapRef.current.once('sourcedata', (e) => {
-          if (e.sourceId === 'contour-lines-source' && e.isSourceLoaded) {
-            addContourLayers();
-          }
-        });
-        
-        // Try to add immediately if source is already loaded
-        setTimeout(addContourLayers, 100);
-        
-        console.log('✅ 3D terrain + contour lines added');
-        
-      } catch (err) {
-        console.error("🔥 Error adding 3D terrain + contour lines:", err);
-      }
-  
-      void updateLayers().then(() => {
-        if (selectedFeature?.length > 0) {
-          highlightFeature(selectedFeature);
-        }
-        schedulePostBasemapRegridRestack(mapRef);
-        refreshOwnershipAfterBasemapSwap();
-      });
-    });
-  };
-  
-  
-  
-  
 
     /** =============== Zooms and Higlights when map it from search ===============
    * useEffect: Watches for changes in `isMapTriggeredFromSearch` plus `focusFeatures`.
    * If triggered, we zoom and highlight the search results via `handleFeatureZoomAndHighlight`.
    */
     useEffect(() => {
-      console.log("🔄 useEffect triggered!");
-      console.log("isMapTriggeredFromSearch:", isMapTriggeredFromSearch);
-      console.log("focusFeatures:", focusFeatures);
   
       if (isMapTriggeredFromSearch && focusFeatures.length > 0) {
-          console.log('✅ Valid focusFeatures detected. Zooming to and highlighting features...');
           handleFeatureZoomAndHighlight(focusFeatures);
           
           setIsMapTriggeredFromSearch(false); // Reset trigger after execution
       } else {
-          console.warn("⛔ Effect skipped: No map trigger or empty focusFeatures list.");
       }
   }, [isMapTriggeredFromSearch, focusFeatures]);
   
 
-  /**=============== Zooms and Higligts Features ===============
-   * Zooms and highlights a group of features—commonly used for search results.
-   * 1) Removes old highlight
-   * 2) Fits bounds to the combined bounding box
-   * 3) Once zoomed, queries the map to find matching features and calls `highlightFeature`.
-   * 
-   * @param {Array} features - The array of GeoJSON features with optional `bbox` property.
-   */
+  /** Search/navigation: fit bounds to features, query rendered parcels, then highlight matches. */
   const handleFeatureZoomAndHighlight = (features) => {
     if (!features || features.length === 0) {
-      console.warn('No features provided to zoom and highlight.');
       return;
     }
   
-    console.log('Handling zoom and highlight for features:', features);
   
     // Remove existing highlights
     removeHighlight();
@@ -7041,14 +4060,12 @@ useEffect(() => {
               return { ...feature, bbox: geometryBbox };
             }
           } catch (error) {
-            console.warn('Could not derive bbox from feature geometry:', error);
           }
         }
 
         return null;
       })
       .filter(Boolean);
-    console.log('Features with bbox:', featuresWithBbox.length, 'out of', features.length);
     
     if (featuresWithBbox.length > 0) {
       // Calculate combined bounds from feature bboxes
@@ -7071,18 +4088,14 @@ useEffect(() => {
           padding: paddingValue,
           duration: 1000, // Add smooth animation duration
         });
-        console.log('Map zoomed to feature bounds:', bounds);
       } else {
-        console.warn('Invalid feature bounds:', bounds);
       }
     } else {
-      console.log('No bbox found in features, skipping zoom step');
       // Optionally zoom to a default area or just highlight without zooming
     }
   
     // Step 3: After zooming (or immediately if no bbox), highlight all features
     const highlightFeatures = () => {
-      console.log('Map idle event triggered. Querying matching features...');
   
       const searchableLayers = [
         'regrid-parcels-layer',
@@ -7091,7 +4104,6 @@ useEffect(() => {
       const queriedFeatures = searchableLayers.length > 0
         ? mapRef.current.queryRenderedFeatures({ layers: searchableLayers })
         : [];
-      console.log('All queried features from searchable layers:', queriedFeatures.length);
 
       // Match by multiple identifiers so both legacy and Regrid features can be focused.
       const inputIds = new Set(
@@ -7110,8 +4122,6 @@ useEffect(() => {
             feature?.properties?.pidn,
           ].filter(Boolean).map((value) => String(value));
 
-          console.log(`Feature at index ${index}:`, feature);
-          console.log(`Identifiers for feature at index ${index}:`, ids);
           return ids;
         })
       );
@@ -7131,14 +4141,12 @@ useEffect(() => {
       });
       
       if (matchingFeatures.length === 0) {
-        console.warn('No matching rendered features found. Falling back to input features.');
         setSelectedFeatures(features);
         highlightFeature(features);
         setActiveSidePanelTab('info');
         return;
       }
   
-      console.log('Matching features from rendered layers:', matchingFeatures);
   
       // ✅ DEDUPLICATE: Remove duplicate features based on GFI
       const uniqueFeatures = matchingFeatures.filter((feature, index, self) => {
@@ -7146,17 +4154,14 @@ useEffect(() => {
         return self.findIndex(f => f.properties?.GFI === gfi) === index;
       });
       
-      console.log('Deduplicated features:', uniqueFeatures);
   
       setIsMapTriggeredFromSearch(false);
       setSelectedFeatures(uniqueFeatures); // Use deduplicated features
       // Highlight the matching features
-      console.log('Highlighting features with layerStatus:', layerStatus);
       highlightFeature(uniqueFeatures); // Use deduplicated features
   
       // Switch to the info tab after highlighting
       setActiveSidePanelTab('info');
-      console.log('Switched to info tab.');
     };
     
     if (featuresWithBbox.length > 0) {
@@ -7168,12 +4173,7 @@ useEffect(() => {
     }
     };
 
-  /**=============== Zoom to Individual Feature ===============
-   * Zooms to a specific feature using its bbox property.
-   * Only zooms to the feature location without changing highlights.
-   * 
-   * @param {Object} feature - The feature object with bbox property
-   */
+  /** Fly/fit map to one feature's bbox without changing the current selection highlight. */
   const zoomToIndividualFeature = async (feature) => {
     const parseBbox = (bboxValue) => {
       if (!bboxValue) return null;
@@ -7197,7 +4197,6 @@ useEffect(() => {
         padding: paddingValue,
         duration: 1000,
       });
-      console.log('Map zoomed to feature bounds:', bounds);
     };
 
     // 1) Use explicit bbox if present.
@@ -7213,21 +4212,32 @@ useEffect(() => {
         zoomToBounds(turf.bbox(turf.feature(feature.geometry)));
         return;
       } catch (error) {
-        console.warn('Could not compute bbox from feature geometry:', error);
       }
     }
 
-    // 3) If this is an ownership parcel, resolve geometry from rendered ownership layer via GFI.
-    const gfi = feature?.properties?.GFI;
-    if (gfi && mapRef.current.getLayer('regrid-parcels-layer')) {
-      const renderedOwnership = mapRef.current.queryRenderedFeatures({ layers: ['regrid-parcels-layer'] });
-      const match = renderedOwnership.find((f) => f?.properties?.GFI === gfi && f?.geometry);
+    // 3) Resolve geometry from rendered Regrid parcels when we have a parcel id but no geometry.
+    const parcelIds = [
+      feature?.properties?.ll_uuid,
+      feature?.properties?.parcelnumb,
+      feature?.properties?.GFI,
+      feature?.properties?.global_parcel_uid,
+    ].filter(Boolean).map(String);
+    if (parcelIds.length > 0 && mapRef.current.getLayer('regrid-parcels-layer')) {
+      const renderedParcels = mapRef.current.queryRenderedFeatures({ layers: ['regrid-parcels-layer'] });
+      const match = renderedParcels.find((f) => {
+        if (!f?.geometry) return false;
+        const props = f.properties || {};
+        return parcelIds.some((id) =>
+          [props.ll_uuid, props.parcelnumb, props.GFI, props.global_parcel_uid]
+            .filter(Boolean)
+            .some((value) => String(value) === id)
+        );
+      });
       if (match?.geometry) {
         try {
           zoomToBounds(turf.bbox(turf.feature(match.geometry)));
           return;
         } catch (error) {
-          console.warn('Could not compute bbox from matched ownership geometry:', error);
         }
       }
     }
@@ -7242,11 +4252,9 @@ useEffect(() => {
           return;
         }
       } catch (error) {
-        console.warn('Failed to fetch Regrid parcel geometry for zoom:', error);
       }
     }
 
-    console.warn('Unable to zoom: no bbox/geometry available for feature.', feature);
   };
 
   /**=============== Re Higlight Selected when map Change ===============
@@ -7258,10 +4266,7 @@ useEffect(() => {
   
     // Function to handle the zoom or pan events
     const handleViewChange = () => {
-      if (selectedFeature) {
-        //console.log('Map view changed, readjusting highlight...');
-        highlightFeature(selectedFeature); // Re-call highlightFeature to update the highlighted geometry
-      }
+      reapplySelectionHighlightIfNeededRef.current();
     };
   
     // Add event listeners for 'moveend' and 'zoomend'
@@ -7285,9 +4290,6 @@ useEffect(() => {
    * 
    * @param {Array} inputFeatures - Array of Mapbox features to highlight
    */
-  console.log('🔍 BEFORE highlightFeature definition - highlightSettings:', highlightSettings);
-  console.log('🔍 BEFORE highlightFeature definition - highlightSettings.fillColor:', highlightSettings?.fillColor);
-  console.log('🔍 highlight Function instance ID:', Math.random());
 
   /**
    * Search and legacy callers sometimes pass flat objects (GFI, ll_uuid, etc. on the
@@ -7326,7 +4328,15 @@ useEffect(() => {
     
     switch (layerName) {
       case 'ownership':
-        return props.GFI || props.pidn || props.Name;
+        return (
+          props.ll_uuid ||
+          props.parcelnumb ||
+          props.parcel_id ||
+          props.global_parcel_uid ||
+          props.GFI ||
+          props.pidn ||
+          props.Name
+        );
       case 'public_land':
         return props.OBJECTID || props.Name;
       case 'conservation_easements':
@@ -7358,13 +4368,15 @@ useEffect(() => {
     }
   };
 
+  // --- 9. Feature selection & highlight ---
+
+  /** Draw red fill/outline GeoJSON highlight layers for the selected map features. */
   const highlightFeature = (inputFeatures, overrideLayerStatus, overrideHighlightSettings) => {
     // Use passed highlightSettings if available, otherwise fall back to global
     let effectiveHighlightSettings = overrideHighlightSettings || highlightSettings;
     
     // Safety check: if highlightSettings is null, use defaults
     if (!effectiveHighlightSettings) {
-      console.warn('⚠️ highlightSettings is null, using defaults');
       effectiveHighlightSettings = {
         fillColor: '#FF0000',
         fillOpacity: 0.5,
@@ -7383,22 +4395,18 @@ useEffect(() => {
       };
     }
     
-    console.log('🔍 highlightFeature ENTRY - effectiveHighlightSettings:', effectiveHighlightSettings);
-    console.log('🔍 highlightFeature ENTRY - effectiveHighlightSettings.fillColor:', effectiveHighlightSettings?.fillColor);
     
     const effectiveLayerStatus = overrideLayerStatus ?? layerStatus;
-    console.log("Removing existing highlights...");
-    removeHighlight();
 
     if (!inputFeatures || inputFeatures.length === 0) {
-      console.warn("No input features provided for highlighting.");
+      selectionHighlightSnapshotRef.current = null;
+      removeHighlight();
       return;
     }
 
     const normalizedInputFeatures = inputFeatures
       .map(normalizeInputFeatureForHighlight)
       .filter(Boolean);
-    console.log("Input features for highlighting:", normalizedInputFeatures);
 
     // Create a mapping of feature identifiers to their features
     const featureDict = {};
@@ -7478,7 +4486,6 @@ useEffect(() => {
         if (identifier) {
           registerHighlightIdentifier(identifier, sourceLayerName, feature);
         } else {
-          console.warn("Feature has no valid identifier:", feature);
         }
       } else {
         const fallbackId =
@@ -7489,7 +4496,6 @@ useEffect(() => {
             : 'ownership';
           registerHighlightIdentifier(fallbackId, fallbackLayer, feature);
         } else {
-          console.warn("Could not determine source layer for feature:", feature);
         }
       }
     });
@@ -7501,8 +4507,8 @@ useEffect(() => {
       if (!queryLayerIds.length) return;
       const queriedFeatures = mapRef.current.queryRenderedFeatures({ layers: queryLayerIds });
       queriedFeatures.forEach((visibleFeature) => {
-        const visibleIdentifier = getFeatureIdentifier(visibleFeature, layerName);
-        if (featureDict[visibleIdentifier] && layerToFeatureMap[visibleIdentifier] === layerName) {
+        const visibleIdentifier = String(getFeatureIdentifier(visibleFeature, layerName) ?? '');
+        if (visibleIdentifier && featureDict[visibleIdentifier] && layerToFeatureMap[visibleIdentifier] === layerName) {
           const geometryKey = JSON.stringify(visibleFeature.geometry || {});
           const seen = geometrySeenByIdentifier[visibleIdentifier];
           if (seen && !seen.has(geometryKey)) {
@@ -7519,12 +4525,15 @@ useEffect(() => {
       // Query only from fill layer to avoid duplicate geometries from outline + fill.
       const regridFeatures = mapRef.current.queryRenderedFeatures({ layers: ['regrid-parcels-layer'] });
       regridFeatures.forEach((regridFeature) => {
-        const regridIdentifier = regridFeature.properties.ll_uuid || 
-                                 regridFeature.properties.parcelnumb || 
-                                 regridFeature.properties.parcel_id ||
-                                 regridFeature.properties.id ||
-                                 regridFeature.id;
-        if (featureDict[regridIdentifier] && layerToFeatureMap[regridIdentifier] === 'regrid-parcels') {
+        const regridIdentifier = String(
+          regridFeature.properties.ll_uuid ||
+            regridFeature.properties.parcelnumb ||
+            regridFeature.properties.parcel_id ||
+            regridFeature.properties.id ||
+            regridFeature.id ||
+            ''
+        );
+        if (regridIdentifier && featureDict[regridIdentifier] && layerToFeatureMap[regridIdentifier] === 'regrid-parcels') {
           const geometryKey = JSON.stringify(regridFeature.geometry || {});
           const seen = geometrySeenByIdentifier[regridIdentifier];
           if (seen && !seen.has(geometryKey)) {
@@ -7577,102 +4586,158 @@ useEffect(() => {
       }
     });
 
-    if (dedupedUnifiedFeatures.length > 0) {
-      try {
-        const featureCollection = JSON.parse(JSON.stringify(turf.featureCollection(dedupedUnifiedFeatures)));
-        const dynamicHighlightId = `${highlightLayerId}-${Date.now()}`;
+    if (
+      dedupedUnifiedFeatures.length === 0 &&
+      Array.isArray(selectionHighlightSnapshotRef.current) &&
+      selectionHighlightSnapshotRef.current.length > 0
+    ) {
+      dedupedUnifiedFeatures.push(...selectionHighlightSnapshotRef.current);
+    }
 
-        // Clean up all previous highlight layers and sources
-        const existingLayers = mapRef.current.getStyle().layers || [];
-        existingLayers.forEach((layer) => {
-          if (layer.id.startsWith(highlightLayerId)) {
-            mapRef.current.removeLayer(layer.id);
-          }
-        });
-        Object.keys(mapRef.current.style.sourceCaches || {}).forEach((sourceId) => {
-          if (sourceId.startsWith(highlightLayerId)) {
-            mapRef.current.removeSource(sourceId);
-          }
-        });
+    if (dedupedUnifiedFeatures.length === 0) {
+      return;
+    }
 
-        mapRef.current.addSource(dynamicHighlightId, {
-          type: "geojson",
-          data: featureCollection,
-        });
-        console.log('🎨 ===== HIGHLIGHT DEBUG =====');
-        console.log('🎨 effectiveHighlightSettings object:', effectiveHighlightSettings);
-        console.log('🎨 fillColor being used:', effectiveHighlightSettings.fillColor);
-        console.log('🎨 fillOpacity being used:', effectiveHighlightSettings.fillOpacity);
-        console.log('🎨 ===========================');
+    upsertSelectionHighlight(dedupedUnifiedFeatures, effectiveHighlightSettings);
+  };
 
-        if (highlightRenderTimeoutRef.current) {
-          clearTimeout(highlightRenderTimeoutRef.current);
-        }
-        highlightRenderTimeoutRef.current = setTimeout(() => {
-          if (!mapRef.current || !mapRef.current.getSource(dynamicHighlightId)) {
-            return;
-          }
-          mapRef.current.addLayer({
-            id: dynamicHighlightId,
-            type: "fill",
-            source: dynamicHighlightId,
-            paint: {
-              "fill-color": effectiveHighlightSettings.fillColor,
-              "fill-outline-color": effectiveHighlightSettings.fillOutlineColor,
-              "fill-opacity": effectiveHighlightSettings.fillOpacity ?? 1,
-            },
-          });
+  /** Persistent selection highlight — update GeoJSON in place (no remove/re-add on pan). */
+  const upsertSelectionHighlight = (features, settings) => {
+    const map = mapRef.current;
+    if (!map?.isStyleLoaded?.() || !features?.length) return;
 
-          mapRef.current.addLayer({
-            id: `${dynamicHighlightId}-outline`,
-            type: "line",
-            source: dynamicHighlightId,
-            paint: {
-              "line-color": effectiveHighlightSettings.lineColor,
-              "line-width": effectiveHighlightSettings.lineWidth ?? 3,
-            },
-          });
-          highlightRenderTimeoutRef.current = null;
-          fireRegridRestack(mapRef.current);
-        }, 10);
+    try {
+      const data = JSON.parse(JSON.stringify(turf.featureCollection(features)));
+      const beforeId = getFirstSymbolLayerId(map);
+      const fillPaint = {
+        'fill-color': settings.fillColor,
+        'fill-outline-color': settings.fillOutlineColor,
+        'fill-opacity': settings.fillOpacity ?? 1,
+      };
+      const linePaint = {
+        'line-color': settings.lineColor,
+        'line-width': settings.lineWidth ?? 3,
+      };
 
-      } catch (error) {
-        console.error("Error during map layer creation for highlighted features:", error);
+      if (!map.getSource(SELECTION_HIGHLIGHT_SOURCE_ID)) {
+        map.addSource(SELECTION_HIGHLIGHT_SOURCE_ID, { type: 'geojson', data });
+      } else {
+        map.getSource(SELECTION_HIGHLIGHT_SOURCE_ID).setData(data);
       }
-    } else {
-      console.warn("No features to highlight.");
+
+      if (!map.getLayer(SELECTION_HIGHLIGHT_FILL_ID)) {
+        map.addLayer(
+          {
+            id: SELECTION_HIGHLIGHT_FILL_ID,
+            type: 'fill',
+            source: SELECTION_HIGHLIGHT_SOURCE_ID,
+            paint: fillPaint,
+          },
+          beforeId
+        );
+      } else {
+        map.setLayoutProperty(SELECTION_HIGHLIGHT_FILL_ID, 'visibility', 'visible');
+        Object.entries(fillPaint).forEach(([key, val]) => {
+          map.setPaintProperty(SELECTION_HIGHLIGHT_FILL_ID, key, val);
+        });
+      }
+
+      if (!map.getLayer(SELECTION_HIGHLIGHT_LINE_ID)) {
+        map.addLayer(
+          {
+            id: SELECTION_HIGHLIGHT_LINE_ID,
+            type: 'line',
+            source: SELECTION_HIGHLIGHT_SOURCE_ID,
+            paint: linePaint,
+          },
+          beforeId
+        );
+      } else {
+        map.setLayoutProperty(SELECTION_HIGHLIGHT_LINE_ID, 'visibility', 'visible');
+        Object.entries(linePaint).forEach(([key, val]) => {
+          map.setPaintProperty(SELECTION_HIGHLIGHT_LINE_ID, key, val);
+        });
+      }
+
+      selectionHighlightSnapshotRef.current = features.map((f) => JSON.parse(JSON.stringify(f)));
+      bringHighlightLayersToTop(map);
+      fireRegridRestack(map);
+    } catch (error) {
+      console.error('Error upserting selection highlight:', error);
     }
   };
+
+  /** Raise selection highlight above parcel/MVT layers after ownership restack. */
+  const bringHighlightLayersToTop = useCallback((map) => {
+    if (!map?.getStyle) return;
+    const beforeId = getFirstSymbolLayerId(map);
+    [SELECTION_HIGHLIGHT_FILL_ID, SELECTION_HIGHLIGHT_LINE_ID].forEach((id) => {
+      if (!map.getLayer(id)) return;
+      try {
+        map.moveLayer(id, beforeId);
+      } catch (_) {
+        /* ignore */
+      }
+    });
+  }, []);
+
+  const reapplySelectionHighlightIfNeeded = useCallback(() => {
+    const selection = selectedFeatureRef.current;
+    const map = mapRef.current;
+    if (!selection?.length || !map?.getStyle) return;
+
+    const snap = selectionHighlightSnapshotRef.current;
+    const settings = highlightSettingsRef.current || highlightSettings;
+    if (snap?.length) {
+      upsertSelectionHighlight(snap, settings);
+      return;
+    }
+    highlightFeatureRef.current(selection);
+  }, [highlightSettings]);
+
+  highlightFeatureRef.current = highlightFeature;
+  reapplySelectionHighlightIfNeededRef.current = reapplySelectionHighlightIfNeeded;
   
     
-  /**=============== Remove Highlight ===============
-   * Removes the highlight fill + outline layers, along with their data source.
-   * @param {Array} [featuresToRemove=[]] Optional array of features if needed
-   */
+  /** Clear selection highlight from the map (panel selection cleared separately). */
   const removeHighlight = () => {
     if (highlightRenderTimeoutRef.current) {
       clearTimeout(highlightRenderTimeoutRef.current);
       highlightRenderTimeoutRef.current = null;
     }
+    selectionHighlightSnapshotRef.current = null;
 
-    const style = mapRef.current.getStyle();
-    if (!style) return;
+    const map = mapRef.current;
+    if (!map?.getStyle) return;
 
-    // Remove all highlight layers
-    (style.layers || []).forEach((layer) => {
-      if (layer.id.startsWith(highlightLayerId)) {
-        if (mapRef.current.getLayer(layer.id)) {
-          mapRef.current.removeLayer(layer.id);
+    try {
+      if (map.getSource(SELECTION_HIGHLIGHT_SOURCE_ID)) {
+        map.getSource(SELECTION_HIGHLIGHT_SOURCE_ID).setData(EMPTY_FEATURE_COLLECTION);
+      }
+      [SELECTION_HIGHLIGHT_FILL_ID, SELECTION_HIGHLIGHT_LINE_ID].forEach((id) => {
+        if (map.getLayer(id)) {
+          map.setLayoutProperty(id, 'visibility', 'none');
         }
+      });
+    } catch (_) {
+      /* ignore */
+    }
+
+    // Legacy dynamic highlight-layer-* cleanup
+    (map.getStyle().layers || []).forEach((layer) => {
+      if (!layer.id.startsWith(highlightLayerId) || layer.id.startsWith('cv-map-selection')) return;
+      try {
+        if (map.getLayer(layer.id)) map.removeLayer(layer.id);
+      } catch (_) {
+        /* ignore */
       }
     });
-
-    // Remove all highlight sources
-    Object.keys(mapRef.current.style.sourceCaches || {}).forEach((sourceId) => {
-      if (sourceId.startsWith(highlightLayerId)) {
-        if (mapRef.current.getSource(sourceId)) {
-          mapRef.current.removeSource(sourceId);
-        }
+    Object.keys(map.style?.sourceCaches || {}).forEach((sourceId) => {
+      if (!sourceId.startsWith(highlightLayerId) || sourceId.startsWith('cv-map-selection')) return;
+      try {
+        if (map.getSource(sourceId)) map.removeSource(sourceId);
+      } catch (_) {
+        /* ignore */
       }
     });
   };
@@ -7714,6 +4779,8 @@ useEffect(() => {
 
   }, [layerStatus, mapIsReady, selectedFeature, highlightFeature, removeHighlight, setSelectedFeatures]);
 
+
+  /** Property wizard: turn merged parcel geometry into one or more boundary print polygons. */
   const addPolygonBoundariesFromMergedFeature = (merged) => {
     const g = merged?.geometry;
     if (!g) return;
@@ -7743,6 +4810,8 @@ useEffect(() => {
     }
   };
 
+
+  /** Finish parcel wizard — merge selected parcels into boundary print element(s) and exit wizard. */
   const handlePropertyMapWizardContinue = async () => {
     const parcels = (selectedFeature || []).filter(isRegridParcelPolygonFeature);
     if (parcels.length === 0) return;
@@ -7757,6 +4826,8 @@ useEffect(() => {
     setActiveSidePanelTab('print');
   };
 
+
+  /** Cancel parcel wizard — clear selection, highlight, and exit edit mode. */
   const handlePropertyMapWizardCancel = () => {
     setPropertyMapWizardActive(false);
     setPropertyMapWizardIntent(null);
@@ -7811,7 +4882,6 @@ useEffect(() => {
         essential: true,
       });
     } catch (err) {
-      console.warn('Tutorial default view:', err);
     }
   }, [
     tourActive,
@@ -7830,175 +4900,65 @@ useEffect(() => {
     handleBasemapChange,
   ]);
 
-  /**=============== Update Existing Highlights ===============
-   * Updates the paint properties of existing highlight layers with new settings.
-   * This ensures highlight settings changes apply immediately to visible highlights.
-   */
+  /** Re-apply fill/line paint on existing highlight layers when highlight settings change. */
   const updateExistingHighlights = () => {
-    console.log('🔍 updateExistingHighlights called');
-    console.log('🔍 mapRef.current exists:', !!mapRef.current);
-    
-    // 🔍 Check if highlightSettings are available
     if (!highlightSettings) {
-      console.warn('❌ highlightSettings is null, skipping update');
       return;
     }
     
     if (!mapRef.current) {
-      console.warn('❌ mapRef.current is null');
       return;
     }
     
     const style = mapRef.current.getStyle();
-    console.log('🔍 map style exists:', !!style);
     if (!style) {
-      console.warn('❌ map style is null');
       return;
     }
 
-    const allLayers = style.layers || [];
-    console.log('🔍 Total layers on map:', allLayers.length);
-    console.log('🔍 All layer IDs:', allLayers.map(l => l.id));
-
-    // Find all existing highlight layers
-    const highlightLayers = allLayers.filter((layer) => 
-      layer.id.startsWith(highlightLayerId) && !layer.id.endsWith('-outline')
-    );
-    
-    console.log('🔍 Found highlight layers:', highlightLayers.length);
-    console.log('🔍 Highlight layer IDs:', highlightLayers.map(l => l.id));
-    console.log('🔍 highlightLayerId constant:', highlightLayerId);
-
-    if (highlightLayers.length === 0) {
-      console.warn('⚠️ No highlight layers found to update');
-      return;
+    if (mapRef.current.getLayer(SELECTION_HIGHLIGHT_FILL_ID)) {
+      mapRef.current.setPaintProperty(SELECTION_HIGHLIGHT_FILL_ID, 'fill-color', highlightSettings.fillColor);
+      mapRef.current.setPaintProperty(SELECTION_HIGHLIGHT_FILL_ID, 'fill-outline-color', highlightSettings.fillOutlineColor);
+      mapRef.current.setPaintProperty(SELECTION_HIGHLIGHT_FILL_ID, 'fill-opacity', highlightSettings.fillOpacity ?? 1);
     }
 
-    highlightLayers.forEach((layer) => {
-      const layerId = layer.id;
-      const outlineLayerId = `${layerId}-outline`;
-      
-      console.log(`🔍 Updating layer: ${layerId}`);
-      console.log(`🔍 Looking for outline layer: ${outlineLayerId}`);
-      
-      // Update fill layer properties
-      if (mapRef.current.getLayer(layerId)) {
-        console.log(`✅ Updating fill layer ${layerId} with:`, {
-          'fill-color': highlightSettings.fillColor,
-          'fill-outline-color': highlightSettings.fillOutlineColor,
-          'fill-opacity': highlightSettings.fillOpacity ?? 1
-        });
-        
-        mapRef.current.setPaintProperty(layerId, 'fill-color', highlightSettings.fillColor);
-        mapRef.current.setPaintProperty(layerId, 'fill-outline-color', highlightSettings.fillOutlineColor);
-        mapRef.current.setPaintProperty(layerId, 'fill-opacity', highlightSettings.fillOpacity ?? 1);
-      } else {
-        console.warn(`❌ Fill layer ${layerId} not found on map`);
-      }
-      
-      // Update outline layer properties
-      if (mapRef.current.getLayer(outlineLayerId)) {
-        console.log(`✅ Updating outline layer ${outlineLayerId} with:`, {
-          'line-color': highlightSettings.lineColor,
-          'line-width': highlightSettings.lineWidth ?? 3
-        });
-        
-        mapRef.current.setPaintProperty(outlineLayerId, 'line-color', highlightSettings.lineColor);
-        mapRef.current.setPaintProperty(outlineLayerId, 'line-width', highlightSettings.lineWidth ?? 3);
-      } else {
-        console.warn(`❌ Outline layer ${outlineLayerId} not found on map`);
-      }
-    });
+    if (mapRef.current.getLayer(SELECTION_HIGHLIGHT_LINE_ID)) {
+      mapRef.current.setPaintProperty(SELECTION_HIGHLIGHT_LINE_ID, 'line-color', highlightSettings.lineColor);
+      mapRef.current.setPaintProperty(SELECTION_HIGHLIGHT_LINE_ID, 'line-width', highlightSettings.lineWidth ?? 3);
+    }
 
     // 🎨 Force a repaint to ensure changes are visible immediately
-    console.log('🎨 Forcing map repaint...');
     try {
       // Method 1: Try to trigger a repaint
       if (mapRef.current.triggerRepaint) {
         mapRef.current.triggerRepaint();
-        console.log('✅ Used triggerRepaint()');
       }
       
       // Method 2: Force a resize to trigger redraw
       mapRef.current.resize();
-      console.log('✅ Used resize()');
       
       // Method 3: Force a style update
       if (mapRef.current.getStyle()) {
         mapRef.current.setPaintProperty('background', 'background-color', mapRef.current.getPaintProperty('background', 'background-color'));
-        console.log('✅ Used setPaintProperty trick');
       }
       
-      // Method 4: Force highlight layers to refresh by temporarily hiding/showing
-      highlightLayers.forEach((layer) => {
-        const layerId = layer.id;
-        const outlineLayerId = `${layerId}-outline`;
-        
+      // Method 4: Force persistent highlight layers to refresh by temporarily hiding/showing
+      [SELECTION_HIGHLIGHT_FILL_ID, SELECTION_HIGHLIGHT_LINE_ID].forEach((layerId) => {
         if (mapRef.current.getLayer(layerId)) {
-          // Temporarily hide and show to force refresh
           mapRef.current.setLayoutProperty(layerId, 'visibility', 'none');
           setTimeout(() => {
             mapRef.current.setLayoutProperty(layerId, 'visibility', 'visible');
           }, 10);
         }
-        
-        if (mapRef.current.getLayer(outlineLayerId)) {
-          // Temporarily hide and show to force refresh
-          mapRef.current.setLayoutProperty(outlineLayerId, 'visibility', 'none');
-          setTimeout(() => {
-            mapRef.current.setLayoutProperty(outlineLayerId, 'visibility', 'visible');
-          }, 10);
-        }
       });
-      console.log('✅ Used visibility toggle trick');
       
-    } catch (error) {
-      console.warn('⚠️ Error forcing repaint:', error);
+    } catch (_) {
+      /* ignore */
     }
-
-    // 🔍 DEBUG: Check what the layers actually have after our updates
-    console.log('🔍 DEBUG: Checking layer properties after updates...');
-    setTimeout(() => {
-      highlightLayers.forEach((layer) => {
-        const layerId = layer.id;
-        const outlineLayerId = `${layerId}-outline`;
-        
-        if (mapRef.current.getLayer(layerId)) {
-          const actualFillColor = mapRef.current.getPaintProperty(layerId, 'fill-color');
-          const actualFillOpacity = mapRef.current.getPaintProperty(layerId, 'fill-opacity');
-          const actualOutlineColor = mapRef.current.getPaintProperty(layerId, 'fill-outline-color');
-          
-          console.log(`🔍 ${layerId} actual properties:`, {
-            'fill-color': actualFillColor,
-            'fill-opacity': actualFillOpacity,
-            'fill-outline-color': actualOutlineColor
-          });
-          
-          // Check if they match our intended settings
-          const expectedFillColor = highlightSettings.fillColor;
-          const expectedFillOpacity = highlightSettings.fillOpacity ?? 1;
-          const expectedOutlineColor = highlightSettings.fillOutlineColor;
-          
-          if (actualFillColor !== expectedFillColor) {
-            console.warn(`⚠️ ${layerId} fill-color mismatch: expected ${expectedFillColor}, got ${actualFillColor}`);
-          }
-          if (actualFillOpacity !== expectedFillOpacity) {
-            console.warn(`⚠️ ${layerId} fill-opacity mismatch: expected ${expectedFillOpacity}, got ${actualFillOpacity}`);
-          }
-          if (actualOutlineColor !== expectedOutlineColor) {
-            console.warn(`⚠️ ${layerId} fill-outline-color mismatch: expected ${expectedOutlineColor}, got ${actualOutlineColor}`);
-          }
-        }
-      });
-    }, 100); // Check after 100ms to see if something overrode our changes
-
-    console.log('✅ Finished updating existing highlights');
   };
   
 
   useEffect(() => {
     if (activeTab === 'map') {
-      console.log('Active tab is "map", resizing...');
       setTimeout(() => {
         if (mapRef.current) {
           mapRef.current.resize();
@@ -8014,7 +4974,6 @@ useEffect(() => {
 
   useEffect(() => {
     if (mapRef.current && mapRef.current.isStyleLoaded()) {
-      console.log('Forcing map resize due to paperSize change:', paperSize);
       setTimeout(() => {
         mapRef.current.resize();
         if (isPrinting) {
@@ -8054,17 +5013,8 @@ useEffect(() => {
       map.off('touchstart', notifyInteraction);
     };
   }, [mapIsReady]);
-  
-  // Add this MVP Tegola layer on map load for debugging
-  
 
-  /**
-   * =============== Zoom to User's Location ===============
-   * Uses Capacitor Geolocation plugin for native apps, or browser geolocation API for web.
-   * 
-   * Note: iOS Simulator requires a simulated location to be set in Xcode:
-   * Features > Location > Custom Location (or choose a preset)
-   */
+  /** GPS / browser geolocation → fly map to user position (Capacitor on native, navigator on web). */
   const handleZoomToLocation = async () => {
     if (!mapRef.current) return;
     
@@ -8076,7 +5026,6 @@ useEffect(() => {
     // Safety timeout to ensure loading state doesn't get stuck
     const timeoutDuration = isNative ? 15000 : 15000;
     const safetyTimeout = setTimeout(() => {
-      console.warn('Geolocation request timed out (safety timeout)');
       setIsMapLoading(false);
       alert('Location request timed out. Please try again.');
     }, timeoutDuration);
@@ -8090,7 +5039,6 @@ useEffect(() => {
 
       if (isNative) {
         // Try Capacitor Geolocation plugin first, fallback to browser API if not available
-        console.log('Attempting to use Capacitor Geolocation plugin...');
         
         // Check if Capacitor Geolocation is available
         let useCapacitorPlugin = typeof Geolocation !== 'undefined' && 
@@ -8101,7 +5049,6 @@ useEffect(() => {
           try {
             // Request permissions first
             const permissionStatus = await Geolocation.requestPermissions();
-            console.log('Permission status:', permissionStatus);
             
             if (permissionStatus.location !== 'granted') {
               clearSafetyTimeout();
@@ -8117,9 +5064,7 @@ useEffect(() => {
               maximumAge: 300000 // Accept cached location up to 5 minutes old
             });
             
-            console.log('Capacitor geolocation result:', position);
           } catch (error) {
-            console.warn('Capacitor Geolocation failed, falling back to browser API:', error);
             // Fall through to browser geolocation
             useCapacitorPlugin = false;
             position = null;
@@ -8128,7 +5073,6 @@ useEffect(() => {
         
         // Fallback to browser geolocation if Capacitor plugin not available or failed
         if (!useCapacitorPlugin || !position) {
-          console.log('Using browser geolocation API as fallback...');
     
     if (!navigator.geolocation) {
             clearSafetyTimeout();
@@ -8159,7 +5103,6 @@ useEffect(() => {
       return;
     }
 
-        console.log('Using browser geolocation API...');
 
         // Wrap browser geolocation in a promise
         position = await new Promise((resolve, reject) => {
@@ -8181,7 +5124,6 @@ useEffect(() => {
       const latitude = position.coords?.latitude || position.latitude;
       const longitude = position.coords?.longitude || position.longitude;
       
-        console.log('User location:', latitude, longitude);
       
       if (!latitude || !longitude) {
         throw new Error('Invalid location coordinates');
@@ -8220,6 +5162,8 @@ useEffect(() => {
       alert(errorMessage);
     }
   };
+
+  // --- 10. Render ---
 
   return (
     <div className="map-container">
@@ -8353,9 +5297,6 @@ useEffect(() => {
         onPrintBasemapSelect={handlePrintBasemapSelect}
         onOpenLayersTabForPrint={() => setActiveSidePanelTab('layers')}
         onCreateBoundaryFromRegridParcel={handleCreateBoundaryFromRegridParcel}
-        onAutoFillMapFromBoundary={handleAutoFillMapFromBoundary}
-        isAutoFillMapLoading={isAutoFillMapLoading}
-        hasBoundaryForAutoFill={hasBoundaryForAutoFill}
         onZoomToPrintElement={zoomToPrintElement}
       />
       )}

@@ -289,7 +289,7 @@ export default function SharedMapViewPage() {
           setNearbyContextByAmenity(hydratedNearby);
         }
         const savedBasemap = String(
-          tourRequested ? TOUR_LOCKED_BASEMAP_ID : data.basemap || 'high-def-3inch'
+          tourRequested ? TOUR_LOCKED_BASEMAP_ID : data.basemap || 'satellite-streets-v12'
         ).trim();
         setCurrentBasemapId(savedBasemap);
         if (typeof window.setBasemapLayerSyncBlocked === 'function') {
@@ -801,7 +801,7 @@ export default function SharedMapViewPage() {
 
   /**
    * Prewarm Step 2 while Step 1 is visible:
-   * - apply 3D high-def basemap early
+   * - apply 3D imagery basemap early
    * - enable the Step 2 layer patch now so Step 1->2 is camera-only (no layer/style churn)
    */
   useEffect(() => {

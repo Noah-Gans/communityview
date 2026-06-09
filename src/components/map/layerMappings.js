@@ -1,6 +1,5 @@
 export const layerNameMappings = {
   ownership: 'Ownership',
-  regrid_zoning: 'Zoning (Regrid)',
   public_land: 'Public Land',
   conservation_easements: 'Conservation Easements',
   soil: 'Soil',

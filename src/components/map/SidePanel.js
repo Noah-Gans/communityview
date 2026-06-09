@@ -50,9 +50,6 @@ const SidePanel = memo(({
   onPrintBasemapSelect,
   onOpenLayersTabForPrint,
   onCreateBoundaryFromRegridParcel,
-  onAutoFillMapFromBoundary,
-  isAutoFillMapLoading = false,
-  hasBoundaryForAutoFill = false,
   onZoomToPrintElement = () => {},
 }) => {
   console.log("SideTab is: ", activeSidePanelTab)
@@ -1553,23 +1550,6 @@ const SidePanel = memo(({
                       </button>
                     </div>
                   )}
-                {isPrinting && isMapAppView && onAutoFillMapFromBoundary && (
-                  <div className="print-mapmaker-autofill-strip">
-                    <button
-                      type="button"
-                      className="sp-map-button print-mapmaker-autofill-btn"
-                      onClick={() => onAutoFillMapFromBoundary?.()}
-                      disabled={isAutoFillMapLoading || !hasBoundaryForAutoFill}
-                      title={
-                        hasBoundaryForAutoFill
-                          ? 'Auto-add OSM roads, water, and buildings inside the boundary'
-                          : 'Create/select a Property Boundary first'
-                      }
-                    >
-                      {isAutoFillMapLoading ? 'Auto filling…' : 'Auto Fill Map'}
-                    </button>
-                  </div>
-                )}
                 <PrintEditorContent
                   currentMapId={null}
                   activePrintTool={activePrintTool}
@@ -1904,26 +1884,6 @@ const SidePanel = memo(({
             </div>
           )}
         </div>
-        {activeSidePanelTab === 'print' && showPrintTab && (
-          <div className="print-sidepanel-fixed-footer">
-            <button
-              type="button"
-              className="print-button"
-              onClick={() => {
-                window.dispatchEvent(new CustomEvent('print-open-save-dialog'));
-              }}
-            >
-              💾 Save Map
-            </button>
-            <button
-              type="button"
-              className="print-button print-footer-back-btn"
-              onClick={() => window.dispatchEvent(new CustomEvent('print-exit-edit'))}
-            >
-              ← Back to Maps
-            </button>
-          </div>
-        )}
       </div>
     )}
   </div>

@@ -14,19 +14,10 @@ const WIDTH = 200;
 const HEIGHT = 120;
 
 const basemaps = [
-  { id: 'streets-v11', style: 'streets-v11', name: 'Streets' },
-  { id: 'light-v10', style: 'light-v10', name: 'Light' },
+  { id: 'outdoors-v12', style: 'outdoors-v12', name: 'Discover' },
+  { id: 'imagery', style: 'satellite-streets-v12', name: 'Imagery' },
   { id: 'satellite-streets-v12', style: 'satellite-streets-v12', name: 'Satellite' },
-  { id: 'outdoors-v12', style: 'outdoors-v12', name: 'Outdoor' },
-  { id: 'streets-v11-3d', style: 'streets-v11', name: '3D Terrain' },
-  { id: 'satellite-streets-v12-3d', style: 'satellite-streets-v12', name: '3D Satellite' },
-  { id: 'streets-v11-terrain', style: 'streets-v11', name: 'Streets + Terrain' },
-  { id: 'light-v10-terrain', style: 'light-v10', name: 'Light + Terrain' },
-  { id: 'satellite-streets-v12-terrain', style: 'satellite-streets-v12', name: 'Satellite + Terrain' },
-  { id: 'streets-v11-terrain-3d', style: 'streets-v11', name: 'Streets + Terrain 3D' },
-  { id: 'light-v10-terrain-3d', style: 'light-v10', name: 'Light + Terrain 3D' },
-  { id: 'satellite-streets-v12-terrain-3d', style: 'satellite-streets-v12', name: 'Satellite + Terrain 3D' },
-  { id: 'teton-ortho-2024', style: 'satellite-streets-v12', name: '2024 Teton Ortho' },
+  { id: 'streets-v11', style: 'streets-v11', name: 'Streets' },
 ];
 
 function generateThumbnailUrl(styleId) {

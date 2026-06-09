@@ -319,7 +319,7 @@ export const mapService = {
         mapContext.activeBasemapIdRef?.current ||
         mapContext.basemap ||
         mapContext.currentBasemapId ||
-        'high-def-3inch',
+        'satellite-streets-v12',
       layers: {
         status: mapContext.layerStatus || {},
         order: mapContext.layerOrder || [],

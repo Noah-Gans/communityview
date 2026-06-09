@@ -47,16 +47,6 @@
   max-width: 100%;
 }
 
-.print-mapmaker-autofill-btn {
-  width: 100% !important;
-  max-width: 100%;
-  margin-top: 8px;
-}
-
-.print-mapmaker-autofill-strip {
-  padding: 0 16px 12px;
-}
-
 .sp-map-button-container {
   display: flex;
   justify-content: center;

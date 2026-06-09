@@ -61,10 +61,6 @@ export async function fetchRegridParcelTileJson() {
   return callRegridApi({ operation: 'parcelTileJson' });
 }
 
-export async function fetchRegridZoningTileJson() {
-  return callRegridApi({ operation: 'zoningTileJson' });
-}
-
 /**
  * Proxy Regrid batch API (POST/GET/DELETE).
  * @returns {{ ok: true, json?: object, text?: string }}

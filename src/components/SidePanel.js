@@ -432,11 +432,8 @@ const SidePanel = memo(({
   const getLayerType = (layerName) => {
     const lineLayers = ['roads', "roads_easements", 'rivers', 'railways', "zoning_toj_corp_limit"]; // Example line layers
     const pointLayers = ['precincts_polling_centers', 'control_points_controls']; // Example point layers
-    const adressLayer = []
-    console.log("Layer Name is ", layerName, " and bool is ", layerName == 'ownership_address')
     if (lineLayers.includes(layerName)) return 'line';
     if (pointLayers.includes(layerName)) return 'point';
-    if (layerName == 'ownership_address') return 'symbol'
     return 'fill'; // Default to polygons
   };
   
