@@ -3,33 +3,9 @@ import { useEffect } from 'react';
 import { useLocation } from 'react-router-dom';
 import queryString from 'query-string';
 import { createAnnotationFromTool } from './print/annotationModel';
+import { getBasemapIdFromSearch } from './map/mapConstants';
 // Create the context
 const MapContext = createContext();
-
-const SUPPORTED_BASEMAP_IDS = new Set([
-  'outdoors-v12',
-  'imagery',
-  'satellite-streets-v12',
-  'streets-v11',
-]);
-
-const BASEMAP_ID_ALIASES = {
-  discover: 'outdoors-v12',
-  outdoors: 'outdoors-v12',
-  satellite: 'satellite-streets-v12',
-  streets: 'streets-v11',
-  'imagery-3d': 'imagery',
-  'esri-world-imagery': 'imagery',
-};
-
-function getBasemapIdFromSearch(search) {
-  const params = queryString.parse(search || '');
-  const fromUrl = params.basemap != null ? String(params.basemap).trim().toLowerCase() : '';
-  if (!fromUrl) return 'outdoors-v12';
-  if (BASEMAP_ID_ALIASES[fromUrl]) return BASEMAP_ID_ALIASES[fromUrl];
-  if (SUPPORTED_BASEMAP_IDS.has(fromUrl)) return fromUrl;
-  return 'outdoors-v12';
-}
 
 // Provider component
 export const MapProvider = ({ children }) => {
@@ -121,7 +97,7 @@ export const MapProvider = ({ children }) => {
       setLayerStatus(newLayerStatus);
       setLayerOrder(fromUrl);
     } else {
-      // Default: no Martin/Teton vector layers — Regrid parcels are the primary parcel source.
+      // Default: no overlay layers — user enables layers via URL or the layer panel.
       setLayerStatus({});
       setLayerOrder([]);
     }

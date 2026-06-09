@@ -47,10 +47,7 @@ exports.regridApi = functions.https.onCall(async (data, context) => {
   const token = requireRegridToken();
   const operation = data && data.operation ? String(data.operation) : "";
 
-  const requiresAuth =
-    operation === "batch" ||
-    operation === "parcelTileJson" ||
-    operation === "zoningTileJson";
+  const requiresAuth = operation === "batch" || operation === "parcelTileJson";
   if (requiresAuth && !context.auth) {
     throw new functions.https.HttpsError(
       "unauthenticated",
@@ -89,30 +86,6 @@ exports.regridApi = functions.https.onCall(async (data, context) => {
       throw new functions.https.HttpsError(
         "internal",
         `Regrid parcel TileJSON failed (${response.status}): ${details}`
-      );
-    }
-    const tileJson = await response.json();
-    const proxyBase = getTileProxyBaseUrl();
-    return sanitizeTileJsonForClient(tileJson, proxyBase);
-  }
-
-  if (operation === "zoningTileJson") {
-    const url = `${REGRID_TILES}/api/v1/sources?format=mvt&token=${encodeURIComponent(token)}`;
-    const response = await fetch(url, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        query: { zoning: true },
-        fields: {
-          zoning: ["zoning", "zoning_type", "zoning_subtype"],
-        },
-      }),
-    });
-    if (!response.ok) {
-      const details = await readRegridError(response);
-      throw new functions.https.HttpsError(
-        "internal",
-        `Regrid zoning TileJSON failed (${response.status}): ${details}`
       );
     }
     const tileJson = await response.json();

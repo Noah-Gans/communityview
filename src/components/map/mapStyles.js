@@ -75,7 +75,6 @@ export function isImageryOrSatelliteBasemap(basemapId) {
   if (id.includes('imagery')) return true;
   if (id.includes('satellite')) return true;
   if (id.includes('ortho')) return true;
-  if (id.startsWith('high-def')) return true;
   if (id === 'esri-world-imagery') return true;
   return false;
 }
@@ -889,32 +888,6 @@ export const HOSTED_LAYER_DATA_DRIVEN_PAINT = new Set([
     console.log(layerName);
 
     switch (layerName) {
-      case 'ownership_address': // For points
-      layerType = 'symbol';
-      defaultPaint = {}; // No paint properties for symbols
-      defaultLayout = {
-        'icon-image': 'custom-pin', // Default Mapbox marker icon (scaled for 15px size)
-        'icon-size': 0.05,         // Adjust the size of the icon
-        'icon-anchor': 'bottom',  // Anchor the icon at the bottom
-        'icon-allow-overlap': true, // Allow markers to overlap
-      };
-
-      // Add the source with clustering enabled
-      style = {
-        id: 'ownership-address-layer',
-        type: layerType,
-        source: {
-          type: 'geojson',
-           // Path to your GeoJSON file
-          cluster: true, // Enable clustering
-          clusterMaxZoom: 12, // Reduce max zoom to keep clusters grouped for longer
-          clusterRadius: 100, // Radius of each cluster in pixels
-        },
-        paint: defaultPaint,
-        layout: defaultLayout,
-      };
-      break;
-
       case 'control_points_controls': // For points
         layerType = 'circle';
         defaultPaint = {
