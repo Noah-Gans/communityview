@@ -19,9 +19,9 @@ Allow: /
 Allow: /map
 Allow: /search
 Allow: /tutorial
-Allow: /updates
 Allow: /features
 Allow: /pricing
+Allow: /faq
 
 # Disallow private/protected pages
 Disallow: /report
