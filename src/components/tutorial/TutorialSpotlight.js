@@ -1,4 +1,4 @@
-import React, { useLayoutEffect, useState, useCallback, useMemo } from 'react';
+import React, { useLayoutEffect, useState, useCallback, useMemo, useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import { useLocation } from 'react-router-dom';
 import './TutorialSpotlight.css';
@@ -133,23 +133,36 @@ export default function TutorialSpotlight() {
 
   const selectedCount = Array.isArray(selectedFeature) ? selectedFeature.length : 0;
   const stepId = currentStep?.id;
-  const needsParcel = stepId === 'parcel-practice' && selectedCount === 0;
+  const [geolocateDone, setGeolocateDone] = useState(false);
+  const needsGeolocate = stepId === 'geolocate' && !geolocateDone;
+  const needsParcel = stepId === 'parcel-select' && selectedCount === 0;
   const needsSearchRoute = stepId === 'search-nav' && location.pathname !== '/search';
   const needsSearchResults =
     stepId === 'search-type' && (!Array.isArray(searchResults) || searchResults.length === 0);
   const detailsExpanded =
     typeof document !== 'undefined' &&
     !!document.querySelector('[data-tour="info-details-expanded"].is-open');
-  const requiresPanelOpen = stepId === 'open-side-panel';
   const requiresPropertyDetails = stepId === 'info-details' && !detailsExpanded;
   const requiresLayersClick = stepId === 'side-layers';
   const requiresLayerToggles = stepId === 'public-land-layer';
 
-  useLayoutEffect(() => {
-    if (stepId === 'parcel-practice' && selectedCount > 0) {
-      measure();
+  useEffect(() => {
+    if (!isActive || stepId !== 'geolocate') {
+      setGeolocateDone(false);
+      return undefined;
     }
-  }, [stepId, selectedCount, measure]);
+    const onGeolocate = () => setGeolocateDone(true);
+    window.addEventListener('cv-tutorial-geolocate', onGeolocate);
+    return () => window.removeEventListener('cv-tutorial-geolocate', onGeolocate);
+  }, [isActive, stepId]);
+
+  useLayoutEffect(() => {
+    if (!isActive || stepId !== 'parcel-select' || selectedCount === 0) return undefined;
+    const id = window.setTimeout(() => {
+      next();
+    }, 450);
+    return () => window.clearTimeout(id);
+  }, [isActive, stepId, selectedCount, next]);
 
   useLayoutEffect(() => {
     if (!isActive || stepId !== 'info-details' || !detailsExpanded) return undefined;
@@ -279,6 +292,19 @@ export default function TutorialSpotlight() {
       }
     }
 
+    if (stepId === 'geolocate' && currentStep.tooltipAnchorSelector) {
+      const el = document.querySelector(currentStep.tooltipAnchorSelector);
+      if (el) {
+        const ar = el.getBoundingClientRect();
+        return {
+          top: ar.bottom + 12,
+          left: Math.max(16, Math.min(ar.left + ar.width / 2 - cardW / 2, vw - cardW - 16)),
+          width: cardW,
+          transform: 'none',
+        };
+      }
+    }
+
     if (!holeStyle) {
       return { top: '50%', left: '50%', transform: 'translate(-50%, -50%)', width: cardW };
     }
@@ -289,15 +315,15 @@ export default function TutorialSpotlight() {
     let left = holeStyle.left;
     const place = currentStep.placement || 'bottom';
 
-    if (place === 'left') {
+    if (place === 'top') {
+      top = holeStyle.top - cardH - margin;
+      left = holeStyle.left + holeStyle.width / 2 - cardW / 2;
+    } else if (place === 'left') {
       left = holeStyle.left - cardW - margin;
       top = holeStyle.top + holeStyle.height / 2 - cardH / 2;
     } else if (place === 'right') {
       left = holeStyle.left + holeStyle.width + margin;
       top = holeStyle.top + holeStyle.height / 2 - cardH / 2;
-    } else if (place === 'top') {
-      top = holeStyle.top - cardH - margin;
-      left = holeStyle.left + holeStyle.width / 2 - cardW / 2;
     } else if (place === 'bottom') {
       top = holeStyle.top + holeStyle.height + margin;
       left = holeStyle.left + holeStyle.width / 2 - cardW / 2;
@@ -317,10 +343,10 @@ export default function TutorialSpotlight() {
   const blockList = currentStep.blockSelectors;
 
   const nextDisabled =
+    needsGeolocate ||
     needsParcel ||
     needsSearchRoute ||
     needsSearchResults ||
-    requiresPanelOpen ||
     requiresPropertyDetails ||
     requiresLayersClick ||
     requiresLayerToggles;
@@ -391,6 +417,16 @@ export default function TutorialSpotlight() {
           {currentStep.responsiveNote && typeof window !== 'undefined' && window.innerWidth <= 768 && (
             <p className="cv-tutorial-note">{currentStep.responsiveNote}</p>
           )}
+          {stepId === 'geolocate' && (
+            <p className="cv-tutorial-note">
+              Allow location access if your browser asks. Use Next when you are ready to continue.
+            </p>
+          )}
+          {stepId === 'parcel-select' && (
+            <p className="cv-tutorial-note">
+              Pick any visible parcel polygon on the map — the tour continues once one is selected.
+            </p>
+          )}
           {stepId === 'search-type' && (
             <p className="cv-tutorial-note">
               Standard Search tab — enter a query, then press Enter or click Search.
@@ -415,9 +451,11 @@ export default function TutorialSpotlight() {
                 onClick={next}
                 disabled={nextDisabled}
                 title={
-                  needsParcel
-                    ? 'Select a parcel on the map first'
-                    : needsSearchRoute
+                  needsGeolocate
+                    ? 'Click the location button on the map first'
+                    : needsParcel
+                      ? 'Select a parcel on the map first'
+                      : needsSearchRoute
                       ? 'Open Search from the header first'
                       : needsSearchResults
                         ? 'Run search and wait for results'

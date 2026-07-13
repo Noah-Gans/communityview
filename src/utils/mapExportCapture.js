@@ -1,6 +1,21 @@
 import html2canvas from 'html2canvas';
 import { jsPDF } from 'jspdf';
+import * as turf from '@turf/turf';
+import {
+  applyRegridParcelOutlineForBasemap,
+  getRegridParcelOutlineColorForBasemap,
+} from '../components/map/mapStyles';
 import { buildMapLabelDisplayText, labelUsesGeoOffset } from '../pages/print/mapLabelUtils';
+import { regridStyleBasemapRef } from '../pages/map/regridParcelMapLayer';
+import {
+  arrowHeadPolygon,
+  segmentIndexTowardTip,
+  transmissionTickSegments,
+} from '../pages/print/polylineDecorationUtils';
+import {
+  loadFirmLogoDrawableForPdf,
+  loadProfilePhotoDrawableForPdf,
+} from './profileBrandingImages';
 
 function waitFrames(count) {
   return new Promise((resolve) => {
@@ -80,11 +95,27 @@ function restorePaintSnapshot(map, snapshot) {
  * Regrid parcel outlines interpolate to thin strokes at low zoom; crop/fitBounds for PDF also
  * often lowers zoom — combined, ownership looks like faint orange hairlines in the export.
  */
-function computeParcelLineBoostFactor(sourceScale = 1) {
+function computeParcelLineBoostFactor(sourceScale = 1, zoom = 15) {
   const s = Number(sourceScale);
   const safe = Number.isFinite(s) ? Math.max(1, Math.min(4, s)) : 1;
-  return Math.min(14.5, 9.8 + 1.45 * Math.max(0, safe - 1));
+  const z = Number.isFinite(zoom) ? zoom : 15;
+  const zoomPenalty = z < 14.5 ? (14.5 - z) * 3.6 : 0;
+  return Math.min(24, 14 + 2.1 * Math.max(0, safe - 1) + zoomPenalty);
 }
+
+const PARCEL_EXPORT_MIN_LINE_WIDTH_EXPR = [
+  'interpolate',
+  ['linear'],
+  ['zoom'],
+  10,
+  2.4,
+  12,
+  3.0,
+  14,
+  3.6,
+  16,
+  4.2,
+];
 
 /**
  * Temporarily widens `regrid-parcels-outline` and reduces line simplification for raster/PDF export
@@ -125,11 +156,15 @@ function applyParcelOutlineBoostForPdf(map, factor = 2.75) {
   }
 
   try {
-    const f = Math.max(1.35, Math.min(15, Number(factor) || 2.75));
+    const f = Math.max(1.35, Math.min(24, Number(factor) || 2.75));
     if (typeof val === 'number' && Number.isFinite(val)) {
-      map.setPaintProperty(layerId, lineWidthKey, val * f);
+      map.setPaintProperty(layerId, lineWidthKey, Math.max(val * f, 3.2));
     } else {
-      map.setPaintProperty(layerId, lineWidthKey, ['*', f, val]);
+      map.setPaintProperty(layerId, lineWidthKey, [
+        'max',
+        ['*', f, val],
+        PARCEL_EXPORT_MIN_LINE_WIDTH_EXPR,
+      ]);
     }
     try {
       if (snapshot.some((e) => e.key === simplifyKey)) {
@@ -158,6 +193,67 @@ function parseDashArray(val) {
 }
 
 /**
+ * Dash lengths must use the same scale as stroke width (scale × overlayScale).
+ * Round caps extend into gaps; enforce a minimum clear gap so dots do not chain solid.
+ */
+function scaleDashPatternForExport(rawDash, lineWidth, paintScale, lineCap = 'round') {
+  const parts = parseDashArray(rawDash);
+  if (!parts.length) return [];
+  const lw = Math.max(1, lineWidth);
+  const ps = Math.max(1, Number(paintScale) || 1);
+  const cap = lineCap === 'square' ? 'square' : lineCap === 'butt' ? 'butt' : 'round';
+  return parts.map((n, i) => {
+    const scaled = Math.max(1, n * ps);
+    if (i % 2 === 1) {
+      if (cap === 'round') {
+        return Math.max(scaled, lw * 1.12);
+      }
+      if (cap === 'square') {
+        return Math.max(scaled, lw * 0.35);
+      }
+    }
+    return scaled;
+  });
+}
+
+function resolveLayerLegendColor(layerKey, fallbackColor, basemapId) {
+  if (layerKey === 'ownership') {
+    return getRegridParcelOutlineColorForBasemap(basemapId);
+  }
+  return fallbackColor || '#94a3b8';
+}
+
+function syncParcelOutlineColorForExport(map, basemapId) {
+  if (!map) return;
+  const id = String(basemapId || regridStyleBasemapRef.current || '').trim();
+  applyRegridParcelOutlineForBasemap(map, id);
+  map.triggerRepaint?.();
+}
+
+function projectLinePointsForExport(map, coords, sx, sy) {
+  return coords
+    .map((c) => {
+      try {
+        const p = map.project(c);
+        return [p.x * sx, p.y * sy];
+      } catch (_) {
+        return null;
+      }
+    })
+    .filter(Boolean);
+}
+
+function strokeOpenPathForExport(ctx, pts) {
+  ctx.beginPath();
+  ctx.moveTo(pts[0][0], pts[0][1]);
+  for (let i = 1; i < pts.length; i += 1) ctx.lineTo(pts[i][0], pts[i][1]);
+}
+
+function exportStrokeWidth(el, scale, overlayScale) {
+  return Math.max(1, (Number(el.strokeWidth) || 3) * scale * overlayScale);
+}
+
+/**
  * html2canvas often rasterizes SVG <image> + <filter> (feComposite tint) as empty/white.
  * Clone pass: drop filters and resolve relative /logos_for_print URLs so icons paint like the legend.
  */
@@ -179,8 +275,11 @@ function prepareClonedNotesOverlayForExport(clonedDoc) {
     }
   });
   overlay.querySelectorAll('svg defs filter').forEach((f) => f.remove());
-  // Draw labels directly in export canvas for consistent typography.
+  // Geo vectors + labels are painted on the export canvas; hide DOM copies to avoid double strokes.
   overlay.querySelectorAll('.print-map-feature-label').forEach((n) => {
+    n.style.visibility = 'hidden';
+  });
+  overlay.querySelectorAll('svg polyline, svg polygon, svg line').forEach((n) => {
     n.style.visibility = 'hidden';
   });
 }
@@ -206,6 +305,7 @@ export async function captureMapStackToPngDataUrl(
     targetPixelWidth = null,
     targetPixelHeight = null,
     overlayScale = 1,
+    basemapId = '',
   } = {}
 ) {
   if (!map || typeof map.getCanvas !== 'function') {
@@ -224,6 +324,7 @@ export async function captureMapStackToPngDataUrl(
           targetPixelWidth,
           targetPixelHeight,
           overlayScale,
+          basemapId,
         });
         if (offscreenData) return offscreenData;
       }
@@ -239,9 +340,10 @@ export async function captureMapStackToPngDataUrl(
   const liveSourceScale = Math.max(1, Math.min(3, (liveSx + liveSy) / 2));
   let restoreParcelOutline = () => {};
   try {
+    syncParcelOutlineColorForExport(map, basemapId);
     restoreParcelOutline = applyParcelOutlineBoostForPdf(
       map,
-      computeParcelLineBoostFactor(liveSourceScale)
+      computeParcelLineBoostFactor(liveSourceScale, map.getZoom?.())
     );
 
     const mapCanvas = map.getCanvas();
@@ -356,6 +458,7 @@ async function captureOffscreenHighResMapToDataUrl(
     targetPixelWidth = null,
     targetPixelHeight = null,
     overlayScale = 1,
+    basemapId = '',
   } = {}
 ) {
   const srcCanvas = sourceMap.getCanvas();
@@ -378,6 +481,7 @@ async function captureOffscreenHighResMapToDataUrl(
   document.body.appendChild(holder);
 
   let offMap = null;
+  let restoreParcelOutline = () => {};
   try {
     const style = sourceMap.getStyle?.();
     const center = sourceMap.getCenter?.();
@@ -429,7 +533,11 @@ async function captureOffscreenHighResMapToDataUrl(
       await waitForMapIdleOrTimeout(offMap, 4500);
     }
 
-    applyParcelOutlineBoostForPdf(offMap, computeParcelLineBoostFactor(sourceScale));
+    syncParcelOutlineColorForExport(offMap, basemapId);
+    restoreParcelOutline = applyParcelOutlineBoostForPdf(
+      offMap,
+      computeParcelLineBoostFactor(sourceScale, offMap.getZoom?.())
+    );
 
     holder.style.width = `${w}px`;
     holder.style.height = `${h}px`;
@@ -479,6 +587,7 @@ async function captureOffscreenHighResMapToDataUrl(
     );
     return out.toDataURL('image/png');
   } finally {
+    restoreParcelOutline();
     try {
       offMap?.remove?.();
     } catch (_) {
@@ -551,21 +660,13 @@ function drawVectorElementsForExport(
   );
   if (!px) return;
   const { sx, sy, scale } = px;
+  const paintScale = scale * overlayScale;
   for (const el of printElements) {
     if (!el || el.hiddenOnMap || !el.geometry) continue;
     if (el.type === 'polygon' && el.geometry.type === 'Polygon' && Array.isArray(el.geometry.coordinates?.[0])) {
       const ring = el.geometry.coordinates[0];
       if (ring.length < 3) continue;
-      const pts = ring
-        .map((c) => {
-          try {
-            const p = map.project(c);
-            return [p.x * sx, p.y * sy];
-          } catch (_) {
-            return null;
-          }
-        })
-        .filter(Boolean);
+      const pts = projectLinePointsForExport(map, ring, sx, sy);
       if (pts.length < 3) continue;
       ctx.save();
       ctx.beginPath();
@@ -575,42 +676,131 @@ function drawVectorElementsForExport(
       ctx.globalAlpha = Math.max(0, Math.min(1, Number(el.fillOpacity ?? 0.25)));
       ctx.fillStyle = el.fill || '#10b981';
       ctx.fill();
+      const polyStrokeW = exportStrokeWidth(el, scale, overlayScale);
       ctx.globalAlpha = Math.max(0, Math.min(1, Number(el.strokeOpacity ?? 1)));
       ctx.strokeStyle = el.stroke || '#ffffff';
-      ctx.lineWidth = Math.max(1, (Number(el.strokeWidth) || 2) * scale * overlayScale * 1.18);
-      const dash = parseDashArray(el.lineDasharray).map((d) => d * scale);
-      if (dash.length) ctx.setLineDash(dash);
+      ctx.lineWidth = polyStrokeW;
+      const polyCap = el.strokeLinecap || 'round';
+      const polyDash = scaleDashPatternForExport(el.lineDasharray, polyStrokeW, paintScale, polyCap);
+      ctx.setLineDash(polyDash.length ? polyDash : []);
+      ctx.lineCap = polyCap;
+      ctx.lineJoin = el.strokeLinejoin || 'round';
       ctx.stroke();
       ctx.restore();
       continue;
     }
     if ((el.type === 'polyline' || el.type === 'arrow') && el.geometry.type === 'LineString' && Array.isArray(el.geometry.coordinates)) {
-      const pts = el.geometry.coordinates
-        .map((c) => {
-          try {
-            const p = map.project(c);
-            return [p.x * sx, p.y * sy];
-          } catch (_) {
-            return null;
-          }
-        })
-        .filter(Boolean);
+      const pts = projectLinePointsForExport(map, el.geometry.coordinates, sx, sy);
       if (pts.length < 2) continue;
+      const strokeCol = el.stroke || (el.type === 'arrow' ? '#d97706' : '#2563eb');
+      const sw = exportStrokeWidth(el, scale, overlayScale);
+      const join = el.strokeLinejoin || 'round';
+      const cap = el.strokeLinecap || 'round';
+      const dash = scaleDashPatternForExport(el.lineDasharray, sw, paintScale, cap);
+
       ctx.save();
-      ctx.beginPath();
-      ctx.moveTo(pts[0][0], pts[0][1]);
-      for (let i = 1; i < pts.length; i += 1) ctx.lineTo(pts[i][0], pts[i][1]);
       ctx.globalAlpha = Math.max(0, Math.min(1, Number(el.strokeOpacity ?? 1)));
-      ctx.strokeStyle = el.stroke || '#2563eb';
-      ctx.lineWidth = Math.max(1, (Number(el.strokeWidth) || 3) * scale * overlayScale * 1.18);
-      const dash = parseDashArray(el.lineDasharray).map((d) => d * scale);
-      if (dash.length) ctx.setLineDash(dash);
-      ctx.lineCap = el.strokeLinecap || 'round';
-      ctx.lineJoin = el.strokeLinejoin || 'round';
+      ctx.lineJoin = join;
+
+      if (el.fenceOutlineStroke) {
+        ctx.strokeStyle = el.fenceOutlineStroke;
+        ctx.globalAlpha = Math.max(0, Math.min(1, Number(el.fenceOutlineOpacity ?? 0.35)));
+        ctx.lineWidth = Math.max(
+          1,
+          (Number(el.fenceOutlineWidth) || 5) * scale * overlayScale
+        );
+        ctx.setLineDash([]);
+        ctx.lineCap = el.strokeLinecap || 'round';
+        strokeOpenPathForExport(ctx, pts);
+        ctx.stroke();
+        ctx.globalAlpha = Math.max(0, Math.min(1, Number(el.strokeOpacity ?? 1)));
+      }
+
+      ctx.strokeStyle = strokeCol;
+      ctx.lineWidth = sw;
+      ctx.setLineDash(dash.length ? dash : []);
+      ctx.lineCap = cap;
+      strokeOpenPathForExport(ctx, pts);
       ctx.stroke();
+
+      if (el.roadMarkingStroke) {
+        const markingW = Math.max(
+          1,
+          (Number(el.roadMarkingWidth) || 2) * scale * overlayScale
+        );
+        const markingCap = el.roadMarkingLinecap || 'round';
+        const markingDash = scaleDashPatternForExport(
+          el.roadMarkingDasharray,
+          markingW,
+          paintScale,
+          markingCap
+        );
+        ctx.strokeStyle = el.roadMarkingStroke;
+        ctx.lineWidth = markingW;
+        ctx.setLineDash(markingDash.length ? markingDash : []);
+        ctx.lineCap = markingCap;
+        strokeOpenPathForExport(ctx, pts);
+        ctx.stroke();
+      }
+
+      if (el.transmissionTicks) {
+        const tickSegs = transmissionTickSegments(pts, 20 * scale, 7 * scale);
+        ctx.strokeStyle = strokeCol;
+        ctx.lineWidth = Math.max(1, 1.25 * scale);
+        ctx.setLineDash([]);
+        tickSegs.forEach((t) => {
+          ctx.beginPath();
+          ctx.moveTo(t.x1, t.y1);
+          ctx.lineTo(t.x2, t.y2);
+          ctx.stroke();
+        });
+      }
+
+      const headMode = el.type === 'arrow' ? 'end' : el.arrowHead || 'none';
+      const showEndHead = headMode === 'end' || headMode === 'both';
+      const showStartHead = headMode === 'both';
+      if (showEndHead || showStartHead) {
+        ctx.fillStyle = strokeCol;
+        ctx.setLineDash([]);
+        if (showEndHead) {
+          const endSeg = segmentIndexTowardTip(pts, pts.length - 1);
+          if (endSeg) {
+            const poly = arrowHeadPolygon(endSeg.ax1, endSeg.ay1, endSeg.ax2, endSeg.ay2, sw);
+            fillPolygonPoints(ctx, poly);
+          }
+        }
+        if (showStartHead) {
+          const startSeg = segmentIndexTowardTip(pts, 0);
+          if (startSeg) {
+            const poly = arrowHeadPolygon(
+              startSeg.ax1,
+              startSeg.ay1,
+              startSeg.ax2,
+              startSeg.ay2,
+              sw
+            );
+            fillPolygonPoints(ctx, poly);
+          }
+        }
+      }
+
       ctx.restore();
     }
   }
+}
+
+function fillPolygonPoints(ctx, pointsStr) {
+  const pairs = String(pointsStr || '')
+    .trim()
+    .split(/\s+/)
+    .map((pair) => pair.split(',').map(Number))
+    .filter((p) => p.length >= 2 && Number.isFinite(p[0]) && Number.isFinite(p[1]));
+  if (pairs.length < 3) return;
+  ctx.beginPath();
+  ctx.moveTo(pairs[0][0], pairs[0][1]);
+  for (let i = 1; i < pairs.length; i += 1) ctx.lineTo(pairs[i][0], pairs[i][1]);
+  ctx.closePath();
+  ctx.fill();
 }
 
 async function drawPointShapeLogosForExport(
@@ -692,6 +882,7 @@ async function drawPointShapeLogosForExport(
   }
 }
 
+/** Match `getElementAnchorLngLat` in Map.js so PDF labels land on the same anchor as the editor. */
 function getElementAnchorLngLatForExport(el) {
   const g = el?.geometry;
   if (!g) return null;
@@ -701,20 +892,28 @@ function getElementAnchorLngLatForExport(el) {
     return null;
   }
   if (g.type === 'LineString' && Array.isArray(g.coordinates) && g.coordinates.length >= 2) {
-    const mid = g.coordinates[Math.floor((g.coordinates.length - 1) / 2)];
+    const mid = g.coordinates[Math.floor(g.coordinates.length / 2)];
     if (Array.isArray(mid) && Number.isFinite(mid[0]) && Number.isFinite(mid[1])) {
       return { lng: mid[0], lat: mid[1] };
     }
     return null;
   }
-  if (g.type === 'Polygon' && Array.isArray(g.coordinates?.[0]) && g.coordinates[0].length >= 3) {
+  if (g.type === 'Polygon' && Array.isArray(g.coordinates?.[0]) && g.coordinates[0].length >= 4) {
     const ring = g.coordinates[0];
+    try {
+      const poly = turf.polygon([ring]);
+      const c = turf.centerOfMass(poly);
+      const [lng, lat] = c.geometry.coordinates;
+      if (Number.isFinite(lng) && Number.isFinite(lat)) return { lng, lat };
+    } catch (_) {
+      /* fall through */
+    }
     const closed =
       ring.length > 1 &&
       ring[0][0] === ring[ring.length - 1][0] &&
       ring[0][1] === ring[ring.length - 1][1];
     const open = closed ? ring.slice(0, -1) : ring;
-    if (!open.length) return null;
+    if (open.length < 3) return null;
     const sum = open.reduce(
       (acc, p) => ({ lng: acc.lng + (Number(p?.[0]) || 0), lat: acc.lat + (Number(p?.[1]) || 0) }),
       { lng: 0, lat: 0 }
@@ -773,11 +972,9 @@ function drawMapLabelsForExport(
     const y =
       projected.y * sy +
       (labelUsesGeoOffset(el) ? 0 : (Number(el.labelOffsetY) || 0) * offsetScaleY);
-    const fontMult = 1.48;
-    const globalLift = Math.round(36 * scale * Math.max(1, overlayScale * 0.98));
     const fontSize = Math.max(
-      12,
-      Math.round((Number(el.labelFontSize) || 11) * scale * overlayScale * fontMult)
+      10,
+      Math.round((Number(el.labelFontSize) || 11) * scale * overlayScale)
     );
     const lineHeight = Math.round(fontSize * 1.25);
     const lines = String(text).split('\n').filter(Boolean);
@@ -786,8 +983,8 @@ function drawMapLabelsForExport(
     ctx.save();
     ctx.font = `600 ${fontSize}px ${el.labelFontFamily || 'Inter, Arial, sans-serif'}`;
     const textW = Math.max(...lines.map((ln) => ctx.measureText(ln).width));
-    const padX = Math.round(fontSize * 0.7);
-    const padY = Math.round(fontSize * 0.45);
+    const padX = Math.round(8 * scale);
+    const padY = Math.round(4 * scale);
     const boxW = Math.round(textW + padX * 2);
     const boxH = Math.round(lines.length * lineHeight + padY * 2);
     const alignH = el.labelAlignH || 'center';
@@ -797,11 +994,11 @@ function drawMapLabelsForExport(
     let by = y;
     if (alignH === 'center') bx -= boxW / 2;
     else if (alignH === 'right') bx -= boxW;
-    const topGap = Math.round(11 * scale * Math.max(1, overlayScale * 0.92));
+    const topGap = Math.round(6 * scale);
+    const bottomGap = Math.round(6 * scale);
     if (alignV === 'top') by -= boxH + topGap;
     else if (alignV === 'middle') by -= boxH / 2;
-    else by += Math.round(8 * scale);
-    by -= globalLift;
+    else by += bottomGap;
 
     ctx.fillStyle = el.labelBackgroundColor || '#ffffff';
     ctx.strokeStyle = '#e5e7eb';
@@ -870,6 +1067,8 @@ export function savePngDataUrlAsLetterLandscapePdf(dataUrl, baseName) {
   });
 }
 
+const COMMUNITY_VIEW_WEBSITE_URL = 'https://communityview.ai';
+
 const PAPER_INCHES = {
   letter: { w: 8.5, h: 11 },
   legal: { w: 8.5, h: 14 },
@@ -927,18 +1126,231 @@ const POINT_ICON_FILE = {
 };
 
 async function loadImage(url) {
+  const raw = String(url || '').trim();
+  if (!raw) return null;
+  const abs = raw.startsWith('http') || raw.startsWith('data:') || raw.startsWith('blob:')
+    ? raw
+    : `${window.location.origin}${raw.startsWith('/') ? raw : `/${raw}`}`;
+
+  const loadFromObjectUrl = (objectUrl) =>
+    new Promise((resolve) => {
+      const img = new Image();
+      img.onload = () => resolve(img);
+      img.onerror = () => resolve(null);
+      img.src = objectUrl;
+    });
+
+  if (abs.startsWith('data:') || abs.startsWith('blob:')) {
+    return loadFromObjectUrl(abs);
+  }
+
+  try {
+    const res = await fetch(abs, { mode: 'cors', credentials: 'omit', cache: 'force-cache' });
+    if (res.ok) {
+      const blob = await res.blob();
+      const objectUrl = URL.createObjectURL(blob);
+      const img = await loadFromObjectUrl(objectUrl);
+      URL.revokeObjectURL(objectUrl);
+      if (img) return img;
+    }
+  } catch (_) {
+    // fall through to Image() with crossOrigin
+  }
+
   return new Promise((resolve) => {
     const img = new Image();
     img.crossOrigin = 'anonymous';
     img.onload = () => resolve(img);
     img.onerror = () => resolve(null);
-    img.src = url;
+    img.src = abs;
   });
+}
+
+function drawLegendLineIcon(ctx, iconX, iconCenterY, iconSize, stroke, strokeOpacity, options = {}) {
+  const {
+    lineWidth,
+    dasharray = null,
+    lineCap = 'round',
+    halo = false,
+  } = options;
+  const lineY = iconCenterY;
+  const lineW = Math.max(2, lineWidth);
+  const cap = lineCap || 'round';
+  const dash = scaleDashPatternForExport(dasharray, lineW, 1, cap);
+  const alpha = Math.max(0, Math.min(1, Number(strokeOpacity ?? 1)));
+
+  if (halo || isLightLegendColor(stroke)) {
+    ctx.save();
+    ctx.globalAlpha = alpha;
+    ctx.strokeStyle = 'rgba(15,23,42,0.45)';
+    ctx.lineWidth = lineW + Math.max(1, lineW * 0.35);
+    ctx.lineCap = 'round';
+    ctx.setLineDash([]);
+    ctx.beginPath();
+    ctx.moveTo(iconX, lineY);
+    ctx.lineTo(iconX + iconSize, lineY);
+    ctx.stroke();
+    ctx.restore();
+  }
+
+  ctx.save();
+  ctx.globalAlpha = alpha;
+  ctx.strokeStyle = stroke || '#2563eb';
+  ctx.lineWidth = lineW;
+  ctx.setLineDash(dash.length ? dash : []);
+  ctx.lineCap = cap;
+  ctx.beginPath();
+  ctx.moveTo(iconX, lineY);
+  ctx.lineTo(iconX + iconSize, lineY);
+  ctx.stroke();
+  ctx.restore();
+}
+
+function isLightLegendColor(color) {
+  const c = String(color || '').trim().toLowerCase();
+  return c === '#ffffff' || c === '#fff' || c === 'white';
+}
+
+function getLegendRowMetrics(dpiSafe, compactFooter) {
+  const iconSize = Math.round(dpiSafe * 0.11);
+  const iconSlotW = Math.round(dpiSafe * 0.24);
+  const labelGap = Math.round(dpiSafe * 0.085);
+  const bodyFontPx = Math.round(dpiSafe * 0.104);
+  const rowStep = Math.max(
+    Math.round(dpiSafe * (compactFooter ? 0.118 : 0.132)),
+    iconSize + Math.round(dpiSafe * 0.05)
+  );
+  return { iconSize, iconSlotW, labelGap, bodyFontPx, rowStep };
+}
+
+function getLegendRowCenterY(topTextY, rowStep, rowInCol) {
+  return topTextY + rowStep * rowInCol + rowStep / 2;
 }
 
 function mercatorMetersPerPixel(lat, zoom) {
   const latRad = (lat * Math.PI) / 180;
   return (156543.03392 * Math.cos(latRad)) / Math.pow(2, zoom);
+}
+
+function roundRectPath(ctx, x, y, w, h, r) {
+  const radius = Math.max(0, Math.min(r, w / 2, h / 2));
+  ctx.beginPath();
+  ctx.moveTo(x + radius, y);
+  ctx.lineTo(x + w - radius, y);
+  ctx.quadraticCurveTo(x + w, y, x + w, y + radius);
+  ctx.lineTo(x + w, y + h - radius);
+  ctx.quadraticCurveTo(x + w, y + h, x + w - radius, y + h);
+  ctx.lineTo(x + radius, y + h);
+  ctx.quadraticCurveTo(x, y + h, x, y + h - radius);
+  ctx.lineTo(x, y + radius);
+  ctx.quadraticCurveTo(x, y, x + radius, y);
+  ctx.closePath();
+}
+
+/** Load a public/static image for PDF compositing (e.g. /logo.png). */
+function loadPublicAssetImage(src) {
+  return new Promise((resolve) => {
+    const raw = String(src || '').trim();
+    if (!raw) {
+      resolve(null);
+      return;
+    }
+    const img = new Image();
+    img.onload = () => resolve(img.naturalWidth > 0 && img.naturalHeight > 0 ? img : null);
+    img.onerror = () => resolve(null);
+    img.src = raw;
+  });
+}
+
+function drawMapInsetPanel(ctx, x, y, w, h, dpiSafe) {
+  const radius = Math.round(dpiSafe * 0.02);
+  ctx.save();
+  roundRectPath(ctx, x, y, w, h, radius);
+  ctx.fillStyle = 'rgba(255,255,255,0.94)';
+  ctx.fill();
+  ctx.strokeStyle = 'rgba(15,23,42,0.28)';
+  ctx.lineWidth = Math.max(1, Math.round(dpiSafe / 260));
+  ctx.stroke();
+  ctx.restore();
+}
+
+/** Scale bar (left) + north arrow (right), anchored to map bottom-right corner. */
+function drawMapScaleAndNorthOverlay(ctx, { mapX, mapY, drawW, drawH, map, dpiSafe, metersPerPdfPx }) {
+  const pad = Math.round(dpiSafe * 0.042);
+  const gap = Math.round(dpiSafe * 0.022);
+  const northBox = Math.round(dpiSafe * 0.24);
+  const scaleBoxH = northBox;
+  const scaleBoxW = Math.round(dpiSafe * 0.62);
+
+  const northOx = Math.round(mapX + drawW - pad - northBox);
+  const northOy = Math.round(mapY + drawH - pad - northBox);
+  const scaleOx = northOx - gap - scaleBoxW;
+  const scaleOy = northOy;
+
+  drawMapInsetPanel(ctx, northOx, northOy, northBox, northBox, dpiSafe);
+
+  const bearing = Number(map.getBearing?.() || 0);
+  const arrowSize = Math.round(dpiSafe * 0.07);
+  const arrowCx = northOx + Math.round(northBox / 2);
+  const arrowCy = northOy + Math.round(northBox / 2) + Math.round(dpiSafe * 0.012);
+
+  ctx.fillStyle = '#0f172a';
+  ctx.font = `700 ${Math.round(dpiSafe * 0.05)}px Inter, Arial, sans-serif`;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'alphabetic';
+  ctx.fillText('N', arrowCx, arrowCy - arrowSize - Math.round(dpiSafe * 0.012));
+
+  ctx.save();
+  ctx.translate(arrowCx, arrowCy);
+  ctx.rotate((-bearing * Math.PI) / 180);
+  ctx.fillStyle = '#0f172a';
+  ctx.beginPath();
+  ctx.moveTo(0, -arrowSize);
+  ctx.lineTo(Math.round(arrowSize * 0.4), Math.round(arrowSize * 0.72));
+  ctx.lineTo(0, Math.round(arrowSize * 0.38));
+  ctx.lineTo(Math.round(-arrowSize * 0.4), Math.round(arrowSize * 0.72));
+  ctx.closePath();
+  ctx.fill();
+  ctx.restore();
+  ctx.textAlign = 'left';
+
+  drawMapInsetPanel(ctx, scaleOx, scaleOy, scaleBoxW, scaleBoxH, dpiSafe);
+
+  const scaleInnerPad = Math.round(dpiSafe * 0.035);
+  const scaleTargetPx = Math.round(dpiSafe * 0.5);
+  const scaleMeters = pickScaleDistanceMeters(scaleTargetPx, metersPerPdfPx);
+  const scalePx = scaleMeters && metersPerPdfPx ? scaleMeters / metersPerPdfPx : 0;
+  const scaleMaxW = scaleBoxW - scaleInnerPad * 2;
+  const scaleDrawPx = scalePx > 8 ? Math.min(scalePx, scaleMaxW) : 0;
+
+  if (scaleDrawPx > 8) {
+    const scaleX = scaleOx + Math.round((scaleBoxW - scaleDrawPx) / 2);
+    const scaleY = scaleOy + Math.round(scaleBoxH * 0.62);
+    const tickH = Math.round(dpiSafe * 0.024);
+    const barW = Math.max(2, Math.round(dpiSafe / 130));
+
+    ctx.fillStyle = '#0f172a';
+    ctx.font = `600 ${Math.round(dpiSafe * 0.052)}px Inter, Arial, sans-serif`;
+    ctx.textAlign = 'center';
+    ctx.fillText(formatDistance(scaleMeters), scaleOx + scaleBoxW / 2, scaleOy + Math.round(scaleBoxH * 0.28));
+
+    ctx.strokeStyle = '#0f172a';
+    ctx.lineWidth = barW;
+    ctx.lineCap = 'square';
+    ctx.beginPath();
+    ctx.moveTo(scaleX, scaleY);
+    ctx.lineTo(scaleX + scaleDrawPx, scaleY);
+    ctx.stroke();
+
+    ctx.lineWidth = Math.max(1, Math.round(dpiSafe / 210));
+    ctx.beginPath();
+    ctx.moveTo(scaleX, scaleY - tickH);
+    ctx.lineTo(scaleX, scaleY + tickH);
+    ctx.moveTo(scaleX + scaleDrawPx, scaleY - tickH);
+    ctx.lineTo(scaleX + scaleDrawPx, scaleY + tickH);
+    ctx.stroke();
+    ctx.textAlign = 'left';
+  }
 }
 
 function drawWrappedLines(ctx, text, x, y, maxWidth, lineHeight, maxLines = 2) {
@@ -974,6 +1386,10 @@ export async function saveMapPdfWithFooter({
   agentEmail = '',
   agentPhone = '',
   agentLogoUrl = '',
+  agentPhotoUrl = '',
+  agentPhotoDataUrl = '',
+  agentLogoDataUrl = '',
+  ownerUserId = '',
   paperSize = 'letter',
   orientation = 'landscape',
   dpi = 300,
@@ -982,10 +1398,13 @@ export async function saveMapPdfWithFooter({
   layerNameMappings = {},
   layerLegends = {},
   cropRectCss = null,
+  basemapId = '',
 }) {
   if (!map || typeof map.getCanvas !== 'function') {
     throw new Error('Map is not ready yet.');
   }
+  const resolvedBasemapId =
+    String(basemapId || regridStyleBasemapRef.current || '').trim();
   const safe = sanitizeMapExportBasename(baseName || mapTitle || 'map');
   const paper = PAPER_INCHES[paperSize] || PAPER_INCHES.letter;
   const landscape = orientation === 'landscape';
@@ -1001,7 +1420,7 @@ export async function saveMapPdfWithFooter({
   const printSafePre = Math.round(dpiSafe * 0.2);
   const innerGutterPre = Math.round(dpiSafe * (landscape ? 0.065 : 0.05));
   const preMargin = printSafePre + innerGutterPre;
-  const preFooterH = Math.round(pageH * (landscape ? 0.19 : 0.13));
+  const preFooterH = Math.round(pageH * (landscape ? 0.245 : 0.17));
   const preHeaderH = Math.round(pageH * (landscape ? 0.048 : 0.036));
   const targetMapW = Math.max(1200, Math.round(pageW - preMargin * 2));
   const targetMapH = Math.max(
@@ -1009,15 +1428,28 @@ export async function saveMapPdfWithFooter({
     Math.round(pageH - preFooterH - preHeaderH - printSafePre * 2 - Math.round(dpiSafe * 0.06))
   );
 
+  syncParcelOutlineColorForExport(map, resolvedBasemapId);
+
+  const [photoDrawable, logoDrawable, communityViewLogo] = await Promise.all([
+    agentPhotoUrl || ownerUserId || agentPhotoDataUrl
+      ? loadProfilePhotoDrawableForPdf({ uid: ownerUserId, photoUrl: agentPhotoUrl })
+      : Promise.resolve(null),
+    agentLogoUrl || ownerUserId || agentLogoDataUrl
+      ? loadFirmLogoDrawableForPdf({ uid: ownerUserId, logoUrl: agentLogoUrl })
+      : Promise.resolve(null),
+    loadPublicAssetImage(`${process.env.PUBLIC_URL || ''}/logo.png`),
+  ]);
+
   const mapDataUrl = await captureMapStackToPngDataUrl(map, {
-    cropRectCss,
-    printElements,
-    preferOffscreen: true,
-    targetPixelWidth: targetMapW,
-    targetPixelHeight: targetMapH,
-    includeNotesOverlay: false,
-    overlayScale,
-  });
+      cropRectCss,
+      printElements,
+      preferOffscreen: true,
+      targetPixelWidth: targetMapW,
+      targetPixelHeight: targetMapH,
+      includeNotesOverlay: false,
+      overlayScale,
+      basemapId: resolvedBasemapId,
+    });
   const mapImg = await new Promise((resolve, reject) => {
     const img = new Image();
     img.onload = () => resolve(img);
@@ -1038,7 +1470,7 @@ export async function saveMapPdfWithFooter({
   const printSafe = Math.round(dpiSafe * 0.2);
   const innerGutter = Math.round(dpiSafe * (landscape ? 0.065 : 0.05));
   const margin = printSafe + innerGutter;
-  const footerH = Math.round(pageH * (landscape ? 0.19 : 0.13));
+  const footerH = Math.round(pageH * (landscape ? 0.245 : 0.17));
   const headerH = Math.round(pageH * (landscape ? 0.048 : 0.036));
   const mapUpperGap = Math.round(dpiSafe * 0.032);
   const footerY = pageH - footerH - printSafe;
@@ -1064,6 +1496,25 @@ export async function saveMapPdfWithFooter({
   ctx.lineWidth = Math.max(3, Math.round(dpiSafe / 150));
   ctx.strokeRect(mapX - mapMat, mapY - mapMat, drawW + mapMat * 2, drawH + mapMat * 2);
 
+  const center = map.getCenter?.();
+  const zoom = map.getZoom?.();
+  const metersPerPxRaw =
+    center && Number.isFinite(center.lat) && Number.isFinite(zoom)
+      ? mercatorMetersPerPixel(center.lat, zoom)
+      : null;
+  const mapImagePxToMapPx = iw > 0 ? iw / drawW : 1;
+  const metersPerPdfPx =
+    Number.isFinite(metersPerPxRaw) ? metersPerPxRaw * mapImagePxToMapPx : null;
+  drawMapScaleAndNorthOverlay(ctx, {
+    mapX,
+    mapY,
+    drawW,
+    drawH,
+    map,
+    dpiSafe,
+    metersPerPdfPx,
+  });
+
   // White header strip with prominent title (cartographic layout feel).
   ctx.fillStyle = '#ffffff';
   ctx.fillRect(printSafe, printSafe, pageW - printSafe * 2, headerH);
@@ -1077,12 +1528,32 @@ export async function saveMapPdfWithFooter({
   ctx.font = `700 ${Math.round(dpiSafe * 0.16)}px Inter, Arial, sans-serif`;
   ctx.textBaseline = 'middle';
   ctx.textAlign = 'left';
+
+  const headerLogoMaxH = Math.round(headerH * 0.74 * 2);
+  const headerLogoMaxW = Math.round(dpiSafe * 1.24);
+  let headerLogoW = 0;
+  let communityViewLogoRect = null;
+  if (communityViewLogo) {
+    const logoRatio = communityViewLogo.naturalWidth / communityViewLogo.naturalHeight;
+    let logoH = headerLogoMaxH;
+    let logoW = Math.round(logoH * logoRatio);
+    if (logoW > headerLogoMaxW) {
+      logoW = headerLogoMaxW;
+      logoH = Math.round(logoW / logoRatio);
+    }
+    headerLogoW = logoW + Math.round(dpiSafe * 0.08);
+    const logoX = pageW - printSafe - Math.round(dpiSafe * 0.04) - logoW;
+    const logoY = printSafe + Math.round((headerH - logoH) / 2);
+    communityViewLogoRect = { x: logoX, y: logoY, w: logoW, h: logoH };
+    ctx.drawImage(communityViewLogo, logoX, logoY, logoW, logoH);
+  }
+
   drawWrappedLines(
     ctx,
     mapTitle || 'Map',
     margin,
     Math.round(printSafe + headerH / 2),
-    pageW - margin * 2,
+    pageW - margin - printSafe - headerLogoW - Math.round(dpiSafe * 0.06),
     Math.round(dpiSafe * 0.12),
     1
   );
@@ -1114,8 +1585,9 @@ export async function saveMapPdfWithFooter({
     .forEach((k) => {
       const name = layerNameMappings[k] || k;
       const items = Array.isArray(layerLegends?.[k]) ? layerLegends[k] : [];
+      const defaultColor = resolveLayerLegendColor(k, '#94a3b8', resolvedBasemapId);
       if (!items.length) {
-        layerLegendEntries.push({ label: name, color: '#94a3b8' });
+        layerLegendEntries.push({ label: name, color: defaultColor, layerKey: k });
         return;
       }
       const withLabels = items
@@ -1123,10 +1595,11 @@ export async function saveMapPdfWithFooter({
         .slice(0, 3)
         .map((it) => ({
           label: it?.label && String(it.label).trim() ? `${name}: ${String(it.label).trim()}` : name,
-          color: it?.color || '#94a3b8',
+          color: resolveLayerLegendColor(k, it?.color || '#94a3b8', resolvedBasemapId),
+          layerKey: k,
         }));
       if (!withLabels.length) {
-        layerLegendEntries.push({ label: name, color: '#94a3b8' });
+        layerLegendEntries.push({ label: name, color: defaultColor, layerKey: k });
       } else {
         layerLegendEntries.push(...withLabels);
       }
@@ -1135,15 +1608,20 @@ export async function saveMapPdfWithFooter({
 
   const leftColX = margin;
   const colGap = Math.round(dpiSafe * (landscape ? 0.3 : 0.22));
-  const rightMetaW = Math.round(dpiSafe * (landscape ? 1.9 : 1.65));
+  const rightMetaW = Math.round(dpiSafe * (landscape ? 2.25 : 1.95));
   const colW = Math.round((pageW - margin * 2 - colGap - rightMetaW) / 2);
   const midColX = leftColX + colW + colGap;
   const compactFooter = !landscape;
-  const boxTop = footerY + Math.round(dpiSafe * (compactFooter ? 0.055 : 0.1));
-  const boxH = footerH - Math.round(dpiSafe * (compactFooter ? 0.19 : 0.28));
+  const boxTop = footerY + Math.round(dpiSafe * (compactFooter ? 0.035 : 0.055));
+  const boxH = footerH - Math.round(dpiSafe * (compactFooter ? 0.1 : 0.14));
   const legendTitleBand = Math.round(dpiSafe * (compactFooter ? 0.15 : 0.195));
-  const legendBodyFontPx = Math.round(dpiSafe * 0.104);
-  const lineH = Math.round(dpiSafe * (compactFooter ? 0.108 : 0.124));
+  const {
+    iconSize: legendIconSize,
+    iconSlotW: legendIconSlotW,
+    labelGap: legendLabelGap,
+    bodyFontPx: legendBodyFontPx,
+    rowStep: legendRowStep,
+  } = getLegendRowMetrics(dpiSafe, compactFooter);
   const topTextY = boxTop + legendTitleBand;
   const legendBottomPad = Math.round(dpiSafe * 0.075);
   const legendRowsMaxY = boxTop + boxH - legendBottomPad;
@@ -1151,7 +1629,7 @@ export async function saveMapPdfWithFooter({
     1,
     Math.min(
       24,
-      Math.floor(Math.max(0, legendRowsMaxY - topTextY) / lineH)
+      Math.floor(Math.max(0, legendRowsMaxY - topTextY) / legendRowStep)
     )
   );
   const maxMapLegendItems = maxRowsPerCol * 2;
@@ -1188,23 +1666,24 @@ export async function saveMapPdfWithFooter({
 
   ctx.fillStyle = '#0f172a';
   ctx.font = `${legendBodyFontPx}px Inter, Arial, sans-serif`;
+
   const visibleElementLegend = elementLegend.slice(0, maxMapLegendItems);
   for (let idx = 0; idx < visibleElementLegend.length; idx += 1) {
     const row = visibleElementLegend[idx];
     const col = idx < maxRowsPerCol ? 0 : 1;
     const rowInCol = col === 0 ? idx : idx - maxRowsPerCol;
     const baseX = col === 0 ? mapLegendCol1X : mapLegendCol2X;
-    const y = topTextY + lineH * (rowInCol + 1);
-    const iconX = baseX;
-    const iconY = y - Math.round(dpiSafe * 0.055);
-    const iconSize = Math.round(dpiSafe * 0.118);
+    const rowCenterY = getLegendRowCenterY(topTextY, legendRowStep, rowInCol);
+    const iconDrawX = baseX + Math.round((legendIconSlotW - legendIconSize) / 2);
+    const iconTop = rowCenterY - legendIconSize / 2;
+    const labelX = baseX + legendIconSlotW + legendLabelGap;
     const el = row.element || {};
 
     if (el.type === 'shape') {
       const file = POINT_ICON_FILE[el.svgKey];
-      const cx = iconX + iconSize / 2;
-      const cy = iconY + iconSize / 2;
-      const r = iconSize / 2;
+      const cx = baseX + Math.round(legendIconSlotW / 2);
+      const cy = rowCenterY;
+      const r = legendIconSize / 2;
       const fillOp = Math.max(0, Math.min(1, Number(el.fillOpacity ?? 1)));
       const strokeOp = Math.max(0, Math.min(1, Number(el.strokeOpacity ?? 1)));
       ctx.save();
@@ -1217,7 +1696,7 @@ export async function saveMapPdfWithFooter({
       ctx.save();
       ctx.strokeStyle = el.stroke || '#0f172a';
       ctx.globalAlpha = strokeOp;
-      ctx.lineWidth = Math.max(1, Math.round((Number(el.strokeWidth) || 2) * (iconSize / 34)));
+      ctx.lineWidth = Math.max(1, Math.round((Number(el.strokeWidth) || 2) * (legendIconSize / 34)));
       ctx.beginPath();
       ctx.arc(cx, cy, r, 0, Math.PI * 2);
       ctx.stroke();
@@ -1226,61 +1705,96 @@ export async function saveMapPdfWithFooter({
         const absUrl = `${window.location.origin}/logos_for_print/${file}`;
         const img = await loadImage(absUrl);
         if (img) {
-          const pad = Math.max(1, Math.round(iconSize * 0.18));
-          ctx.drawImage(img, iconX + pad, iconY + pad, iconSize - pad * 2, iconSize - pad * 2);
+          const pad = Math.max(1, Math.round(legendIconSize * 0.18));
+          ctx.drawImage(
+            img,
+            iconDrawX + pad,
+            iconTop + pad,
+            legendIconSize - pad * 2,
+            legendIconSize - pad * 2
+          );
         } else {
           ctx.fillStyle = '#0f172a';
-          ctx.font = `700 ${Math.max(8, Math.round(iconSize * 0.38))}px Inter, Arial, sans-serif`;
-          ctx.fillText(
-            (row.label || '?').slice(0, 1).toUpperCase(),
-            iconX + Math.round(iconSize * 0.33),
-            iconY + Math.round(iconSize * 0.72)
-          );
+          ctx.font = `700 ${Math.max(8, Math.round(legendIconSize * 0.38))}px Inter, Arial, sans-serif`;
+          ctx.textBaseline = 'middle';
+          ctx.fillText((row.label || '?').slice(0, 1).toUpperCase(), cx, cy);
+          ctx.textBaseline = 'alphabetic';
+          ctx.font = `${legendBodyFontPx}px Inter, Arial, sans-serif`;
         }
       }
     } else if (el.type === 'polygon') {
       ctx.save();
       ctx.globalAlpha = Math.max(0, Math.min(1, Number(el.fillOpacity ?? 1)));
       ctx.fillStyle = el.fill || '#94a3b8';
-      ctx.fillRect(iconX, iconY, iconSize, iconSize);
+      ctx.fillRect(iconDrawX, iconTop, legendIconSize, legendIconSize);
       ctx.restore();
       ctx.save();
       ctx.globalAlpha = Math.max(0, Math.min(1, Number(el.strokeOpacity ?? 1)));
       ctx.strokeStyle = el.stroke || '#334155';
       ctx.lineWidth = Math.max(1, dpiSafe / 220);
-      ctx.strokeRect(iconX, iconY, iconSize, iconSize);
+      ctx.strokeRect(iconDrawX, iconTop, legendIconSize, legendIconSize);
       ctx.restore();
     } else if (el.type === 'polyline' || el.type === 'arrow') {
-      ctx.save();
-      ctx.globalAlpha = Math.max(0, Math.min(1, Number(el.strokeOpacity ?? 1)));
-      ctx.strokeStyle = el.stroke || '#2563eb';
-      ctx.lineWidth = Math.max(2, dpiSafe / 180);
-      ctx.beginPath();
-      ctx.moveTo(iconX, iconY + iconSize / 2);
-      ctx.lineTo(iconX + iconSize, iconY + iconSize / 2);
-      ctx.stroke();
-      ctx.restore();
+      drawLegendLineIcon(
+        ctx,
+        iconDrawX,
+        rowCenterY,
+        legendIconSize,
+        el.stroke || '#2563eb',
+        el.strokeOpacity,
+        {
+          lineWidth: dpiSafe / 180,
+          dasharray: el.lineDasharray,
+          lineCap: el.strokeLinecap || 'round',
+          halo: isLightLegendColor(el.stroke),
+        }
+      );
     } else {
       ctx.fillStyle = '#94a3b8';
-      ctx.fillRect(iconX, iconY, iconSize, iconSize);
+      ctx.fillRect(iconDrawX, iconTop, legendIconSize, legendIconSize);
     }
     ctx.fillStyle = '#0f172a';
-    ctx.fillText(`- ${row.label}`, baseX + iconSize + Math.round(dpiSafe * 0.045), y);
+    ctx.textBaseline = 'middle';
+    ctx.fillText(row.label, labelX, rowCenterY);
+    ctx.textBaseline = 'alphabetic';
   }
   const visibleLayerLegend = layerLegendLines.slice(0, maxLayerLegendItems);
   visibleLayerLegend.forEach((entry, idx) => {
     const col = idx < maxRowsPerCol ? 0 : 1;
     const rowInCol = col === 0 ? idx : idx - maxRowsPerCol;
     const baseX = col === 0 ? layerLegendCol1X : layerLegendCol2X;
-    const y = topTextY + lineH * (rowInCol + 1);
-    const sw = Math.round(dpiSafe * 0.068);
-    ctx.fillStyle = entry.color || '#94a3b8';
-    ctx.fillRect(baseX, y - sw + 2, sw, sw);
-    ctx.strokeStyle = 'rgba(15,23,42,0.35)';
-    ctx.lineWidth = Math.max(1, Math.round(dpiSafe / 280));
-    ctx.strokeRect(baseX, y - sw + 2, sw, sw);
+    const rowCenterY = getLegendRowCenterY(topTextY, legendRowStep, rowInCol);
+    const iconDrawX = baseX + Math.round((legendIconSlotW - legendIconSize) / 2);
+    const labelX = baseX + legendIconSlotW + legendLabelGap;
+
+    if (entry.layerKey === 'ownership') {
+      drawLegendLineIcon(
+        ctx,
+        iconDrawX,
+        rowCenterY,
+        legendIconSize,
+        entry.color || '#000000',
+        1,
+        {
+          lineWidth: dpiSafe / 175,
+          lineCap: 'round',
+          halo: isLightLegendColor(entry.color),
+        }
+      );
+    } else {
+      const sw = legendIconSize;
+      const iconTop = rowCenterY - sw / 2;
+      ctx.fillStyle = entry.color || '#94a3b8';
+      ctx.fillRect(iconDrawX, iconTop, sw, sw);
+      ctx.strokeStyle = 'rgba(15,23,42,0.35)';
+      ctx.lineWidth = Math.max(1, Math.round(dpiSafe / 280));
+      ctx.strokeRect(iconDrawX, iconTop, sw, sw);
+    }
+
     ctx.fillStyle = '#0f172a';
-    ctx.fillText(`- ${entry.label}`, baseX + sw + Math.round(dpiSafe * 0.038), y);
+    ctx.textBaseline = 'middle';
+    ctx.fillText(entry.label, labelX, rowCenterY);
+    ctx.textBaseline = 'alphabetic';
   });
 
   const moreFontPx = Math.round(dpiSafe * 0.078);
@@ -1290,7 +1804,7 @@ export async function saveMapPdfWithFooter({
     ctx.fillText(
       `+${elementLegend.length - maxMapLegendItems} more`,
       mapLegendCol1X,
-      topTextY + lineH * (maxRowsPerCol + 1)
+      topTextY + legendRowStep * (maxRowsPerCol + 1)
     );
   }
   if (layerLegendLines.length > maxLayerLegendItems) {
@@ -1299,100 +1813,120 @@ export async function saveMapPdfWithFooter({
     ctx.fillText(
       `+${layerLegendLines.length - maxLayerLegendItems} more`,
       layerLegendCol1X,
-      topTextY + lineH * (maxRowsPerCol + 1)
+      topTextY + legendRowStep * (maxRowsPerCol + 1)
     );
   }
 
-  // Scale bar
-  const center = map.getCenter?.();
-  const zoom = map.getZoom?.();
-  const metersPerPxRaw =
-    center && Number.isFinite(center.lat) && Number.isFinite(zoom)
-      ? mercatorMetersPerPixel(center.lat, zoom)
-      : null;
-  const mapImagePxToMapPx = iw > 0 ? iw / drawW : 1;
-  const metersPerPdfPx =
-    Number.isFinite(metersPerPxRaw) ? metersPerPxRaw * mapImagePxToMapPx : null;
-  const scaleTargetPx = Math.round(dpiSafe * 1.15);
-  const scaleMeters = pickScaleDistanceMeters(scaleTargetPx, metersPerPdfPx);
-  const scalePx = scaleMeters && metersPerPdfPx ? scaleMeters / metersPerPdfPx : 0;
+  // Agent/contact block — matches shared map card (photo + details, logo below)
   const rightColRight = pageW - printSafe;
-  const scaleX = Math.round(rightColRight - rightMetaW + dpiSafe * 0.22);
-  const scaleY = footerY + Math.round(footerH * 0.88);
-  if (scalePx > 0) {
-    ctx.strokeStyle = '#0f172a';
-    ctx.lineWidth = Math.max(2, dpiSafe / 120);
-    ctx.beginPath();
-    ctx.moveTo(scaleX, scaleY);
-    ctx.lineTo(scaleX + scalePx, scaleY);
-    ctx.stroke();
-    ctx.beginPath();
-    ctx.moveTo(scaleX, scaleY - 8);
-    ctx.lineTo(scaleX, scaleY + 8);
-    ctx.moveTo(scaleX + scalePx, scaleY - 8);
-    ctx.lineTo(scaleX + scalePx, scaleY + 8);
-    ctx.stroke();
-    ctx.fillStyle = '#0f172a';
-    ctx.font = `${Math.round(dpiSafe * 0.06)}px Inter, Arial, sans-serif`;
-    ctx.fillText(formatDistance(scaleMeters), scaleX, scaleY - 12);
-  }
-
-  // North arrow
-  const bearing = Number(map.getBearing?.() || 0);
-  const arrowCx = Math.round(rightColRight - rightMetaW / 2);
-  const arrowCy = footerY + Math.round(footerH * 0.68);
-  const arrowSize = Math.round(dpiSafe * 0.18);
-  ctx.save();
-  ctx.translate(arrowCx, arrowCy);
-  ctx.rotate((-bearing * Math.PI) / 180);
-  ctx.fillStyle = '#0f172a';
-  ctx.beginPath();
-  ctx.moveTo(0, -arrowSize);
-  ctx.lineTo(Math.round(arrowSize * 0.42), Math.round(arrowSize * 0.7));
-  ctx.lineTo(0, Math.round(arrowSize * 0.35));
-  ctx.lineTo(Math.round(-arrowSize * 0.42), Math.round(arrowSize * 0.7));
-  ctx.closePath();
-  ctx.fill();
-  ctx.restore();
-  ctx.fillStyle = '#0f172a';
-  ctx.font = `700 ${Math.round(dpiSafe * 0.085)}px Inter, Arial, sans-serif`;
-  ctx.fillText('N', arrowCx - Math.round(dpiSafe * 0.03), arrowCy - arrowSize - Math.round(dpiSafe * 0.04));
-
-  // Agent/contact block
-  const agentBoxX = Math.round(rightColRight - rightMetaW);
+  const agentBoxX = Math.round(rightColRight - rightMetaW + dpiSafe * 0.04);
   const agentBoxY = boxTop;
-  const agentBoxW = rightMetaW - Math.round(dpiSafe * 0.22);
-  const agentBoxH = Math.round(footerH * (compactFooter ? 0.4 : 0.46));
+  const agentBoxW = rightMetaW - Math.round(dpiSafe * 0.12);
+  const agentBoxH = boxH;
+  const agentPad = Math.round(dpiSafe * 0.055);
+  const rowGap = Math.round(dpiSafe * 0.04);
+
   ctx.fillStyle = '#f8fafc';
-  ctx.fillRect(agentBoxX, agentBoxY, agentBoxW, agentBoxH);
-  ctx.strokeStyle = '#cbd5e1';
+  roundRectPath(ctx, agentBoxX, agentBoxY, agentBoxW, agentBoxH, Math.round(dpiSafe * 0.028));
+  ctx.fill();
+  ctx.strokeStyle = '#e2e8f0';
   ctx.lineWidth = Math.max(1, Math.round(dpiSafe / 260));
-  ctx.strokeRect(agentBoxX, agentBoxY, agentBoxW, agentBoxH);
-  let textY = agentBoxY + Math.round(dpiSafe * 0.14);
-  if (agentLogoUrl) {
-    const logoImg = await loadImage(agentLogoUrl);
-    if (logoImg) {
-      const targetW = Math.min(agentBoxW - Math.round(dpiSafe * 0.18), Math.round(dpiSafe * 0.62));
-      const ratio = (logoImg.naturalHeight || logoImg.height || 1) / (logoImg.naturalWidth || logoImg.width || 1);
-      const targetH = Math.max(26, Math.round(targetW * ratio));
-      const lx = agentBoxX + Math.round((agentBoxW - targetW) / 2);
-      const ly = agentBoxY + Math.round(dpiSafe * 0.08);
-      ctx.drawImage(logoImg, lx, ly, targetW, targetH);
-      textY = ly + targetH + Math.round(dpiSafe * 0.1);
-    }
+  ctx.stroke();
+
+  const logoAreaH = logoDrawable
+    ? Math.max(Math.round(dpiSafe * 0.46), agentBoxH - agentPad * 2 - Math.round(dpiSafe * 0.36) - rowGap)
+    : 0;
+  const contactAreaH = agentBoxH - agentPad * 2 - (logoDrawable ? logoAreaH + rowGap : 0);
+  const contactRowY = agentBoxY + agentPad;
+  const photoSize = photoDrawable ? Math.round(dpiSafe * 0.24) : 0;
+  const photoX = agentBoxX + agentPad;
+  const photoY =
+    photoDrawable && contactAreaH > photoSize
+      ? contactRowY + Math.round((contactAreaH - photoSize) / 2)
+      : contactRowY;
+
+  if (photoDrawable?.source) {
+    const cx = photoX + photoSize / 2;
+    const cy = photoY + photoSize / 2;
+    const r = photoSize / 2;
+    ctx.save();
+    ctx.beginPath();
+    ctx.arc(cx, cy, r, 0, Math.PI * 2);
+    ctx.closePath();
+    ctx.clip();
+    ctx.drawImage(photoDrawable.source, photoX, photoY, photoSize, photoSize);
+    ctx.restore();
+    ctx.strokeStyle = '#e2e8f0';
+    ctx.lineWidth = Math.max(1, Math.round(dpiSafe / 220));
+    ctx.beginPath();
+    ctx.arc(cx, cy, r, 0, Math.PI * 2);
+    ctx.stroke();
+    photoDrawable.release?.();
   }
+
+  const textX = photoDrawable ? photoX + photoSize + rowGap : agentBoxX + agentPad;
+  const textMaxW = agentBoxX + agentBoxW - agentPad - textX;
+  const nameFontPx = Math.round(dpiSafe * 0.076);
+  const detailFontPx = Math.round(dpiSafe * 0.064);
+  const detailLineH = Math.round(dpiSafe * 0.086);
+  const detailLines = [agentName || 'Listing Agent', agentEmail || '', agentPhone || ''].filter(
+    Boolean
+  );
+  const blockTextH =
+    nameFontPx + (detailLines.length > 1 ? (detailLines.length - 1) * detailLineH : 0);
+  let textY =
+    contactRowY +
+    Math.max(
+      Math.round(dpiSafe * 0.04),
+      Math.round((contactAreaH - blockTextH) / 2 + nameFontPx * 0.78)
+    );
+
   ctx.fillStyle = '#0f172a';
-  ctx.font = `700 ${Math.round(dpiSafe * 0.072)}px Inter, Arial, sans-serif`;
-  ctx.fillText(agentName || 'Listing Agent', agentBoxX + Math.round(dpiSafe * 0.08), textY);
-  textY += Math.round(dpiSafe * 0.1);
+  ctx.font = `700 ${nameFontPx}px Inter, Arial, sans-serif`;
+  ctx.fillText(detailLines[0], textX, textY);
+  textY += detailLineH;
   ctx.fillStyle = '#334155';
-  ctx.font = `${Math.round(dpiSafe * 0.064)}px Inter, Arial, sans-serif`;
+  ctx.font = `${detailFontPx}px Inter, Arial, sans-serif`;
   if (agentEmail) {
-    ctx.fillText(agentEmail, agentBoxX + Math.round(dpiSafe * 0.08), textY);
-    textY += Math.round(dpiSafe * 0.085);
+    const emailLine =
+      ctx.measureText(agentEmail).width > textMaxW
+        ? `${agentEmail.slice(0, Math.max(8, Math.floor(agentEmail.length * 0.82)))}…`
+        : agentEmail;
+    ctx.fillText(emailLine, textX, textY);
+    textY += detailLineH;
   }
   if (agentPhone) {
-    ctx.fillText(agentPhone, agentBoxX + Math.round(dpiSafe * 0.08), textY);
+    ctx.fillText(agentPhone, textX, textY);
+  }
+
+  if (logoDrawable?.source) {
+    const logoBoxPadX = Math.round(dpiSafe * 0.02);
+    const logoBoxPadY = Math.round(dpiSafe * 0.018);
+    const logoBoxX = agentBoxX + agentPad;
+    const logoBoxW = agentBoxW - agentPad * 2;
+    const logoBoxH = logoAreaH;
+    const logoBoxY = agentBoxY + agentBoxH - agentPad - logoBoxH;
+
+    ctx.fillStyle = '#ffffff';
+    roundRectPath(ctx, logoBoxX, logoBoxY, logoBoxW, logoBoxH, Math.round(dpiSafe * 0.022));
+    ctx.fill();
+    ctx.strokeStyle = '#e2e8f0';
+    ctx.lineWidth = Math.max(1, Math.round(dpiSafe / 280));
+    ctx.stroke();
+
+    const innerW = logoBoxW - logoBoxPadX * 2;
+    const innerH = logoBoxH - logoBoxPadY * 2;
+    const ratio = logoDrawable.height / logoDrawable.width;
+    let targetH = innerH;
+    let targetW = Math.round(targetH / ratio);
+    if (targetW > innerW) {
+      targetW = innerW;
+      targetH = Math.round(targetW * ratio);
+    }
+    const lx = logoBoxX + Math.round((logoBoxW - targetW) / 2);
+    const ly = logoBoxY + Math.round((logoBoxH - targetH) / 2);
+    ctx.drawImage(logoDrawable.source, lx, ly, targetW, targetH);
+    logoDrawable.release?.();
   }
 
   const pdf = new jsPDF({
@@ -1400,7 +1934,16 @@ export async function saveMapPdfWithFooter({
     unit: 'pt',
     format: [pageWIn * 72, pageHIn * 72],
   });
-  const finalData = canvas.toDataURL('image/jpeg', 0.92);
-  pdf.addImage(finalData, 'JPEG', 0, 0, pageWIn * 72, pageHIn * 72);
+  const finalData = canvas.toDataURL('image/png');
+  const pdfW = pageWIn * 72;
+  const pdfH = pageHIn * 72;
+  pdf.addImage(finalData, 'PNG', 0, 0, pdfW, pdfH);
+  if (communityViewLogoRect && typeof pdf.link === 'function') {
+    const ptScale = 72 / dpiSafe;
+    const { x, y, w, h } = communityViewLogoRect;
+    pdf.link(x * ptScale, y * ptScale, w * ptScale, h * ptScale, {
+      url: COMMUNITY_VIEW_WEBSITE_URL,
+    });
+  }
   pdf.save(`${safe}.pdf`);
 }

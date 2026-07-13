@@ -11,10 +11,17 @@ const {
   enrichNearbyTourFeatureCollection,
 } = require("./nearbyTourEnrichment");
 const {
+  validateReactivationTokenHandler,
+  reactivateAccountHandler,
+} = require("./reactivationTokens");
+const {
   readAmenityFromTourCache,
   mergeTourNearbyCachePayload,
   buildSingleAmenityCachePayload,
   normalizeTourNearbyCache,
+  normalizeTourSettings,
+  resolveTourSettingsFromMapData,
+  mapHasCuratedTourData,
 } = require("./tourNearbyCache");
 
 // Helper function to get amount for plan (in cents)
@@ -78,11 +85,82 @@ function formatCents(amountCents) {
   return `$${(amountCents / 100).toFixed(2)}`;
 }
 
-// 1) createCheckoutSession (Callable Function - v1)
-exports.createCheckoutSession = functions.https.onCall(async (data, context) => {
-  const { email, userId, plan, firstName, lastName } = data;
+const TRIAL_PERIOD_DAYS = 14;
 
-  // Validate inputs
+function subscriptionStatusFromPlan(plan) {
+  if (plan && plan.includes("plus")) return "plus";
+  if (plan && plan.includes("regular")) return "regular";
+  return "active";
+}
+
+async function getOrCreateStripeCustomer(userId, email, firstName, lastName) {
+  const userRef = admin.firestore().collection("users").doc(userId);
+  const userDoc = await userRef.get();
+  const userData = userDoc.exists ? userDoc.data() : {};
+
+  let customerId = userData.stripeCustomerId;
+  if (customerId) {
+    try {
+      await stripe.customers.retrieve(customerId);
+      return customerId;
+    } catch (err) {
+      console.warn("Stored stripeCustomerId invalid, creating new customer:", err.message);
+      customerId = null;
+    }
+  }
+
+  const existing = await stripe.customers.list({ email, limit: 1 });
+  if (existing.data.length > 0) {
+    customerId = existing.data[0].id;
+    await stripe.customers.update(customerId, {
+      metadata: { firebaseUserId: userId },
+    });
+  } else {
+    const customer = await stripe.customers.create({
+      email,
+      name: `${firstName || ""} ${lastName || ""}`.trim() || undefined,
+      metadata: { firebaseUserId: userId },
+    });
+    customerId = customer.id;
+  }
+
+  await userRef.set({ stripeCustomerId: customerId }, { merge: true });
+  return customerId;
+}
+
+async function cancelReplaceableSubscriptions(customerId) {
+  const subscriptions = await stripe.subscriptions.list({
+    customer: customerId,
+    status: "all",
+  });
+
+  for (const subscription of subscriptions.data) {
+    if (
+      subscription.status === "active" ||
+      subscription.status === "trialing" ||
+      subscription.status === "incomplete"
+    ) {
+      await stripe.subscriptions.cancel(subscription.id);
+      console.log(`Canceled subscription before trial start: ${subscription.id}`);
+    }
+  }
+}
+
+function estimatedTrialEndIso() {
+  return new Date(Date.now() + TRIAL_PERIOD_DAYS * 86400000).toISOString();
+}
+
+async function createTrialSetupHandler(data, context) {
+  if (!context.auth) {
+    throw new functions.https.HttpsError(
+      "unauthenticated",
+      "User must be authenticated to start a trial."
+    );
+  }
+
+  const userId = context.auth.uid;
+  const { email, plan, firstName, lastName } = data;
+
   if (!email || !plan) {
     throw new functions.https.HttpsError(
       "invalid-argument",
@@ -90,30 +168,70 @@ exports.createCheckoutSession = functions.https.onCall(async (data, context) => 
     );
   }
 
-  // Use the provided userId (should always be authenticated now)
-  if (!userId) {
+  if (!STRIPE_PRICE_IDS[plan]) {
     throw new functions.https.HttpsError(
-      "unauthenticated",
-      "User must be authenticated to create a checkout session."
+      "invalid-argument",
+      `Invalid plan: ${plan}`
     );
   }
-  
-  console.log("Creating checkout session for:", {
-    email,
-    userId: userId,
-    plan,
-    isAuthenticated: !!context.auth
-  });
 
-  // Map plan names to Stripe Price IDs (LIVE MODE)
-  const priceIds = {
-    "regular-monthly": "price_1SM94mLhg9Kp46ldLKLOY4nx", // $18/month ✅ LIVE
-    "regular-annual": "price_1SM9E8Lhg9Kp46ldnbZoN6Jr",   // $180/year ✅ LIVE
-    "plus-monthly": "price_1SM9WBLhg9Kp46ldz2SucHza",     // $24/month ✅ LIVE
-    "plus-annual": "price_1SM9WXLhg9Kp46ld9yajWJnn",       // $240/year ✅ LIVE
-  };
+  try {
+    const customerId = await getOrCreateStripeCustomer(
+      userId,
+      email,
+      firstName,
+      lastName
+    );
 
-  const priceId = priceIds[plan];
+    const setupIntent = await stripe.setupIntents.create({
+      customer: customerId,
+      usage: "off_session",
+      metadata: {
+        firebaseUserId: userId,
+        email,
+        firstName: firstName || "",
+        lastName: lastName || "",
+        plan,
+      },
+    });
+
+    if (!setupIntent.client_secret) {
+      throw new Error("Stripe did not return a client secret.");
+    }
+
+    return {
+      clientSecret: setupIntent.client_secret,
+      intentType: "setup",
+      setupIntentId: setupIntent.id,
+      trialDays: TRIAL_PERIOD_DAYS,
+      trialEnd: estimatedTrialEndIso(),
+      billingInterval: plan.endsWith("-annual") ? "year" : "month",
+    };
+  } catch (error) {
+    console.error("createTrialSetup error:", error);
+    throw new functions.https.HttpsError("unknown", error.message);
+  }
+}
+
+async function startTrialSubscriptionHandler(data, context) {
+  if (!context.auth) {
+    throw new functions.https.HttpsError(
+      "unauthenticated",
+      "User must be authenticated to start a trial."
+    );
+  }
+
+  const userId = context.auth.uid;
+  const { email, plan, firstName, lastName, setupIntentId } = data;
+
+  if (!email || !plan || !setupIntentId) {
+    throw new functions.https.HttpsError(
+      "invalid-argument",
+      "Missing email, plan, or setupIntentId."
+    );
+  }
+
+  const priceId = STRIPE_PRICE_IDS[plan];
   if (!priceId) {
     throw new functions.https.HttpsError(
       "invalid-argument",
@@ -122,52 +240,191 @@ exports.createCheckoutSession = functions.https.onCall(async (data, context) => 
   }
 
   try {
-    // Check if user already has a customer and active subscriptions
-    const userDoc = await admin.firestore().collection("users").doc(userId).get();
-    if (userDoc.exists) {
-      const userData = userDoc.data();
-      const customerId = userData.stripeCustomerId;
-      
-      if (customerId) {
-        // Get all active subscriptions for the customer
-        const subscriptions = await stripe.subscriptions.list({
-          customer: customerId,
-          status: "active",
-        });
-        
-        // Cancel all existing active subscriptions
-        if (subscriptions.data.length > 0) {
-          console.log(`Canceling ${subscriptions.data.length} existing subscriptions...`);
-          for (const subscription of subscriptions.data) {
-            await stripe.subscriptions.cancel(subscription.id);
-            console.log(`Canceled subscription: ${subscription.id}`);
-          }
-        }
-      }
+    const setupIntent = await stripe.setupIntents.retrieve(setupIntentId);
+
+    if (setupIntent.metadata?.firebaseUserId !== userId) {
+      throw new functions.https.HttpsError(
+        "permission-denied",
+        "Setup intent does not belong to this user."
+      );
     }
 
-    // Create a Payment Intent for embedded checkout
-    const paymentIntent = await stripe.paymentIntents.create({
-      amount: getAmountForPlan(plan), // Calculate amount in cents
-      currency: "usd",
-      metadata: {
-        firebaseUserId: userId,
-        email: email,
-        firstName: firstName || "",
-        lastName: lastName || "",
-        plan: plan,
-      },
-      setup_future_usage: "off_session",
+    if (setupIntent.metadata?.plan !== plan) {
+      throw new functions.https.HttpsError(
+        "invalid-argument",
+        "Plan does not match the saved card session."
+      );
+    }
+
+    if (setupIntent.status !== "succeeded") {
+      throw new functions.https.HttpsError(
+        "failed-precondition",
+        "Card setup is not complete yet."
+      );
+    }
+
+    const paymentMethodId =
+      typeof setupIntent.payment_method === "string"
+        ? setupIntent.payment_method
+        : setupIntent.payment_method?.id;
+
+    if (!paymentMethodId) {
+      throw new Error("No payment method on setup intent.");
+    }
+
+    const customerId =
+      typeof setupIntent.customer === "string"
+        ? setupIntent.customer
+        : setupIntent.customer?.id;
+
+    if (!customerId) {
+      throw new Error("Setup intent missing customer.");
+    }
+
+    await stripe.customers.update(customerId, {
+      invoice_settings: { default_payment_method: paymentMethodId },
     });
 
-    // Return the client secret for embedded checkout
-    console.log("Stripe client secret:", paymentIntent.client_secret);
-    console.log("Client secret type:", typeof paymentIntent.client_secret);
-    return { clientSecret: paymentIntent.client_secret };
+    await cancelReplaceableSubscriptions(customerId);
+
+    const subscription = await stripe.subscriptions.create({
+      customer: customerId,
+      items: [{ price: priceId }],
+      trial_period_days: TRIAL_PERIOD_DAYS,
+      default_payment_method: paymentMethodId,
+      metadata: {
+        firebaseUserId: userId,
+        email,
+        firstName: firstName || "",
+        lastName: lastName || "",
+        plan,
+      },
+    });
+
+    await syncUserDocFromSubscription(subscription);
+
+    return {
+      subscriptionStatus: subscriptionStatusFromPlan(plan),
+      trialEnd: subscription.trial_end
+        ? new Date(subscription.trial_end * 1000).toISOString()
+        : estimatedTrialEndIso(),
+      subscriptionId: subscription.id,
+    };
   } catch (error) {
-    console.error("Stripe Checkout Error:", error);
+    console.error("startTrialSubscription error:", error);
+    if (error instanceof functions.https.HttpsError) {
+      throw error;
+    }
     throw new functions.https.HttpsError("unknown", error.message);
   }
+}
+
+// Card step: customer + SetupIntent only (no subscription until card succeeds)
+exports.createTrialSetup = functions.https.onCall(createTrialSetupHandler);
+exports.createCheckoutSession = functions.https.onCall(createTrialSetupHandler);
+
+// After card saved: create trialing subscription for the plan chosen in the app
+exports.startTrialSubscription = functions.https.onCall(startTrialSubscriptionHandler);
+
+async function syncUserDocFromSubscription(subscription) {
+  const userId = subscription.metadata?.firebaseUserId;
+  if (!userId) {
+    console.warn("Subscription missing firebaseUserId metadata:", subscription.id);
+    return;
+  }
+
+  const plan = subscription.metadata?.plan || "";
+  const email = subscription.metadata?.email || "";
+  const firstName = subscription.metadata?.firstName || "";
+  const lastName = subscription.metadata?.lastName || "";
+  const stripeStatus = subscription.status;
+
+  let subscriptionStatus = null;
+  if (stripeStatus === "trialing" || stripeStatus === "active") {
+    subscriptionStatus = subscriptionStatusFromPlan(plan);
+  } else if (
+    stripeStatus === "canceled" ||
+    stripeStatus === "unpaid" ||
+    stripeStatus === "incomplete_expired"
+  ) {
+    subscriptionStatus = "canceled";
+  } else {
+    return;
+  }
+
+  const userRef = admin.firestore().collection("users").doc(userId);
+  const userDoc = await userRef.get();
+  const existingData = userDoc.exists ? userDoc.data() : {};
+
+  await userRef.set(
+    {
+      email: email || existingData.email || "",
+      firstName: firstName || existingData.firstName || "",
+      lastName: lastName || existingData.lastName || "",
+      subscriptionStatus,
+      stripeCustomerId:
+        typeof subscription.customer === "string"
+          ? subscription.customer
+          : subscription.customer?.id,
+      stripeSubscriptionId: subscription.id,
+      plan: plan || existingData.plan || null,
+      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      ...(existingData.createdAt
+        ? {}
+        : { createdAt: admin.firestore.FieldValue.serverTimestamp() }),
+    },
+    { merge: true }
+  );
+
+  console.log("Synced Firestore subscription for user:", {
+    userId,
+    plan,
+    subscriptionStatus,
+    stripeStatus,
+  });
+}
+
+exports.syncSubscriptionStatus = functions.https.onCall(async (data, context) => {
+  if (!context.auth) {
+    throw new functions.https.HttpsError(
+      "unauthenticated",
+      "User must be authenticated."
+    );
+  }
+
+  const userId = context.auth.uid;
+  const userDoc = await admin.firestore().collection("users").doc(userId).get();
+  if (!userDoc.exists) {
+    throw new functions.https.HttpsError("not-found", "User doc not found.");
+  }
+
+  const userData = userDoc.data();
+  const customerId = userData.stripeCustomerId;
+  if (!customerId) {
+    return { subscriptionStatus: userData.subscriptionStatus || "none" };
+  }
+
+  const subscriptions = await stripe.subscriptions.list({
+    customer: customerId,
+    status: "all",
+    limit: 10,
+  });
+
+  const current = subscriptions.data.find(
+    (sub) => sub.status === "trialing" || sub.status === "active"
+  );
+
+  if (current) {
+    await syncUserDocFromSubscription(current);
+    const plan = current.metadata?.plan || userData.plan || "";
+    return {
+      subscriptionStatus: subscriptionStatusFromPlan(plan),
+      plan,
+      stripeStatus: current.status,
+    };
+  }
+
+  return { subscriptionStatus: userData.subscriptionStatus || "none" };
 });
 
 // 2) stripeWebhook (HTTP Function - v1)
@@ -192,92 +449,12 @@ app.post("/", async (req, res) => {
     );
 
             switch (event.type) {
-              case "payment_intent.succeeded": {
-                const paymentIntent = event.data.object;
-                if (!paymentIntent.metadata?.firebaseUserId) {
-                  throw new Error("Missing Firebase User ID in payment intent metadata");
-                }
-                
-                const userId = paymentIntent.metadata.firebaseUserId;
-                const email = paymentIntent.metadata.email;
-                const firstName = paymentIntent.metadata.firstName || "";
-                const lastName = paymentIntent.metadata.lastName || "";
-                const plan = paymentIntent.metadata.plan || "unknown";
-              
-                // Create Stripe customer
-                const customer = await stripe.customers.create({
-                  email: email,
-                  name: `${firstName} ${lastName}`.trim(),
-                  metadata: {
-                    firebaseUserId: userId,
-                    plan: plan,
-                  },
-                });
-
-                // Create subscription
-                const priceIds = {
-                  "regular-monthly": "price_1SM94mLhg9Kp46ldLKLOY4nx",
-                  "regular-annual": "price_1SM9E8Lhg9Kp46ldnbZoN6Jr",
-                  "plus-monthly": "price_1SM9WBLhg9Kp46ldz2SucHza",
-                  "plus-annual": "price_1SM9WXLhg9Kp46ld9yajWJnn",
-                };
-
-                const priceId = priceIds[plan];
-                if (priceId) {
-                  await stripe.subscriptions.create({
-                    customer: customer.id,
-                    items: [{ price: priceId }],
-                    trial_period_days: 14,
-                    metadata: {
-                      firebaseUserId: userId,
-                      email: email,
-                      plan: plan,
-                    },
-                  });
-                }
-              
-                // Determine subscription tier based on plan
-                let subscriptionStatus;
-                if (plan.includes("plus")) {
-                  subscriptionStatus = "plus"; // Plus tier
-                } else if (plan.includes("regular")) {
-                  subscriptionStatus = "regular"; // Regular tier
-                } else {
-                  subscriptionStatus = "active"; // Legacy, treat as plus
-                }
-              
-                // Get existing user data to merge with subscription info
-                const userDoc = await admin.firestore().collection("users").doc(userId).get();
-                const existingData = userDoc.exists ? userDoc.data() : {};
-                
-                // Update user document in Firestore with complete subscription info
-                const userData = {
-                  email: email,
-                  firstName: firstName || existingData.firstName || "",
-                  lastName: lastName || existingData.lastName || "",
-                  subscriptionStatus: subscriptionStatus,
-                  stripeCustomerId: customer.id,
-                  plan: plan,
-                  updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-                  // Add createdAt if it doesn't exist
-                  ...(existingData.createdAt ? {} : { createdAt: admin.firestore.FieldValue.serverTimestamp() }),
-                };
-
-                await admin.firestore().collection("users").doc(userId).set(
-                  userData,
-                  { merge: true }
-                );
-              
-                console.log("Payment succeeded and subscription created:", {
-                  userId,
-                  email,
-                  plan,
-                  subscriptionStatus,
-                  customer: customer.id
-                });
-                break;
-              }
-      
+      case "customer.subscription.created":
+      case "customer.subscription.updated": {
+        const subscription = event.data.object;
+        await syncUserDocFromSubscription(subscription);
+        break;
+      }
 
       case "invoice.payment_failed": {
         const failedInvoice = event.data.object;
@@ -287,42 +464,12 @@ app.post("/", async (req, res) => {
 
       case "customer.subscription.deleted": {
         const subscription = event.data.object;
-        if (!subscription.metadata || !subscription.metadata.firebaseUserId) {
-          throw new Error("Missing Firebase User ID in subscription metadata");
-        }
-
-        const userId = subscription.metadata.firebaseUserId;
-        await admin.firestore().collection("users").doc(userId).set(
-          { subscriptionStatus: "canceled" },
-          { merge: true }
-        );
-        console.log("Subscription canceled for user:", userId);
+        await syncUserDocFromSubscription({
+          ...subscription,
+          status: "canceled",
+        });
         break;
       }
-
-      case "customer.subscription.updated": {
-        const subscription = event.data.object;
-        if (!subscription.metadata || !subscription.metadata.firebaseUserId) {
-          throw new Error("Missing Firebase User ID in subscription metadata");
-        }
-      
-        const userId = subscription.metadata.firebaseUserId;
-      
-        // Check the subscription's status
-        // (e.g., if subscription.status === "active", set Firestore to "active")
-        if (subscription.status === "active") {
-          await admin.firestore().collection("users").doc(userId).set(
-            { subscriptionStatus: "active" },
-            { merge: true }
-          );
-          console.log("Subscription re-activated for user:", userId);
-        } else {
-          // Optionally handle other states like "past_due", "incomplete", etc.
-          console.log("Subscription updated with status:", subscription.status);
-        }
-        break;
-      }
-      
 
       default:
         console.warn(`Unhandled event type: ${event.type}`);
@@ -490,6 +637,7 @@ exports.createSetupIntent = functions.https.onCall(async (data, context) => {
   try {
     const setupIntent = await stripe.setupIntents.create({
       customer: customerId,
+      usage: "off_session",
       payment_method_types: ["card"],
       metadata: { firebaseUserId: userId },
     });
@@ -498,12 +646,219 @@ exports.createSetupIntent = functions.https.onCall(async (data, context) => {
       throw new Error("Stripe did not return a client secret.");
     }
 
-    return { clientSecret: setupIntent.client_secret };
+    return {
+      clientSecret: setupIntent.client_secret,
+      setupIntentId: setupIntent.id,
+    };
   } catch (err) {
     console.error("createSetupIntent error:", err);
     throw new functions.https.HttpsError("unknown", err.message);
   }
 });
+
+async function confirmPaymentMethodUpdateHandler(data, context) {
+  if (!context.auth) {
+    throw new functions.https.HttpsError(
+      "unauthenticated",
+      "User must be authenticated."
+    );
+  }
+
+  const userId = context.auth.uid;
+  const { setupIntentId } = data;
+
+  if (!setupIntentId) {
+    throw new functions.https.HttpsError(
+      "invalid-argument",
+      "Missing setupIntentId."
+    );
+  }
+
+  try {
+    const setupIntent = await stripe.setupIntents.retrieve(setupIntentId);
+
+    if (setupIntent.metadata?.firebaseUserId !== userId) {
+      throw new functions.https.HttpsError(
+        "permission-denied",
+        "Payment session does not belong to this user."
+      );
+    }
+
+    if (setupIntent.status !== "succeeded") {
+      throw new functions.https.HttpsError(
+        "failed-precondition",
+        "Card setup is not complete yet."
+      );
+    }
+
+    const paymentMethodId =
+      typeof setupIntent.payment_method === "string"
+        ? setupIntent.payment_method
+        : setupIntent.payment_method?.id;
+
+    if (!paymentMethodId) {
+      throw new Error("No payment method on setup intent.");
+    }
+
+    const customerId =
+      typeof setupIntent.customer === "string"
+        ? setupIntent.customer
+        : setupIntent.customer?.id;
+
+    if (!customerId) {
+      throw new Error("Setup intent missing customer.");
+    }
+
+    await stripe.customers.update(customerId, {
+      invoice_settings: { default_payment_method: paymentMethodId },
+    });
+
+    const subscriptions = await stripe.subscriptions.list({
+      customer: customerId,
+      status: "all",
+      limit: 10,
+    });
+
+    const current = subscriptions.data.find(
+      (sub) => sub.status === "active" || sub.status === "trialing"
+    );
+
+    if (current) {
+      await stripe.subscriptions.update(current.id, {
+        default_payment_method: paymentMethodId,
+      });
+    }
+
+    const paymentMethod = await stripe.paymentMethods.retrieve(paymentMethodId);
+
+    return {
+      success: true,
+      paymentMethod: paymentMethod.card
+        ? {
+            brand: paymentMethod.card.brand,
+            last4: paymentMethod.card.last4,
+            expMonth: paymentMethod.card.exp_month,
+            expYear: paymentMethod.card.exp_year,
+          }
+        : null,
+    };
+  } catch (error) {
+    console.error("confirmPaymentMethodUpdate error:", error);
+    if (error instanceof functions.https.HttpsError) {
+      throw error;
+    }
+    throw new functions.https.HttpsError("unknown", error.message);
+  }
+}
+
+exports.confirmPaymentMethodUpdate = functions.https.onCall(
+  confirmPaymentMethodUpdateHandler
+);
+
+async function changeSubscriptionPlanHandler(data, context) {
+  if (!context.auth) {
+    throw new functions.https.HttpsError(
+      "unauthenticated",
+      "User must be authenticated."
+    );
+  }
+
+  const userId = context.auth.uid;
+  const { plan } = data;
+
+  if (!plan || !STRIPE_PRICE_IDS[plan]) {
+    throw new functions.https.HttpsError(
+      "invalid-argument",
+      `Invalid plan: ${plan}`
+    );
+  }
+
+  const userDoc = await admin.firestore().collection("users").doc(userId).get();
+  if (!userDoc.exists) {
+    throw new functions.https.HttpsError("not-found", "User doc not found.");
+  }
+
+  const userData = userDoc.data();
+  const customerId = userData.stripeCustomerId;
+  if (!customerId) {
+    throw new functions.https.HttpsError(
+      "failed-precondition",
+      "No billing profile found."
+    );
+  }
+
+  try {
+    const subscriptions = await stripe.subscriptions.list({
+      customer: customerId,
+      status: "all",
+      limit: 10,
+    });
+
+    const current = subscriptions.data.find(
+      (sub) => sub.status === "active" || sub.status === "trialing"
+    );
+
+    if (!current) {
+      throw new functions.https.HttpsError(
+        "failed-precondition",
+        "No active subscription to update."
+      );
+    }
+
+    const newPriceId = STRIPE_PRICE_IDS[plan];
+    const subscriptionItem = current.items?.data?.[0];
+    if (!subscriptionItem) {
+      throw new Error("Subscription has no items.");
+    }
+
+    if (subscriptionItem.price?.id === newPriceId) {
+      return {
+        plan,
+        subscriptionStatus: subscriptionStatusFromPlan(plan),
+        unchanged: true,
+      };
+    }
+
+    const updated = await stripe.subscriptions.update(current.id, {
+      items: [{ id: subscriptionItem.id, price: newPriceId }],
+      proration_behavior: "create_prorations",
+      metadata: {
+        ...current.metadata,
+        firebaseUserId: userId,
+        plan,
+        email: current.metadata?.email || userData.email || "",
+        firstName: current.metadata?.firstName || userData.firstName || "",
+        lastName: current.metadata?.lastName || userData.lastName || "",
+      },
+    });
+
+    await syncUserDocFromSubscription(updated);
+
+    return {
+      plan,
+      subscriptionStatus: subscriptionStatusFromPlan(plan),
+      stripeStatus: updated.status,
+    };
+  } catch (error) {
+    console.error("changeSubscriptionPlan error:", error);
+    if (error instanceof functions.https.HttpsError) {
+      throw error;
+    }
+    throw new functions.https.HttpsError("unknown", error.message);
+  }
+}
+
+exports.changeSubscriptionPlan = functions.https.onCall(
+  changeSubscriptionPlanHandler
+);
+
+exports.validateReactivationToken = functions.https.onCall(async (data) =>
+  validateReactivationTokenHandler(data, stripe)
+);
+
+exports.reactivateAccount = functions.https.onCall(async (data) =>
+  reactivateAccountHandler(data, stripe)
+);
 
 exports.createPortalSession = functions.https.onCall(async (data, context) => {
   // Ensure user is logged in
@@ -761,6 +1116,72 @@ function listingAgentResponseFields(listingAgent) {
   };
 }
 
+function storagePathFromDownloadUrl(url) {
+  if (!url || typeof url !== "string") return null;
+  try {
+    const match = url.match(/\/o\/([^?]+)/);
+    if (!match) return null;
+    return decodeURIComponent(match[1]);
+  } catch (_) {
+    return null;
+  }
+}
+
+/** Download profile photo/logo bytes from Storage (server-side, no browser CORS). */
+async function downloadProfileBrandingFile(userId, kind, downloadUrl) {
+  const bucket = admin.storage().bucket();
+  const stem = kind === "photo" ? "photo" : "firm-logo";
+  const extensions = ["png", "jpg", "jpeg", "webp"];
+  const paths = [];
+  const parsed = storagePathFromDownloadUrl(downloadUrl);
+  if (parsed) paths.push(parsed);
+  for (const ext of extensions) {
+    const candidate = `users/${userId}/profile/${stem}.${ext}`;
+    if (!paths.includes(candidate)) paths.push(candidate);
+  }
+
+  for (const path of paths) {
+    try {
+      const file = bucket.file(path);
+      const [exists] = await file.exists();
+      if (!exists) continue;
+      const [buffer] = await file.download();
+      if (!buffer || !buffer.length) continue;
+      const lower = path.toLowerCase();
+      let mimeType = "image/jpeg";
+      if (lower.endsWith(".png")) mimeType = "image/png";
+      else if (lower.endsWith(".webp")) mimeType = "image/webp";
+      return { base64: buffer.toString("base64"), mimeType, path };
+    } catch (err) {
+      console.warn("downloadProfileBrandingFile miss:", path, err.message || err);
+    }
+  }
+  return null;
+}
+
+/** Return profile photo/logo as base64 for PDF export (avoids browser Storage CORS). */
+exports.getProfileBrandingBytes = functions.https.onCall(async (data, context) => {
+  if (!context.auth) {
+    throw new functions.https.HttpsError(
+      "unauthenticated",
+      "Must be signed in to load profile branding."
+    );
+  }
+  const kind = String(data?.kind || "").trim();
+  if (kind !== "photo" && kind !== "firm-logo") {
+    throw new functions.https.HttpsError(
+      "invalid-argument",
+      "kind must be photo or firm-logo."
+    );
+  }
+  const downloadUrl = String(data?.downloadUrl || "").trim();
+  const result = await downloadProfileBrandingFile(context.auth.uid, kind, downloadUrl);
+  if (!result) {
+    throw new functions.https.HttpsError("not-found", "Profile image not found in Storage.");
+  }
+  return result;
+});
+
 // Save a new map
 exports.saveMap = functions.https.onCall(async (data, context) => {
   // Ensure user is logged in
@@ -882,6 +1303,30 @@ exports.updateMap = functions.https.onCall(async (data, context) => {
     if (mapData.printElements !== undefined) {
       updateData.printElements = Array.isArray(mapData.printElements) ? mapData.printElements : [];
     }
+    if (mapData.tourSettings !== undefined && mapData.tourSettings && typeof mapData.tourSettings === "object") {
+      updateData.tourSettings = normalizeTourSettings(mapData.tourSettings);
+    }
+    if (Array.isArray(mapData.tourSlidePlan) && mapData.tourSlidePlan.length) {
+      updateData.tourSlidePlan = mapData.tourSlidePlan
+        .map((s) => String(s || "").trim())
+        .filter(Boolean);
+    } else if (
+      updateData.tourSettings &&
+      Array.isArray(updateData.tourSettings.slidePlan) &&
+      updateData.tourSettings.slidePlan.length
+    ) {
+      updateData.tourSlidePlan = updateData.tourSettings.slidePlan;
+    }
+    const incomingTourCache = mapData.tourNearbyCache;
+    if (incomingTourCache !== undefined && incomingTourCache && typeof incomingTourCache === "object") {
+      const merged = mergeTourNearbyCachePayload(mapDoc.data().tourNearbyCache, incomingTourCache);
+      if (merged) {
+        updateData.tourNearbyCache = merged;
+        if (!updateData.tourSettings && merged.tourSettings) {
+          updateData.tourSettings = normalizeTourSettings(merged.tourSettings);
+        }
+      }
+    }
     if (mapData.isPublic !== undefined) {
       updateData.isPublic = mapData.isPublic;
       if (mapData.isPublic === true) {
@@ -898,9 +1343,13 @@ exports.updateMap = functions.https.onCall(async (data, context) => {
     if (mapData.isPublic !== undefined) indexPatch.isPublic = mapData.isPublic;
     await userMapIndexRef(userId, mapId).set(indexPatch, { merge: true });
 
-    console.log("Map updated:", { mapId, userId });
+    console.log("Map updated:", { mapId, userId, tourSlidePlan: updateData.tourSlidePlan || null });
 
-    return { success: true };
+    return {
+      success: true,
+      tourSlidePlan: updateData.tourSlidePlan || null,
+      tourSettings: updateData.tourSettings || null,
+    };
   } catch (error) {
     console.error("Error updating map:", error);
     if (error instanceof functions.https.HttpsError) {
@@ -1045,6 +1494,7 @@ async function fetchUserMapSummaries(userId) {
 function mapDetailFromDoc(doc) {
   const m = doc.data();
   const tourNearbyCache = normalizeTourNearbyCache(m.tourNearbyCache);
+  const tourSettings = resolveTourSettingsFromMapData(m);
   return {
     id: doc.id,
     title: m.title || "",
@@ -1057,7 +1507,9 @@ function mapDetailFromDoc(doc) {
     printElements: Array.isArray(m.printElements) ? m.printElements : [],
     isPublic: !!m.isPublic,
     shareToken: m.shareToken || null,
+    tourSlidePlan: Array.isArray(m.tourSlidePlan) ? m.tourSlidePlan : null,
     tourNearbyCache,
+    tourSettings,
     updatedAt: timestampToMillis(m.updatedAt),
     createdAt: timestampToMillis(m.createdAt),
   };
@@ -1163,6 +1615,7 @@ exports.getSharedMapByToken = functions.https.onCall(async (data) => {
 
     const m = found.data;
     const tourNearbyCache = normalizeTourNearbyCache(m.tourNearbyCache);
+    const tourSettings = resolveTourSettingsFromMapData(m);
     const liveAgent = await getOwnerListingAgent(m.userId);
     const listingAgent = mergeListingAgent(liveAgent, m.listingAgent);
     return {
@@ -1176,7 +1629,9 @@ exports.getSharedMapByToken = functions.https.onCall(async (data) => {
       printSettings: m.printSettings || { paperSize: "full", orientation: "full" },
       printElements: Array.isArray(m.printElements) ? m.printElements : [],
       shareToken: m.shareToken,
+      tourSlidePlan: Array.isArray(m.tourSlidePlan) ? m.tourSlidePlan : null,
       tourNearbyCache,
+      tourSettings,
       updatedAt: m.updatedAt && m.updatedAt.toMillis ? m.updatedAt.toMillis() : null,
       ...listingAgentResponseFields(listingAgent),
     };
@@ -1196,6 +1651,7 @@ exports.getSharedMapByToken = functions.https.onCall(async (data) => {
 exports.saveTourNearbyCache = functions.https.onCall(async (data) => {
   const token = data && data.shareToken;
   const incoming = data && data.tourNearbyCache;
+  const incomingTourSettings = data && data.tourSettings;
   if (!token || typeof token !== "string") {
     throw new functions.https.HttpsError("invalid-argument", "shareToken is required.");
   }
@@ -1214,17 +1670,38 @@ exports.saveTourNearbyCache = functions.https.onCall(async (data) => {
       throw new functions.https.HttpsError("invalid-argument", "tourNearbyCache payload is invalid.");
     }
 
-    await found.ref.update({
+    const updateData = {
       tourNearbyCache: merged,
       updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-    });
+    };
+    const settingsToWrite =
+      incomingTourSettings && typeof incomingTourSettings === "object"
+        ? normalizeTourSettings(incomingTourSettings)
+        : merged.tourSettings
+          ? normalizeTourSettings(merged.tourSettings)
+          : null;
+    if (settingsToWrite) {
+      updateData.tourSettings = settingsToWrite;
+      if (Array.isArray(settingsToWrite.slidePlan) && settingsToWrite.slidePlan.length) {
+        updateData.tourSlidePlan = settingsToWrite.slidePlan;
+      }
+    }
+
+    await found.ref.update(updateData);
 
     console.log("saveTourNearbyCache", {
       mapId: found.id,
       amenityKeys: Object.keys(merged.byAmenity || {}),
+      slidePlan: updateData.tourSettings ? updateData.tourSettings.slidePlan : null,
+      tourSettings: updateData.tourSettings ? updateData.tourSettings.enabledAmenityKeys : null,
     });
 
-    return { success: true, tourNearbyCache: merged };
+    return {
+      success: true,
+      tourNearbyCache: merged,
+      tourSettings: updateData.tourSettings || null,
+      tourSlidePlan: updateData.tourSlidePlan || null,
+    };
   } catch (error) {
     console.error("Error saveTourNearbyCache:", error);
     if (error instanceof functions.https.HttpsError) {
@@ -1259,7 +1736,8 @@ exports.deleteMap = functions.https.onCall(async (data, context) => {
     const mapDoc = await admin.firestore().collection("maps").doc(mapId).get();
     
     if (!mapDoc.exists) {
-      throw new functions.https.HttpsError("not-found", "Map not found.");
+      await userMapIndexRef(userId, mapId).delete().catch(() => {});
+      return { success: true };
     }
 
     if (mapDoc.data().userId !== userId) {
@@ -1297,16 +1775,16 @@ const {
   AMENITIES_WITH_LENIENT_FALLBACK,
   isAllowedGooglePlaceForAmenity,
 } = require("./nearbyAmenityFilters");
-const { fetchTourNearbyPlacesNew } = require("./placesApiNew");
+const { fetchTourNearbyPlacesNew, fetchTourGroceryPlacesNew } = require("./placesApiNew");
 
 /** Keep in sync with `src/utils/propertyTourSlides.js` / `tourNearbyRanking.js`. */
 const NEARBY_FETCH_RADIUS_METERS = 25000;
-const NEARBY_TOUR_DATA_VERSION = 26;
+const NEARBY_TOUR_DATA_VERSION = 28;
 
 /** Tour vicinity: Places API (New) `includedTypes` per amenity key. */
 const NEARBY_TYPES_BY_AMENITY = {
   parks_rec: ["park"],
-  grocery: ["supermarket", "grocery_store"],
+  grocery: ["supermarket", "grocery_store", "food_store"],
   schools: ["primary_school", "secondary_school", "school"],
   fitness: ["gym"],
   trailheads: ["hiking_area", "gym"],
@@ -1338,7 +1816,8 @@ function isRealAirportGooglePlace(place) {
  * Enable **Places API (New)** on the key in Google Cloud (not legacy Places API only).
  */
 function buildNearbyFeaturesFromGoogleResults(all, amenityKey, options = {}) {
-  const lenient = options.lenient === true;
+  const editorMode = options.editorMode === true;
+  const lenient = options.lenient === true || editorMode;
   const seen = new Set();
   const features = [];
   for (const r of all) {
@@ -1397,6 +1876,8 @@ exports.getNearbyGooglePlaces = functions.https.onCall(async (data) => {
     50000,
     Math.max(500, Number(data && data.radiusMeters) || NEARBY_FETCH_RADIUS_METERS)
   );
+  const forceRefresh = data && data.forceRefresh === true;
+  const editorMode = data && data.editorMode === true;
   const amenityKey = data && data.amenityKey != null ? String(data.amenityKey).trim() : "";
   const shareToken =
     data && data.shareToken != null ? String(data.shareToken).trim() : "";
@@ -1416,10 +1897,12 @@ exports.getNearbyGooglePlaces = functions.https.onCall(async (data) => {
     if (found) {
       mapRef = found.ref;
       mapData = found.data;
-      const cached = readAmenityFromTourCache(mapData, amenityKey, searchCenter);
-      if (cached) {
-        console.log("getNearbyGooglePlaces cache hit", { amenityKey, shareToken });
-        return cached;
+      if (!forceRefresh) {
+        const cached = readAmenityFromTourCache(mapData, amenityKey, searchCenter, fetchRadiusMeters);
+        if (cached && Array.isArray(cached.features) && cached.features.length > 0) {
+          console.log("getNearbyGooglePlaces cache hit", { amenityKey, shareToken });
+          return cached;
+        }
       }
     }
   }
@@ -1452,7 +1935,11 @@ exports.getNearbyGooglePlaces = functions.https.onCall(async (data) => {
 
   let all = [];
   try {
-    all = await fetchTourNearbyPlacesNew(lat, lng, fetchRadiusMeters, key, types);
+    if (amenityKey === "grocery") {
+      all = await fetchTourGroceryPlacesNew(lat, lng, fetchRadiusMeters, key);
+    } else {
+      all = await fetchTourNearbyPlacesNew(lat, lng, fetchRadiusMeters, key, types);
+    }
   } catch (placesErr) {
     console.error("getNearbyGooglePlaces Places API (New) error:", placesErr);
     throw new functions.https.HttpsError(
@@ -1461,9 +1948,9 @@ exports.getNearbyGooglePlaces = functions.https.onCall(async (data) => {
     );
   }
 
-  let features = buildNearbyFeaturesFromGoogleResults(all, amenityKey, { lenient: false });
+  let features = buildNearbyFeaturesFromGoogleResults(all, amenityKey, { editorMode });
   if (!features.length && all.length && AMENITIES_WITH_LENIENT_FALLBACK.has(amenityKey)) {
-    features = buildNearbyFeaturesFromGoogleResults(all, amenityKey, { lenient: true });
+    features = buildNearbyFeaturesFromGoogleResults(all, amenityKey, { lenient: true, editorMode });
   }
 
   if (!features.length && all.length && amenityKey === "parks_rec") {
@@ -1500,20 +1987,24 @@ exports.getNearbyGooglePlaces = functions.https.onCall(async (data) => {
   const out = enrichNearbyTourFeatureCollection(
     { lat, lng },
     { type: "FeatureCollection", features },
-    amenityKey
+    amenityKey,
+    { searchRadiusMeters: fetchRadiusMeters, editorMode }
   );
   console.log("getNearbyGooglePlaces result", {
     amenityKey,
     rawFromGoogle: all.length,
     featuresBuilt: features.length,
     featuresReturned: out.features?.length ?? 0,
+    fetchRadiusMeters,
+    forceRefresh,
+    editorMode,
     nearbyDataVersion: NEARBY_TOUR_DATA_VERSION,
   });
 
   const response = { ...out, nearbyDataVersion: NEARBY_TOUR_DATA_VERSION };
 
-  if (mapRef && shareToken) {
-    const payload = buildSingleAmenityCachePayload(searchCenter, amenityKey, response);
+  if (mapRef && shareToken && !editorMode && !mapHasCuratedTourData(mapData)) {
+    const payload = buildSingleAmenityCachePayload(searchCenter, amenityKey, response, fetchRadiusMeters);
     if (payload) {
       const merged = mergeTourNearbyCachePayload(mapData && mapData.tourNearbyCache, payload);
       if (merged) {
@@ -1536,3 +2027,5 @@ exports.getNearbyGooglePlaces = functions.https.onCall(async (data) => {
 const { regridApi } = require("./regridHandlers");
 exports.regridApi = regridApi;
 exports.regridTileProxy = require("./regridTileProxy").regridTileProxy;
+const { marketingUnsubscribe } = require("./marketingUnsubscribe");
+exports.marketingUnsubscribe = marketingUnsubscribe;

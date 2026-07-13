@@ -9,7 +9,8 @@ import './Map.css';
 import './print/Print.css';
 import { useNavigate, useLocation } from 'react-router-dom'; // ✅ Import useLocation
 import SidePanel from '../components/map/SidePanel';
-import Spinner from '../components/map/spinner'; // Import spinner
+import SharedPhotoFullscreen from '../components/map/SharedPhotoFullscreen';
+import MapLoadingOverlay from '../components/loading/MapLoadingOverlay';
 import ToolPanel from '../components/map/ToolPanel'; // Import ToolPanel
 import { featureCollection } from '@turf/turf';
 import {
@@ -43,9 +44,24 @@ import { svgMap } from '../components/map/printShapes/svgMap';
 import { getPointIconDefaultStyle } from './print/pointIconDefaultStyles';
 import { legends } from '../assets/legends';
 import { layerNameMappings } from '../components/map/layerMappings';
-import MobileSearch from '../components/map/MobileSearch';
 import MapReportBuilderBar from '../components/map/MapReportBuilderBar';
 import { isNativeApp } from '../utils/platformDetection';
+import {
+  clearUserLocationOverlay,
+  extractGeolocationCoords,
+  getPreciseUserPosition,
+  showUserLocationOverlay,
+} from '../utils/preciseGeolocation';
+import {
+  getSavedMapLocation,
+  getSavedRegionalFlyToOptions,
+  markLocationPermissionDenied,
+  resolveInitialMapView,
+  saveMapLocationFromGeolocation,
+  SAVED_LOCATION_ZOOM_NEAR,
+  shouldFlyToSavedLocationOnRouteChange,
+  computeRegionalZoom,
+} from '../utils/savedMapLocation';
 import { useTutorialWalkthrough } from '../contexts/TutorialWalkthroughContext';
 import { Geolocation } from '@capacitor/geolocation';
 import {
@@ -79,25 +95,31 @@ import {
   takePrintGalleryDragPayload,
 } from '../utils/printGalleryDragBuffer';
 import { getPhotoSrcListFromElement } from '../utils/mapPhotoStorage';
+import { ensureTourEditRadiusLayersOnTop } from '../utils/tourBuilderMapLayers';
 import {
+  ensureTourVicinityNearbyLayersOnTop,
   focusPrintElementBirdEye,
   isPropertyBoundaryPrintElement,
+  isPropertyTourVicinitySlideActive,
+  isTourVicinityMapLayerId,
   rankPrintElementsWithPhotos,
 } from '../utils/propertyTourSlides';
+import { navigateToMarketingHome } from '../utils/marketingNavigation';
 import { mapDebug } from '../utils/mapDebug';
+import { safeMapResize } from '../utils/safeMapResize';
 
 import {
   DEFAULT_BASEMAP_ID,
-  DEFAULT_MAP_VIEW,
   getBasemapIdFromSearch,
   normalizeBasemapId,
+  parseBasemapFromSearch,
   PERSISTENT_BASE_STYLE_ID,
   TUTORIAL_DEFAULT_VIEW,
-  TUTORIAL_PARCEL_PRACTICE_VIEW,
 } from './map/mapConstants';
 import {
   applyCompositeLabelStyleForBasemap,
   ESRI_WORLD_IMAGERY_LAYER_ID,
+  getFirstSymbolLayerId,
   getVectorLayerInsertBeforeId,
   hasVisibleManagedBasemapRaster,
   MANAGED_BASEMAP_RASTER_LAYER_IDS,
@@ -108,12 +130,18 @@ import {
   stackRasterBasemapAboveBackground,
   STREETS_OVERLAY_LAYER_ID,
   STREETS_OVERLAY_SOURCE_ID,
+  isTourImagery3DActive,
   verifyBasemapAppliedOnMap,
+  waitUntilTourImagery3DActive,
 } from './map/mapBasemapUtils';
 import {
   featureBelongsToMapLayer,
+  filterSelectionToVisibleLayers,
+  getAllMapLayerToggleIds,
   getHostedTileLayerUrl,
+  getMapLayerToggleIdForFeature,
   getQueryLayerIdsForTileLayer,
+  DISABLED_TILE_LAYERS,
   isRasterHostedTileLayer,
   pickClickedFeature,
   rasterTileLayerZoom,
@@ -134,16 +162,20 @@ import {
 import {
   addRegridParcelLayersFromTileJson,
   applyParcelVisualizationVisibility,
+  applyRegridParcelSelectionHighlightPaint,
   bringRegridParcelLayersBeforeSymbolLabels,
+  clearRegridParcelSelectionHighlight,
   CV_REGRID_RESTACK_EVENT,
-  getFirstSymbolLayerId,
   ensureRegridTileProxyUrl,
   fireRegridRestack,
   getCachedRegridTileJson,
   getRegridVectorSourceLayerId,
+  isRegridParcelSelectionFeature,
   layerStatusLiveRef,
   parcelShowRegridLiveRef,
   rebuildRegridParcelStackForDensity,
+  REGRID_PARCELS_SELECTION_FILL_ID,
+  REGRID_PARCELS_SELECTION_LINE_ID,
   regridStyleBasemapRef,
   reloadTileSources,
   removeRegridParcelStack,
@@ -152,6 +184,8 @@ import {
   scheduleDeferredTileRefresh,
   schedulePostBasemapRegridRestack,
   setCachedRegridTileJson,
+  setRegridParcelSelectionHighlight,
+  syncOwnershipTileLayer,
   syncRegridParcelLayersIntoMap,
 } from './map/regridParcelMapLayer';
 
@@ -235,6 +269,7 @@ const MapPage = () => {
     setCurrentBasemapId,
     activeBasemapIdRef,
     pendingPrintBasemapRestoreRef,
+    pendingCreateMapFromFeatureRef,
   } = useMapContext();
   const routerLocation = useLocation();
   const prevPathForShareRef = useRef(routerLocation.pathname);
@@ -248,32 +283,50 @@ const MapPage = () => {
 
   // --- 2. Local state & refs ---
 
-  /** Synced from SharedMapViewPage (`property-tour-slide` event) for orbit boundary-only overlay. */
+  /** Synced from SharedMapViewPage (`property-tour-slide` event) for tour print overlay filtering. */
   const [propertyTourSlideId, setPropertyTourSlideId] = useState(null);
-  const tourBoundaryOnlyPrint =
-    isClientShareMapRoute &&
-    (propertyTourSlideId === 'context' || propertyTourSlideId === 'vicinity');
+  const [propertyTourPrintFilterMode, setPropertyTourPrintFilterMode] = useState('all');
+  const [propertyTourPrintElementIds, setPropertyTourPrintElementIds] = useState(null);
+  const propertyTourSlideIdRef = useRef(null);
 
-  /** On shared tour slides, only show the property boundary print element (hide other overlays). */
+  /** On shared tour slides, filter which print elements render (all, whitelist, or boundary-only). */
   const shouldRenderPrintElementOnMap = useCallback(
     (element) => {
       if (!element || element.hiddenOnMap) return false;
-      if (!tourBoundaryOnlyPrint) return true;
-      return isPropertyBoundaryPrintElement(element);
+      if (propertyTourPrintFilterMode === 'boundary-only') {
+        return isPropertyBoundaryPrintElement(element);
+      }
+      if (propertyTourPrintFilterMode === 'whitelist' && Array.isArray(propertyTourPrintElementIds)) {
+        return propertyTourPrintElementIds.includes(String(element.id));
+      }
+      return true;
     },
-    [tourBoundaryOnlyPrint]
+    [propertyTourPrintFilterMode, propertyTourPrintElementIds]
   );
 
   useEffect(() => {
     const onTourSlide = (e) => {
-      setPropertyTourSlideId(e.detail?.slideId ?? null);
+      const id = e.detail?.slideId ?? null;
+      propertyTourSlideIdRef.current = id;
+      setPropertyTourSlideId(id);
+      setPropertyTourPrintFilterMode(e.detail?.printFilterMode || 'all');
+      setPropertyTourPrintElementIds(
+        Array.isArray(e.detail?.printElementIds) ? e.detail.printElementIds : null
+      );
     };
     window.addEventListener('property-tour-slide', onTourSlide);
     return () => {
       window.removeEventListener('property-tour-slide', onTourSlide);
+      propertyTourSlideIdRef.current = null;
       setPropertyTourSlideId(null);
+      setPropertyTourPrintFilterMode('all');
+      setPropertyTourPrintElementIds(null);
     };
   }, []);
+
+  useEffect(() => {
+    propertyTourSlideIdRef.current = propertyTourSlideId;
+  }, [propertyTourSlideId]);
 
   useEffect(() => {
     const path = routerLocation.pathname || '';
@@ -328,6 +381,10 @@ const MapPage = () => {
   useEffect(() => {
     isPrintingRef.current = isPrinting;
   }, [isPrinting]);
+  const propertyMapWizardActiveRef = useRef(propertyMapWizardActive);
+  useEffect(() => {
+    propertyMapWizardActiveRef.current = propertyMapWizardActive;
+  }, [propertyMapWizardActive]);
 
   useEffect(() => {
     if (!tourActive || tourMode !== 'map' || !tourStep) return;
@@ -342,40 +399,14 @@ const MapPage = () => {
       setActiveSidePanelTab('layers');
     }
   }, [tourActive, tourMode, tourStep]);
-  const tutorialParcelPracticeCenteredRef = useRef(false);
 
   useEffect(() => {
-    if (!tourActive || !tourStep) {
-      tutorialParcelPracticeCenteredRef.current = false;
-      return;
-    }
-    if (tourStep.id !== 'parcel-practice') {
-      tutorialParcelPracticeCenteredRef.current = false;
-      return;
-    }
-    if (tutorialParcelPracticeCenteredRef.current || !mapRef.current) return;
-
-    const map = mapRef.current;
-    const fly = () => {
-      if (tutorialParcelPracticeCenteredRef.current) return;
-      tutorialParcelPracticeCenteredRef.current = true;
-      try {
-        map.flyTo({
-          center: TUTORIAL_PARCEL_PRACTICE_VIEW.center,
-          zoom: TUTORIAL_PARCEL_PRACTICE_VIEW.zoom,
-          duration: 1300,
-          essential: true,
-        });
-      } catch (err) {
-      }
-    };
-
-    if (typeof map.isStyleLoaded === 'function' && map.isStyleLoaded()) {
-      fly();
-      return;
-    }
-    map.once('style.load', fly);
-  }, [tourActive, tourStep, mapRef]);
+    if (!tourActive || tourMode !== 'map' || tourStep?.id !== 'parcel-select') return;
+    const selectedCount = Array.isArray(selectedFeature) ? selectedFeature.length : 0;
+    if (selectedCount === 0) return;
+    setIsPanelOpen(true);
+    setActiveSidePanelTab('info');
+  }, [tourActive, tourMode, tourStep, selectedFeature]);
 
   const [overlayRenderVersion, setOverlayRenderVersion] = useState(0);
   const forceOverlaySyncUntilRef = useRef(0);
@@ -408,7 +439,6 @@ const MapPage = () => {
   /** True when the active print tool is a polyline variant or arrow. */
   const isPolylinePlacingTool = (t) => t && (t.startsWith('polyline_') || t === 'arrow');
   const overlayRenderRafRef = useRef(null);
-  const sharePhotoTouchStartXRef = useRef(null);
   /** Pending `sourcedata` listeners while waiting to add owner name labels — cleared on toggle-off. */
   const labelSourceWaitHandlersRef = useRef(new Map());
   const layerLabelsRef = useRef(layerLabels);
@@ -437,7 +467,7 @@ const MapPage = () => {
     wasPrintingRef.current = isPrinting;
   }, [isPrinting, activeSidePanelTab]);
 
-  /** Keep print “Parcels” toggle aligned with the Layers ownership switch (except during parcel wizard). */
+  /** Keep print “Parcels” toggle overlay flag aligned with ownership (except during parcel wizard). */
   useEffect(() => {
     if (!isPrinting || propertyMapWizardActive) return;
     setPrintParcelsOverlayVisible(Boolean(layerStatus.ownership));
@@ -523,8 +553,8 @@ const MapPage = () => {
       flushSync(() => {
         setOverlayRenderVersion((prev) => prev + 1);
       });
+      safeMapResize(mapRef.current);
       try {
-        mapRef.current.resize();
         if (typeof mapRef.current.triggerRepaint === 'function') {
           mapRef.current.triggerRepaint();
         }
@@ -540,13 +570,13 @@ const MapPage = () => {
       });
       queue(() => {
         if (!mapRef?.current) return;
-        mapRef.current.resize();
+        safeMapResize(mapRef.current);
         mapRef.current.triggerRepaint?.();
         setOverlayRenderVersion((prev) => prev + 1);
       }, 80);
       queue(() => {
         if (!mapRef?.current) return;
-        mapRef.current.resize();
+        safeMapResize(mapRef.current);
         mapRef.current.triggerRepaint?.();
         setOverlayRenderVersion((prev) => prev + 1);
       }, 240);
@@ -804,6 +834,24 @@ const MapPage = () => {
     setActivePrintTool('select');
     setActiveSidePanelTab('print');
   };
+
+  const pendingCreateMapHandledRef = useRef(false);
+
+  useEffect(() => {
+    if (!isPrinting) {
+      pendingCreateMapHandledRef.current = false;
+      return undefined;
+    }
+    if (pendingCreateMapHandledRef.current) return undefined;
+    const pending = pendingCreateMapFromFeatureRef?.current;
+    if (!pending) return undefined;
+
+    pendingCreateMapHandledRef.current = true;
+    pendingCreateMapFromFeatureRef.current = null;
+    void handleCreateBoundaryFromRegridParcel(pending);
+
+    return undefined;
+  }, [isPrinting, pendingCreateMapFromFeatureRef]);
 
   /** Feature-geometry anchor for map labels (WGS84), independent of current zoom. */
   const getElementAnchorLngLat = (element) => {
@@ -1178,13 +1226,20 @@ const MapPage = () => {
   const layerStatusRef = useRef(layerStatus);
   layerStatusRef.current = layerStatus;
   layerStatusLiveRef.current = layerStatus;
+  /** Wizard shows Regrid with ownership off in layerStatus — still allow parcel highlight/selection. */
+  const resolveLayerStatusForSelection = (status) => {
+    const base = status ?? layerStatusRef.current ?? {};
+    if (propertyMapWizardActiveRef.current) {
+      return { ...base, ownership: true };
+    }
+    return base;
+  };
   parcelShowRegridLiveRef.current = Boolean(parcelMapVisibility.showRegrid);
   /**
    * Regrid restacks move layers relative to basemap rasters — repaired after ownership sync
    * (hosted layers use `getVectorLayerInsertBeforeId` inside `updateLayers` instead).
    */
   const maintainBasemapStackRef = useRef(() => {});
-  const syncOwnershipLayerStackRef = useRef(() => {});
   const applyLabelLayersRef = useRef(() => {});
   const hideLabelLayerSafeRef = useRef(() => {});
 
@@ -1210,34 +1265,63 @@ const MapPage = () => {
     };
   }, []);
 
-  /** Rebuild parcel MVT when map center crosses sparse ↔ dense geofences (minzoom 10 vs 13). */
+  /** Rebuild parcel MVT when map center crosses sparse ↔ dense geofences (minzoom 11 vs 13). */
   useEffect(() => {
     if (!mapIsReady || !mapRef?.current) return undefined;
     const map = mapRef.current;
     let debounceId;
-    const onMoveEnd = () => {
+    const onViewSettled = () => {
       if (!parcelMapVisibilityRef.current?.showRegrid) return;
       window.clearTimeout(debounceId);
       debounceId = window.setTimeout(() => {
-        const m = mapRef.current;
-        if (!m?.isStyleLoaded?.()) return;
-        syncOwnershipLayerStackRef.current(m);
+        enrichSelectionFromRenderedOwnershipTilesRef.current();
         reapplySelectionHighlightIfNeededRef.current();
       }, 350);
     };
-    map.on('moveend', onMoveEnd);
+    map.on('moveend', onViewSettled);
+    map.on('zoomend', onViewSettled);
     return () => {
       window.clearTimeout(debounceId);
       try {
-        map.off('moveend', onMoveEnd);
+        map.off('moveend', onViewSettled);
+        map.off('zoomend', onViewSettled);
       } catch (_) {
         /* ignore */
       }
     };
   }, [mapIsReady, regridTileJsonVersion]);
 
+  /**
+   * Mobile emulation / rotation changes layout without remounting the map — resize + restack
+   * Regrid MVT (ownership lines) so tiles repaint and outlines stay above data fills.
+   */
+  useEffect(() => {
+    if (!mapIsReady || !mapRef?.current) return undefined;
+    let debounceId;
+    const handleViewportChange = () => {
+      const nextMobile = window.innerWidth <= 768;
+      setIsMobileViewport((prev) => (prev === nextMobile ? prev : nextMobile));
+      window.clearTimeout(debounceId);
+      debounceId = window.setTimeout(() => {
+        const map = mapRef.current;
+        if (!map?.isStyleLoaded?.()) return;
+        safeMapResize(map);
+        if (!parcelMapVisibilityRef.current?.showRegrid) return;
+        syncOwnershipTileLayer(map, parcelMapVisibilityRef.current);
+        bringRegridParcelLayersBeforeSymbolLabels(map);
+        fireRegridRestack(map);
+        repaintRegridParcelsAfterShow(map);
+      }, 120);
+    };
+    window.addEventListener('resize', handleViewportChange);
+    return () => {
+      window.clearTimeout(debounceId);
+      window.removeEventListener('resize', handleViewportChange);
+    };
+  }, [mapIsReady, mapRef]);
+
   const navigate = useNavigate(); // Define navigate here
-  const { subscriptionStatus, role, highlightSettings } = useUser(); // or subscriptionStatus & user
+  const { subscriptionStatus, role, highlightSettings, user } = useUser(); // or subscriptionStatus & user
   
   // 🔍 DEBUG: Monitor highlightSettings changes
   useEffect(() => {
@@ -1248,6 +1332,8 @@ const MapPage = () => {
   
   const [topLayer, setTopLayer] = useState(null);
   const [isMapLoading, setIsMapLoading] = useState(true); // Map loading state
+  const [isLocatingUser, setIsLocatingUser] = useState(false);
+  const prevPathForSavedLocationRef = useRef(null);
   const highlightLayerId = 'highlight-layer'; // legacy dynamic ids — cleaned up on remove
   const SELECTION_HIGHLIGHT_SOURCE_ID = 'cv-map-selection-highlight';
   const SELECTION_HIGHLIGHT_FILL_ID = 'cv-map-selection-highlight-fill';
@@ -1256,6 +1342,9 @@ const MapPage = () => {
   const highlightRenderTimeoutRef = useRef(null);
   /** GeoJSON snapshot of the last successful highlight — survives pan/zoom re-query gaps. */
   const selectionHighlightSnapshotRef = useRef(null);
+  const selectionHighlightSettleGenRef = useRef(0);
+  const deferSelectionHighlightUntilSettledRef = useRef(() => {});
+  const repaintSelectionHighlightRef = useRef(() => {});
   const selectedFeatureRef = useRef([]);
   selectedFeatureRef.current = selectedFeature;
   const highlightFeatureRef = useRef(() => {});
@@ -1270,15 +1359,75 @@ const MapPage = () => {
   // 🔍 Store current highlightSettings in a ref to access from callbacks
   const highlightSettingsRef = useRef(highlightSettings);
   const [basemap, setBasemap] = useState(DEFAULT_BASEMAP_ID);
-  const [initialHighlightIds, setInitialHighlightIds] = useState(null);
+  const readHighlightIdsFromLocation = useCallback((search) => {
+    const params = queryString.parse(search || window.location.search || '');
+    if (!params.highlights) return null;
+    return String(params.highlights)
+      .split(',')
+      .map((id) => id.trim())
+      .filter(Boolean);
+  }, []);
+
+  const buildHighlightIdSet = useCallback((ids) => {
+    const idSet = new Set();
+    (ids || []).forEach((raw) => {
+      const id = String(raw).trim();
+      if (!id) return;
+      idSet.add(id);
+      idSet.add(id.replace(/^regrid:/i, ''));
+    });
+    return idSet;
+  }, []);
+
+  const LL_UUID_RE =
+    /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+  const DEFAULT_HIGHLIGHT_SETTINGS = {
+    fillColor: 'rgba(255, 0, 0, 0.25)',
+    fillOpacity: 1,
+    fillOutlineColor: '#FF0000',
+    lineColor: '#FF0000',
+    lineWidth: 3,
+  };
+
+  const highlightSettingsReadyForPaint = useCallback(() => {
+    if (highlightSettingsRef.current || highlightSettings) return true;
+    return !user;
+  }, [highlightSettings, user]);
+
+  const resolveHighlightSettingsForPaint = useCallback(() => {
+    return highlightSettingsRef.current || highlightSettings || DEFAULT_HIGHLIGHT_SETTINGS;
+  }, [highlightSettings]);
+
+  const isRegridHighlightId = useCallback((id) => {
+    const bare = String(id || '').replace(/^regrid:/i, '');
+    return LL_UUID_RE.test(bare);
+  }, []);
+
+  const pendingHighlightsAreRegridOnly = useCallback(
+    (ids) => (ids || []).length > 0 && ids.every((id) => isRegridHighlightId(id)),
+    [isRegridHighlightId]
+  );
+
+  const clearPendingHighlightRestore = useCallback(() => {
+    pendingHighlightIdsRef.current = null;
+    setInitialHighlightIds(null);
+  }, []);
+
+  const canRestoreRegridHighlights = useCallback(() => {
+    return Boolean(layerStatus.ownership) || propertyMapWizardActive;
+  }, [layerStatus.ownership, propertyMapWizardActive]);
+
+  const [initialHighlightIds, setInitialHighlightIds] = useState(() =>
+    readHighlightIdsFromLocation(window.location.search)
+  );
+  const pendingHighlightIdsRef = useRef(readHighlightIdsFromLocation(window.location.search));
+  const restoreHighlightsFromUrlRef = useRef(() => false);
+  const upsertSelectionHighlightRef = useRef(() => {});
   /** Last basemap fully applied on the map (layers + ref), not just requested in context. */
   const lastAppliedBasemapRef = useRef(null);
-  /** While applying a saved basemap, block URL updates that would write stale outdoors-v12. */
+  /** While applying a saved basemap, suppress URL writes that would write stale outdoors-v12. */
   const restoringPrintBasemapRef = useRef(false);
-  /** True while handleSetImageryBasemap / style swap is in flight (prevents duplicate apply effect). */
-  const basemapApplyInProgressRef = useRef(false);
-  /** Bumped when a new basemap is chosen so stale async imagery callbacks are ignored. */
-  const basemapApplyGenerationRef = useRef(0);
   /** Latest ensureImagery impl (map init effect mounts before function defs — use ref). */
   const ensureImageryBasemapRef = useRef(() => {});
   /** Lightweight overlay fix — no setStyle (avoids flipping to Discover on zoom/layer churn). */
@@ -1293,12 +1442,17 @@ const MapPage = () => {
   const prevUrlBasemapRef = useRef(null);
   /** One-shot guard: apply `?basemap=` from URL after mapIsReady (same path as saved print maps). */
   const initialUrlBasemapAppliedRef = useRef(false);
-  /** While restoring a saved print map, defer layerStatus→updateLayers until basemap finishes. */
-  const basemapRestoreBlockingLayersRef = useRef(false);
+  const flushPendingLayerSyncRef = useRef(() => {});
+  const runUpdateLayersRef = useRef(() => {});
+  const restackDataAndParcelsOnceRef = useRef(() => {});
   /** Writes lat/lng/zoom/basemap to the address bar (assigned after helpers exist). */
   const syncMapUrlRef = useRef(() => {});
   /** Immediate `?basemap=` write on picker change (must not wait for pan or apply verify). */
   const writeBasemapToUrlRef = useRef(() => {});
+  const mapUrlSyncThrottleRef = useRef(0);
+  /** Retry overlay repair until the live map stack matches the URL basemap (no layers needed). */
+  const scheduleBasemapUntilVerifiedRef = useRef(() => {});
+  const basemapVerifyRetryTimerRef = useRef(null);
 
   useEffect(() => {
     is3DEnabledRef.current = is3DEnabled;
@@ -1514,15 +1668,6 @@ const MapPage = () => {
     };
   }, [mapIsReady, isPrinting, pickPrintElementAtScreen]);
 
-  useEffect(() => {
-    if (!sharePhotoPopupFullscreen) return undefined;
-    const prevOverflow = document.body.style.overflow;
-    document.body.style.overflow = 'hidden';
-    return () => {
-      document.body.style.overflow = prevOverflow;
-    };
-  }, [sharePhotoPopupFullscreen]);
-
   /** Share viewer: arrow keys move between places or photos (non-tour). In property tour, ← → are reserved for tour steps. */
   useEffect(() => {
     if (!shareViewerReadOnly || !sharePhotoPopupElementId) return undefined;
@@ -1622,48 +1767,66 @@ const MapPage = () => {
   // --- 6. Map initialization ---
 
   useEffect(() => {
+    if (!mapboxgl.accessToken) {
+      console.error(
+        'Mapbox access token missing. Set REACT_APP_MAPBOX_ACCESS_TOKEN in .env.production (or your shell) before running npm run build / npm run deploy.'
+      );
+      return undefined;
+    }
+
     // Use live browser URL — same source of truth as refresh / paste-into-new-tab.
     const params = queryString.parse(window.location.search);
-    const effectiveBasemap = getBasemapIdFromSearch(window.location.search);
-    mapDebug.trace('map init', { basemap: effectiveBasemap, params });
-    urlBasemapIdRef.current = effectiveBasemap;
+    const initView = resolveInitialMapView(window.location.search, window.location.pathname);
+    const { id: effectiveBasemap, enable3D: urlEnable3D } = parseBasemapFromSearch(
+      window.location.search
+    );
+    const publishedBasemap =
+      urlEnable3D && effectiveBasemap === 'imagery' ? 'imagery-3d' : effectiveBasemap;
+    mapDebug.trace('map init', { basemap: publishedBasemap, enable3D: urlEnable3D, params });
+    urlBasemapIdRef.current = publishedBasemap;
     initialBasemapRestoreCompleteRef.current = false;
     needsInitialBasemapApplyRef.current = true;
     initialUrlBasemapAppliedRef.current = false;
-    publishBasemapSelection(effectiveBasemap, { skipUrlWrite: true });
+    if (urlEnable3D) {
+      is3DEnabledRef.current = true;
+      setIs3DEnabled(true);
+    }
+    publishBasemapSelection(publishedBasemap, { skipUrlWrite: true });
     // All four supported basemaps share one Mapbox style; overlays are applied after load.
     const initialStyle = PERSISTENT_BASE_STYLE_ID;
     // Initialize the Mapbox map
     currentStyleUrlRef.current = `mapbox://styles/mapbox/${initialStyle}`;
-    mapRef.current = new mapboxgl.Map({
-      container: 'map',
-      style: `mapbox://styles/mapbox/${initialStyle}`,
-      center:
-        params.lat && params.lng
-          ? [parseFloat(params.lng), parseFloat(params.lat)]
-          : DEFAULT_MAP_VIEW.center,
-      zoom: params.zoom ? parseFloat(params.zoom) : DEFAULT_MAP_VIEW.zoom,
-      minZoom: 6,
-      maxZoom: 19,
-      maxPitch: 85,
-      preserveDrawingBuffer: true,
-      transformRequest: (url, resourceType) => {
-        try {
-          const urlStr = typeof url === 'string' ? url : (url?.url || url?.toString() || String(url));
-          if (resourceType === 'Tile' && urlStr && urlStr.includes('tiles.regrid.com')) {
-            const proxyUrl = ensureRegridTileProxyUrl(urlStr);
-            if (proxyUrl !== urlStr) {
-              return { url: proxyUrl };
+    try {
+      mapRef.current = new mapboxgl.Map({
+        container: 'map',
+        style: `mapbox://styles/mapbox/${initialStyle}`,
+        center: initView.center,
+        zoom: initView.zoom,
+        minZoom: 3,
+        maxZoom: 19,
+        maxPitch: 85,
+        preserveDrawingBuffer: true,
+        transformRequest: (url, resourceType) => {
+          try {
+            const urlStr = typeof url === 'string' ? url : (url?.url || url?.toString() || String(url));
+            if (resourceType === 'Tile' && urlStr && urlStr.includes('tiles.regrid.com')) {
+              const proxyUrl = ensureRegridTileProxyUrl(urlStr);
+              if (proxyUrl !== urlStr) {
+                return { url: proxyUrl };
+              }
             }
+            return { url: urlStr };
+          } catch (error) {
+            console.error('Error in transformRequest:', error);
+            const urlStr = typeof url === 'string' ? url : (url?.url || url?.toString() || String(url));
+            return { url: urlStr };
           }
-          return { url: urlStr };
-        } catch (error) {
-          console.error('Error in transformRequest:', error);
-          const urlStr = typeof url === 'string' ? url : (url?.url || url?.toString() || String(url));
-          return { url: urlStr };
-        }
-      }
-    });
+        },
+      });
+    } catch (error) {
+      console.error('Failed to initialize Mapbox map:', error);
+      return undefined;
+    }
   
     mapRef.current.on('load', () => {
   
@@ -1685,24 +1848,84 @@ const MapPage = () => {
       
       window.mapRef = mapRef;
       window.updateExistingHighlights = updateExistingHighlights;
-      // ✅ Step 2: Ensure Layers Are Loaded Before Querying Features
-      const params = queryString.parse(routerLocation.search);
-      if (params.highlights) {
-        setInitialHighlightIds(params.highlights.split(","));
-      }
     });
   
     return () => {
       if (mapRef.current) {
-        mapRef.current.remove();
+        try {
+          mapRef.current.remove();
+        } catch (_) {
+          /* ignore */
+        }
+        mapRef.current = null;
       }
     };
   }, []);
 
-// Map is always full screen - no print cropping
-const containerStyle = { width: '100vw', height: '100vh', position: 'absolute' };
-const computedWidth = '100vw';
-const computedHeight = '100vh';
+  const [isMobileViewport, setIsMobileViewport] = useState(
+    () => typeof window !== 'undefined' && window.innerWidth <= 768
+  );
+  const [isBasemapSelectorOpen, setIsBasemapSelectorOpen] = useState(false);
+
+  /** Dismiss mobile basemap sheet when the user pans/zooms the map (map stays interactive). */
+  useEffect(() => {
+    if (!isMobileViewport || !isBasemapSelectorOpen || !mapIsReady || !mapRef.current) {
+      return undefined;
+    }
+    const map = mapRef.current;
+    const closeBasemapSelector = () => setIsBasemapSelectorOpen(false);
+
+    map.on('dragstart', closeBasemapSelector);
+    map.on('zoomstart', closeBasemapSelector);
+    map.on('rotatestart', closeBasemapSelector);
+    map.on('pitchstart', closeBasemapSelector);
+    map.on('click', closeBasemapSelector);
+
+    return () => {
+      map.off('dragstart', closeBasemapSelector);
+      map.off('zoomstart', closeBasemapSelector);
+      map.off('rotatestart', closeBasemapSelector);
+      map.off('pitchstart', closeBasemapSelector);
+      map.off('click', closeBasemapSelector);
+    };
+  }, [isBasemapSelectorOpen, isMobileViewport, mapIsReady]);
+
+  /** Reopen on saved regional view when entering /map from marketing etc. (not Search/Print). */
+  useEffect(() => {
+    if (!mapIsReady || !mapRef.current) return;
+
+    const pathname = routerLocation.pathname;
+    const prev = prevPathForSavedLocationRef.current;
+    prevPathForSavedLocationRef.current = pathname;
+
+    if (prev === null) return;
+    if (
+      !shouldFlyToSavedLocationOnRouteChange(
+        prev,
+        pathname,
+        routerLocation.search
+      )
+    ) {
+      return;
+    }
+
+    const flyOpts = getSavedRegionalFlyToOptions(getSavedMapLocation());
+    if (!flyOpts) return;
+
+    mapRef.current.flyTo(flyOpts);
+  }, [mapIsReady, routerLocation.pathname, routerLocation.search]);
+
+  // Map is always full screen - no print cropping
+  const containerStyle = useMemo(
+    () => ({
+      width: '100vw',
+      height: isMobileViewport ? '100dvh' : '100vh',
+      position: 'absolute',
+    }),
+    [isMobileViewport]
+  );
+  const computedWidth = '100vw';
+  const computedHeight = isMobileViewport ? '100dvh' : '100vh';
 
   useEffect(() => {
   }, [notes]);
@@ -1715,8 +1938,8 @@ useEffect(() => {
     if (!mapIsReady || !mapRef.current) return undefined;
     const map = mapRef.current;
     const onBeforePrint = () => {
+      safeMapResize(map);
       try {
-        map.resize();
         if (typeof map.triggerRepaint === 'function') map.triggerRepaint();
       } catch (_) {
         /* ignore */
@@ -1742,7 +1965,6 @@ useEffect(() => {
     void ensureTileJson();
 
     window.updateRegridParcels = () => {
-      if (basemapRestoreBlockingLayersRef.current || basemapApplyInProgressRef.current) return;
       updateLayers();
     };
 
@@ -1801,6 +2023,402 @@ useEffect(() => {
     return null;
   }, []);
 
+  const featureMatchesHighlightIds = useCallback((feature, idSet) => {
+    if (!feature || !idSet?.size) return false;
+    const props = feature.properties || {};
+    const fieldBag = props.fields && typeof props.fields === 'object' ? props.fields : {};
+    const candidates = [
+      props.ll_uuid,
+      props.parcelnumb,
+      props.parcel_id,
+      props.global_parcel_uid,
+      props.GFI,
+      props.pidn,
+      props.uuid,
+      props.id,
+      feature.id,
+      fieldBag.ll_uuid,
+      fieldBag.parcelnumb,
+      props.Name,
+      props.OBJECTID,
+      props.FLD_AR_ID,
+      props.precinct,
+      getFeatureIdentifierFromFeature(feature),
+    ]
+      .filter(Boolean)
+      .map((value) => String(value));
+    return candidates.some((id) => {
+      if (idSet.has(id)) return true;
+      return idSet.has(id.replace(/^regrid:/i, ''));
+    });
+  }, [getFeatureIdentifierFromFeature]);
+
+  const regridDisplayPropertyScore = useCallback((props) => {
+    if (!props || typeof props !== 'object') return 0;
+    const keys = ['owner', 'owner_name', 'address', 'physical', 'parcelnumb', 'mail', 'acre'];
+    return keys.reduce(
+      (score, key) => score + (props[key] != null && props[key] !== '' ? 1 : 0),
+      0
+    );
+  }, []);
+
+  const mergeHighlightCandidateFeatures = useCallback(
+    (features) => {
+      const byKey = new Map();
+      for (const feature of features || []) {
+        if (!feature?.geometry) continue;
+        const key =
+          getFeatureIdentifierFromFeature(feature) ||
+          feature?.id ||
+          JSON.stringify(feature.geometry);
+        if (!key) continue;
+
+        const prev = byKey.get(key);
+        if (!prev) {
+          byKey.set(key, feature);
+          continue;
+        }
+
+        const mergedProps = { ...(prev.properties || {}) };
+        for (const [propKey, value] of Object.entries(feature.properties || {})) {
+          if (
+            value != null &&
+            value !== '' &&
+            (mergedProps[propKey] == null || mergedProps[propKey] === '')
+          ) {
+            mergedProps[propKey] = value;
+          }
+        }
+
+        const prevScore = regridDisplayPropertyScore(prev.properties);
+        const nextScore = regridDisplayPropertyScore(feature.properties);
+        byKey.set(key, {
+          type: 'Feature',
+          geometry: prev.geometry || feature.geometry,
+          properties: mergedProps,
+          layer:
+            nextScore >= prevScore && feature.layer ? feature.layer : prev.layer || feature.layer,
+        });
+      }
+      return Array.from(byKey.values());
+    },
+    [getFeatureIdentifierFromFeature, regridDisplayPropertyScore]
+  );
+
+  const getLayerNamesForHighlightRestore = useCallback(
+    (map) => {
+      const fromStatus = Object.keys(layerStatus).filter(
+        (layerName) => layerStatus[layerName] && tileLayerMapLayersPresent(map, layerName)
+      );
+      if (fromStatus.length) return fromStatus;
+
+      const params = queryString.parse(window.location.search || '');
+      if (!params.layers) return [];
+      return String(params.layers)
+        .split(',')
+        .map((layer) => layer.trim())
+        .filter(Boolean)
+        .filter((layerName) => layerStatus[layerName]);
+    },
+    [layerStatus]
+  );
+
+  const enrichSelectionFromRenderedOwnershipTilesRef = useRef(() => false);
+
+  /** Replace sparse URL/API selection with MVT tile properties once ownership layers paint. */
+  const enrichSelectionFromRenderedOwnershipTiles = useCallback(() => {
+    const map = mapRef.current;
+    const selection = selectedFeatureRef.current;
+    if (!map?.isStyleLoaded?.() || !selection?.length || !layerStatus.ownership) {
+      return false;
+    }
+    if (!map.getLayer('regrid-parcels-layer')) return false;
+
+    let rendered = [];
+    try {
+      rendered = map.queryRenderedFeatures({
+        layers: ['regrid-parcels-layer', 'regrid-parcels-outline'].filter((id) => map.getLayer(id)),
+      });
+    } catch (_) {
+      return false;
+    }
+    if (!rendered.length) return false;
+
+    let updated = false;
+    const nextSelection = selection.map((selected) => {
+      const props = selected?.properties || {};
+      const isRegrid =
+        isRegridParcelSelectionFeature(selected) || Boolean(props.ll_uuid);
+      if (!isRegrid) return selected;
+
+      const idSet = buildHighlightIdSet(
+        [props.ll_uuid, props.parcelnumb, props.global_parcel_uid, getFeatureIdentifierFromFeature(selected)].filter(
+          Boolean
+        )
+      );
+      const tileMatch = rendered.find((feature) => featureMatchesHighlightIds(feature, idSet));
+      if (!tileMatch) return selected;
+
+      const prevScore = regridDisplayPropertyScore(props);
+      const nextScore = regridDisplayPropertyScore(tileMatch.properties);
+      if (nextScore <= prevScore) return selected;
+
+      updated = true;
+      return {
+        type: 'Feature',
+        geometry: tileMatch.geometry || selected.geometry,
+        properties: { ...props, ...(tileMatch.properties || {}) },
+        layer: tileMatch.layer || selected.layer,
+      };
+    });
+
+    if (!updated) return false;
+
+    selectedFeatureRef.current = nextSelection;
+    setSelectedFeatures(nextSelection);
+    if (highlightFeatureRef.current) {
+      highlightFeatureRef.current(nextSelection, layerStatusRef.current);
+    }
+    return true;
+  }, [
+    buildHighlightIdSet,
+    featureMatchesHighlightIds,
+    getFeatureIdentifierFromFeature,
+    layerStatus.ownership,
+    regridDisplayPropertyScore,
+    setSelectedFeatures,
+  ]);
+
+  enrichSelectionFromRenderedOwnershipTilesRef.current = enrichSelectionFromRenderedOwnershipTiles;
+
+  const finalizeUrlHighlightRestore = useCallback(() => {
+    pendingHighlightIdsRef.current = null;
+    setInitialHighlightIds(null);
+  }, []);
+
+  const applyRestoredHighlightFeatures = useCallback(
+    (rawFeatures, urlIds) => {
+      if (!highlightSettingsReadyForPaint()) return false;
+
+      const mergedFeatures = mergeHighlightCandidateFeatures(
+        (rawFeatures || []).filter((f) => f?.geometry)
+      );
+      if (!mergedFeatures.length) return false;
+
+      const settings = resolveHighlightSettingsForPaint();
+
+      const featuresForHighlight = mergedFeatures.map((feature, index) => {
+        const urlId = urlIds[index] || urlIds[0];
+        const props = feature.properties || {};
+        const llUuid =
+          props.ll_uuid ||
+          (LL_UUID_RE.test(String(urlId || '')) ? String(urlId) : null) ||
+          props.parcelnumb ||
+          props.global_parcel_uid;
+        return {
+          type: 'Feature',
+          geometry: feature.geometry,
+          properties: {
+            ...props,
+            ll_uuid: llUuid,
+          },
+          ...(feature.layer ? { layer: feature.layer } : {}),
+        };
+      });
+
+      const idSet = buildHighlightIdSet(urlIds);
+      const existingSelection = selectedFeatureRef.current || [];
+      const existingMatchesUrl =
+        existingSelection.length > 0 &&
+        existingSelection.every((feature) => featureMatchesHighlightIds(feature, idSet));
+      const existingScore = Math.max(
+        0,
+        ...existingSelection.map((feature) => regridDisplayPropertyScore(feature.properties))
+      );
+      const restoredScore = Math.max(
+        0,
+        ...featuresForHighlight.map((feature) => regridDisplayPropertyScore(feature.properties))
+      );
+
+      if (existingMatchesUrl && existingScore >= restoredScore && existingScore > 0) {
+        if (!highlightFeatureRef.current) return false;
+        highlightFeatureRef.current(existingSelection, layerStatus, settings);
+        enrichSelectionFromRenderedOwnershipTilesRef.current();
+        finalizeUrlHighlightRestore();
+        return true;
+      }
+
+      setSelectedFeatures(featuresForHighlight);
+      setActiveSidePanelTab('info');
+
+      if (!highlightFeatureRef.current) return false;
+      highlightFeatureRef.current(featuresForHighlight, layerStatus, settings);
+      enrichSelectionFromRenderedOwnershipTilesRef.current();
+      finalizeUrlHighlightRestore();
+
+      return true;
+    },
+    [
+      buildHighlightIdSet,
+      featureMatchesHighlightIds,
+      highlightSettingsReadyForPaint,
+      layerStatus,
+      mergeHighlightCandidateFeatures,
+      regridDisplayPropertyScore,
+      resolveHighlightSettingsForPaint,
+      setSelectedFeatures,
+      finalizeUrlHighlightRestore,
+    ]
+  );
+
+  const restoreHighlightsFromUrl = useCallback(() => {
+    const ids = pendingHighlightIdsRef.current;
+    if (!ids?.length || !mapRef.current?.isStyleLoaded?.()) {
+      return false;
+    }
+
+    if (!highlightSettingsReadyForPaint()) {
+      return false;
+    }
+
+    const map = mapRef.current;
+    const idSet = buildHighlightIdSet(ids);
+    let matchedFeatures = [];
+    const ownershipEnabled = canRestoreRegridHighlights();
+
+    // Regrid ownership: match URL ids from MVT tiles only (same as other hosted layers).
+    if (ownershipEnabled) {
+      const regridLayerIds = ['regrid-parcels-layer', 'regrid-parcels-outline'].filter((layerId) =>
+        map.getLayer(layerId)
+      );
+      if (regridLayerIds.length) {
+        try {
+          const rendered = map.queryRenderedFeatures({ layers: regridLayerIds });
+          matchedFeatures.push(
+            ...rendered.filter((feature) => featureMatchesHighlightIds(feature, idSet))
+          );
+        } catch (_) {
+          /* ignore */
+        }
+      }
+    }
+
+    const activeLayerNames = getLayerNamesForHighlightRestore(map);
+    activeLayerNames.forEach((layerName) => {
+      try {
+        const queryLayerIds = getQueryLayerIdsForTileLayer(layerName, map);
+        if (!queryLayerIds.length) return;
+        const renderedFeatures = map.queryRenderedFeatures({ layers: queryLayerIds });
+        matchedFeatures.push(
+          ...renderedFeatures.filter((feature) => featureMatchesHighlightIds(feature, idSet))
+        );
+      } catch (_) {
+        /* layer may be mid-style */
+      }
+    });
+
+    if (
+      ownershipEnabled &&
+      map.getSource('regrid-parcels') &&
+      typeof map.querySourceFeatures === 'function'
+    ) {
+      try {
+        const tileJson = getCachedRegridTileJson();
+        const sourceLayer = getRegridVectorSourceLayerId(tileJson);
+        const sourceFeatures = map.querySourceFeatures('regrid-parcels', { sourceLayer });
+        matchedFeatures.push(
+          ...sourceFeatures.filter((feature) => featureMatchesHighlightIds(feature, idSet))
+        );
+      } catch (_) {
+        /* tiles may not be loaded yet */
+      }
+    }
+
+    const uniqueFeatures = mergeHighlightCandidateFeatures(matchedFeatures);
+    if (!uniqueFeatures.length) return false;
+    return applyRestoredHighlightFeatures(uniqueFeatures, ids);
+  }, [
+    applyRestoredHighlightFeatures,
+    buildHighlightIdSet,
+    canRestoreRegridHighlights,
+    clearPendingHighlightRestore,
+    featureMatchesHighlightIds,
+    getFeatureIdentifierFromFeature,
+    getLayerNamesForHighlightRestore,
+    highlightSettingsReadyForPaint,
+    isRegridHighlightId,
+    pendingHighlightsAreRegridOnly,
+  ]);
+
+  restoreHighlightsFromUrlRef.current = restoreHighlightsFromUrl;
+
+  useEffect(() => {
+    const ids = readHighlightIdsFromLocation(routerLocation.search);
+    if (!ids?.length) return;
+
+    if (pendingHighlightsAreRegridOnly(ids) && !canRestoreRegridHighlights()) {
+      const params = queryString.parse(routerLocation.search || '');
+      const ownershipInUrl = String(params.layers || '')
+        .split(',')
+        .map((layer) => layer.trim())
+        .includes('ownership');
+      if (!ownershipInUrl) {
+        clearPendingHighlightRestore();
+        return;
+      }
+    }
+
+    const existingSelection = selectedFeatureRef.current || [];
+    const selectionSatisfiesUrl =
+      existingSelection.length > 0 &&
+      ids.every((urlId) =>
+        existingSelection.some((feature) =>
+          featureMatchesHighlightIds(feature, buildHighlightIdSet([urlId]))
+        )
+      );
+
+    if (selectionSatisfiesUrl) {
+      enrichSelectionFromRenderedOwnershipTilesRef.current();
+      pendingHighlightIdsRef.current = null;
+      setInitialHighlightIds(null);
+      return;
+    }
+
+    if (!pendingHighlightIdsRef.current?.length) {
+      pendingHighlightIdsRef.current = ids;
+      setInitialHighlightIds(ids);
+    }
+  }, [
+    buildHighlightIdSet,
+    canRestoreRegridHighlights,
+    clearPendingHighlightRestore,
+    featureMatchesHighlightIds,
+    layerStatus.ownership,
+    readHighlightIdsFromLocation,
+    routerLocation.search,
+  ]);
+
+  const urlSearchEquivalent = (currentSearch, nextSearch) => {
+    const norm = (s) => String(s || '').replace(/^\?/, '');
+    const a = queryString.parse(norm(currentSearch));
+    const b = queryString.parse(norm(nextSearch));
+    const keys = new Set([...Object.keys(a), ...Object.keys(b)]);
+    for (const k of keys) {
+      if (String(a[k] ?? '') !== String(b[k] ?? '')) return false;
+    }
+    return true;
+  };
+
+  const safeMapUrlNavigate = (searchString) => {
+    const nextSearch = searchString ? `?${searchString}` : '';
+    if (urlSearchEquivalent(routerLocation.search, nextSearch)) return false;
+    const now = Date.now();
+    if (now - mapUrlSyncThrottleRef.current < 120) return false;
+    mapUrlSyncThrottleRef.current = now;
+    navigate({ pathname: routerLocation.pathname, search: searchString }, { replace: true });
+    return true;
+  };
+
   writeBasemapToUrlRef.current = (basemapId) => {
     try {
       const p = window.location?.pathname || '';
@@ -1809,16 +2427,11 @@ useEffect(() => {
       return;
     }
     const next = normalizeBasemapId(basemapId);
+    prevUrlBasemapRef.current = next;
+    urlBasemapIdRef.current = next;
     const params = queryString.parse(routerLocation.search || '');
     params.basemap = next;
-    const search = queryString.stringify(params);
-    const nextSearch = search ? `?${search}` : '';
-    if (routerLocation.search === nextSearch) {
-      prevUrlBasemapRef.current = next;
-      return;
-    }
-    prevUrlBasemapRef.current = next;
-    navigate({ pathname: routerLocation.pathname, search }, { replace: true });
+    safeMapUrlNavigate(queryString.stringify(params));
   };
 
   syncMapUrlRef.current = () => {
@@ -1832,10 +2445,22 @@ useEffect(() => {
 
     const center = mapRef.current.getCenter();
     const zoom = mapRef.current.getZoom();
-    const highlights = selectedFeature
+    const urlParams = queryString.parse(routerLocation.search || '');
+    const selectedHighlightIds = selectedFeature
       .map((feature) => getFeatureIdentifierFromFeature(feature))
-      .filter(Boolean)
-      .join(',');
+      .filter(Boolean);
+    const pendingIds = pendingHighlightIdsRef.current || [];
+    const canPersistPendingRegrid =
+      canRestoreRegridHighlights() ||
+      !pendingHighlightsAreRegridOnly(pendingIds);
+    const highlights =
+      selectedHighlightIds.length > 0
+        ? selectedHighlightIds.join(',')
+        : pendingIds.length && canPersistPendingRegrid
+          ? pendingIds.join(',')
+          : '';
+
+    const layersForUrl = layerOrder.filter((name) => Boolean(layerStatus[name])).join(',');
 
     const liveBasemap = normalizeBasemapId(
       activeBasemapIdRef?.current || baseMapRef.current || basemap || currentBasemapId
@@ -1852,12 +2477,13 @@ useEffect(() => {
       lat: center.lat.toFixed(5),
       lng: center.lng.toFixed(5),
       zoom: zoom,
-      highlights,
-      layers: layerOrder.join(','),
+      ...(highlights ? { highlights } : {}),
+      ...(layersForUrl ? { layers: layersForUrl } : {}),
       basemap: basemapForUrl,
     });
-    if (routerLocation.search === `?${newParams}`) return;
-    navigate({ pathname: routerLocation.pathname, search: newParams }, { replace: true });
+    prevUrlBasemapRef.current = basemapForUrl;
+    urlBasemapIdRef.current = basemapForUrl;
+    safeMapUrlNavigate(newParams);
   };
 
   useEffect(() => {
@@ -1870,127 +2496,92 @@ useEffect(() => {
     };
   }, [
     layerOrder,
+    layerStatus,
     selectedFeature,
     basemap,
     currentBasemapId,
     navigate,
     getFeatureIdentifierFromFeature,
     routerLocation.pathname,
-    routerLocation.search,
   ]);
   
 
 
 useEffect(() => {
-  if (!mapRef.current) return;
-  
-  // If the style is *already* loaded
-  if (mapRef.current.isStyleLoaded()) {
-    setMapIsReady(true);
-    return;
-  }
+  if (!mapRef.current) return undefined;
 
-  // Otherwise, wait for style.load or idle
-  const handleStyle = () => {
+  const markReady = () => {
+    if (!mapRef.current?.isStyleLoaded?.()) return;
     setMapIsReady(true);
   };
 
-  mapRef.current.once('styledata', handleStyle);
-  mapRef.current.once('idle', handleStyle);
+  if (mapRef.current.isStyleLoaded()) {
+    markReady();
+    return undefined;
+  }
+
+  const map = mapRef.current;
+  map.once('style.load', markReady);
+  map.once('idle', markReady);
 
   return () => {
-    mapRef.current.off('styledata', handleStyle);
-    mapRef.current.off('idle', handleStyle);
+    try {
+      map.off('style.load', markReady);
+      map.off('idle', markReady);
+    } catch (_) {
+      /* ignore */
+    }
   };
 }, []);
 
-  // (B) Once map + layers are ready, do the highlight
+  // (B) Restore ?highlights= from URL — retry on idle/pan/zoom until tile features match (no Regrid API).
   useEffect(() => {
-    if (!mapIsReady) return; // Wait for map
-    if (!initialHighlightIds || initialHighlightIds.length === 0) return; // No highlights to restore
-    if (!mapRef.current) return;
-    
+    if (!mapIsReady || !mapRef.current) return undefined;
+    if (!pendingHighlightIdsRef.current?.length && !initialHighlightIds?.length) return undefined;
+    if (!highlightSettingsReadyForPaint()) return undefined;
 
-    const existingLayers = Object.keys(layerStatus).filter(
-      (layerName) => layerStatus[layerName] && tileLayerMapLayersPresent(mapRef.current, layerName)
-    );
+    let cancelled = false;
+    let inFlight = false;
 
-    if (!existingLayers.length) {
-      return;
-    }
-
-    let hasRestored = false; // Prevent multiple restores
-    
-    const restoreHighlights = () => {
-      if (hasRestored) return; // Already restored
-      
-      let allQueriedFeatures = [];
-      existingLayers.forEach((layerName) => {
-        try {
-          const queryLayerIds = getQueryLayerIdsForTileLayer(layerName, mapRef.current);
-          if (!queryLayerIds.length) return;
-          const renderedFeatures = mapRef.current.queryRenderedFeatures({
-            layers: queryLayerIds,
-          });
-
-          const matchedFeatures = renderedFeatures.filter((feature) => {
-            const featureId = getFeatureIdentifierFromFeature(feature);
-            return featureId && initialHighlightIds.includes(featureId);
-          });
-          
-          if (matchedFeatures.length > 0) {
-          }
-          
-          allQueriedFeatures.push(...matchedFeatures);
-        } catch (error) {
-        }
-      });
-
-      if (allQueriedFeatures.length > 0) {
-        hasRestored = true;
-        setSelectedFeatures(allQueriedFeatures);
-        
-        // Use highlightSettings if available, otherwise it will use defaults in highlightFeature
-        if (highlightSettings) {
-          highlightFeature(allQueriedFeatures);
-        } else {
-          // Still highlight with defaults
-          highlightFeature(allQueriedFeatures, null, {
-            fillColor: '#FF0000',
-            fillOpacity: 0.5,
-            fillOutlineColor: '#FF0000',
-            lineColor: '#FF0000',
-            lineWidth: 3
-          });
-        }
-      } else {
+    const tryRestore = () => {
+      if (cancelled || inFlight || !pendingHighlightIdsRef.current?.length) return;
+      inFlight = true;
+      try {
+        restoreHighlightsFromUrlRef.current();
+      } catch (_) {
+        /* ignore */
+      } finally {
+        inFlight = false;
+        enrichSelectionFromRenderedOwnershipTilesRef.current();
       }
     };
 
-    // Wait for map to be idle (tiles loaded) before querying
-    // The 'idle' event fires when the map has finished loading and rendering
-    const handleIdle = () => {
-      // Small delay to ensure tiles are actually rendered
-      setTimeout(restoreHighlights, 200);
+    const scheduleRestore = () => {
+      window.setTimeout(tryRestore, 200);
     };
-    
-    mapRef.current.once('idle', handleIdle);
-    
-    // Also try after a short delay if the map seems ready
-    setTimeout(() => {
-      if (mapRef.current && mapRef.current.loaded()) {
-        restoreHighlights();
-      }
-    }, 500);
-    
+
+    const map = mapRef.current;
+    map.on('idle', scheduleRestore);
+    map.on('moveend', scheduleRestore);
+    map.on('zoomend', scheduleRestore);
+    tryRestore();
+
     return () => {
-      // Cleanup
-      if (mapRef.current) {
-        mapRef.current.off('idle', handleIdle);
-      }
+      cancelled = true;
+      map.off('idle', scheduleRestore);
+      map.off('moveend', scheduleRestore);
+      map.off('zoomend', scheduleRestore);
     };
-    
-  }, [mapRef, mapIsReady, initialHighlightIds, layerStatus, getFeatureIdentifierFromFeature, highlightSettings]);
+  }, [
+    mapIsReady,
+    initialHighlightIds,
+    layerStatus,
+    layerStatus.ownership,
+    regridTileJsonVersion,
+    restoreHighlightsFromUrl,
+    highlightSettingsReadyForPaint,
+    highlightSettings,
+  ]);
 
   useEffect(() => {
     if (!mapRef.current) return;
@@ -2021,7 +2612,7 @@ useEffect(() => {
    * Integrates with custom hook `useMapboxDraw` to enable polygon/line drawing.
    * The hook internally handles draw events like `draw.create`, mode changes, etc.
    */
-  const { drawPolygon, drawLine, selectParcelsWithPolygon, clearAllDrawings, deleteSelectedFeature} = useMapboxDraw({
+  const { drawPolygon, drawLine, clearAllDrawings, deleteSelectedFeature} = useMapboxDraw({
     mapRef,
     onPolygonCreated: (polyFeature) => {
       // Possibly do area calc or passPolygonToReportBuilder
@@ -2159,59 +2750,98 @@ useEffect(() => {
 
   const lastAppliedLayerOrderRef = useRef('');
 
-  /** Regrid parcels — same moment as hosted MVT layers inside `updateLayers`. */
-  const syncOwnershipLayerStack = (map) => {
-    if (!map?.isStyleLoaded?.()) return;
-    const vis = parcelMapVisibilityRef.current;
-    if (vis?.showRegrid) {
-      if (!getCachedRegridTileJson()) return;
-      syncRegridParcelLayersIntoMap(map, vis);
-      applyParcelVisualizationVisibility(map, vis);
-      bringRegridParcelLayersBeforeSymbolLabels(map);
-      applyRegridParcelOutlineForBasemap(
-        map,
-        activeBasemapIdRef?.current || baseMapRef.current
-      );
-      maintainBasemapStackRef.current();
-      reapplySelectionHighlightIfNeededRef.current();
-    } else {
-      applyParcelVisualizationVisibility(map, { showRegrid: false });
-      hideLabelLayerSafeRef.current(map, 'ownership-label-layer');
-    }
-  };
-  syncOwnershipLayerStackRef.current = syncOwnershipLayerStack;
-
   /** Add/remove/reorder hosted tile layers and Regrid parcels based on `layerStatus` and `layerOrder`. */
   const updateLayers = () => {
     mapDebug.trace('updateLayers', layerStatus);
 
+    const syncBasemapOverlaysIfNeeded = () => {
+      const map = mapRef.current;
+      if (!map?.isStyleLoaded?.()) return;
+      const wantedBasemap = normalizeBasemapId(
+        activeBasemapIdRef?.current || baseMapRef.current || urlBasemapIdRef.current
+      );
+      if (!wantedBasemap) return;
+
+      const basemapChanged =
+        normalizeBasemapId(lastAppliedBasemapRef.current || '') !== wantedBasemap;
+      const needsMaintenance = needsBasemapOverlayMaintenance(map, wantedBasemap);
+      if (!basemapChanged && !needsMaintenance) return;
+
+      try {
+        repairBasemapOverlaysRef.current(wantedBasemap);
+        applyCompositeLabelStyleForBasemap(map, wantedBasemap);
+      } catch (_) {
+        /* ignore */
+      }
+
+      if (
+        verifyBasemapAppliedOnMap(map, wantedBasemap) &&
+        !needsBasemapOverlayMaintenance(map, wantedBasemap)
+      ) {
+        lastAppliedBasemapRef.current = wantedBasemap;
+        initialBasemapRestoreCompleteRef.current = true;
+        needsInitialBasemapApplyRef.current = false;
+      }
+    };
+
+    syncBasemapOverlaysIfNeeded();
+
   /** Tile URL/spec changed — needs reload. Fresh addSource already fetches tiles; reloading causes first-toggle flicker. */
     const sourcesNeedingTileReload = new Set();
-    const hadRegridBefore = Boolean(mapRef.current?.getSource?.('regrid-parcels'));
+    const sourcesAddedThisPass = new Set();
     const prevStatus = prevLayerStatusForRepaintRef.current;
     const turnedOnLayerNames =
       prevStatus == null
-        ? []
+        ? Object.keys(layerStatus).filter((name) => layerStatus[name])
         : Object.keys(layerStatus).filter((name) => layerStatus[name] && !prevStatus[name]);
 
-    // Update map layers based on layerStatus changes
-    Object.keys(layerStatus).forEach((layerName) => {
-      const isVisible = layerStatus[layerName];
+    const clearSelectionForLayer = (name) => {
+      const current = selectedFeatureRef.current?.length
+        ? selectedFeatureRef.current
+        : selectedFeature || [];
+      if (!current.length) return;
+      const updatedSelectedFeatures = current.filter(
+        (feature) => !featureBelongsToMapLayer(feature, name)
+      );
+      if (updatedSelectedFeatures.length === current.length) return;
+      selectedFeatureRef.current = updatedSelectedFeatures;
+      if (updatedSelectedFeatures.length > 0) {
+        setSelectedFeatures(updatedSelectedFeatures);
+        highlightFeature(updatedSelectedFeatures);
+      } else {
+        setSelectedFeatures([]);
+        removeHighlight();
+      }
+    };
+
+    // Empty `layerStatus` means hide every known layer on Mapbox (e.g. print map load clear).
+    const layersToSync =
+      Object.keys(layerStatus).length === 0
+        ? getAllMapLayerToggleIds().map((name) => [name, false])
+        : Object.entries(layerStatus);
+
+    layersToSync.forEach(([layerName, isVisible]) => {
+
+      if (DISABLED_TILE_LAYERS.has(layerName)) {
+        if (tileLayerMapLayersPresent(mapRef.current, layerName)) {
+          setTileLayerVisibility(mapRef.current, layerName, 'none');
+          clearSelectionForLayer(layerName);
+        }
+        return;
+      }
 
       if (layerName === 'ownership') {
-        if (!isVisible && !parcelMapVisibility.showRegrid && selectedFeature?.length > 0) {
-          const updatedSelectedFeatures = selectedFeature.filter(
-            (feature) => !featureBelongsToMapLayer(feature, 'ownership')
-          );
-          if (updatedSelectedFeatures.length !== selectedFeature.length) {
-            if (updatedSelectedFeatures.length > 0) {
-              setSelectedFeatures(updatedSelectedFeatures);
-              highlightFeature(updatedSelectedFeatures);
-            } else {
-              setSelectedFeatures([]);
-              removeHighlight();
-            }
+        if (parcelMapVisibility.showRegrid) {
+          if (syncOwnershipTileLayer(mapRef.current, parcelMapVisibility)) {
+            sourcesAddedThisPass.add('ownership');
           }
+          if (isVisible) setTopLayer('ownership');
+        } else if (tileLayerMapLayersPresent(mapRef.current, 'ownership')) {
+          setTileLayerVisibility(mapRef.current, 'ownership', 'none');
+          hideLabelLayerSafeRef.current(mapRef.current, 'ownership-label-layer');
+          clearSelectionForLayer('ownership');
+          clearPendingHighlightRestore();
+          syncMapUrlRef.current();
         }
         return;
       }
@@ -2239,6 +2869,7 @@ useEffect(() => {
             maxzoom: zt.maxzoom,
           });
         }
+        sourcesAddedThisPass.add(layerName);
       } else {
         // If ``tileLayerUrls`` changed (e.g. MVT → PMTiles), sync the underlying vector source.
         try {
@@ -2326,41 +2957,23 @@ useEffect(() => {
 
         setTopLayer(layerName);
       } else {
-        // If the layer is supposed to be hidden, set its visibility to "none"
         if (tileLayerMapLayersPresent(mapRef.current, layerName)) {
           setTileLayerVisibility(mapRef.current, layerName, 'none');
-
-          if (selectedFeature?.length > 0) {
-            const updatedSelectedFeatures = selectedFeature.filter(
-              (feature) => !featureBelongsToMapLayer(feature, layerName)
-            );
-            if (updatedSelectedFeatures.length !== selectedFeature.length) {
-              if (updatedSelectedFeatures.length > 0) {
-                setSelectedFeatures(updatedSelectedFeatures);
-                highlightFeature(updatedSelectedFeatures);
-              } else {
-                setSelectedFeatures([]);
-                removeHighlight();
-              }
-            }
-          }
         }
+        clearSelectionForLayer(layerName);
       }
 
     });
-
-    syncOwnershipLayerStack(mapRef.current);
-    const regridStackAdded =
-      !hadRegridBefore && Boolean(mapRef.current?.getSource?.('regrid-parcels'));
 
     // Reorder layers only when stack order actually changed (avoids repainting every toggle).
     const layerOrderKey = layerOrder.join('\0');
     const layerOrderChanged = layerOrderKey !== lastAppliedLayerOrderRef.current;
     if (layerOrderChanged) {
+      const stackBeforeId = getFirstSymbolLayerId(mapRef.current);
       layerOrder.forEach((layerName) => {
         getQueryLayerIdsForTileLayer(layerName, mapRef.current).forEach((layerId) => {
           if (mapRef.current.getLayer(layerId)) {
-            mapRef.current.moveLayer(layerId);
+            mapRef.current.moveLayer(layerId, stackBeforeId);
           }
         });
       });
@@ -2370,45 +2983,36 @@ useEffect(() => {
     const finishLayerStack = () => {
       if (!mapRef.current) return;
       if (layerStatus.ownership) {
-        try {
-          mapRef.current.resize();
-        } catch (_) {
-          /* ignore */
-        }
+        safeMapResize(mapRef.current);
       }
-      const enforceRegridOnTop = () => {
-        if (!mapRef.current) return;
+      if (parcelMapVisibility.showRegrid) {
         bringRegridParcelLayersBeforeSymbolLabels(mapRef.current);
         applyParcelVisualizationVisibility(mapRef.current, parcelMapVisibility);
-      };
-
-      enforceRegridOnTop();
-      const needsRegridRepaint =
-        turnedOnLayerNames.includes('ownership') ||
-        (regridStackAdded && parcelMapVisibility.showRegrid);
-      repaintLayersTurnedOn(mapRef.current, layerStatus, turnedOnLayerNames, {
-        regridFreshlyAdded: false,
-      });
-      if (needsRegridRepaint) {
-        requestAnimationFrame(() => {
-          const m = mapRef.current;
-          if (!m?.isStyleLoaded?.() || !parcelMapVisibility.showRegrid) return;
-          syncOwnershipLayerStack(m);
-          repaintRegridParcelsAfterShow(m);
-        });
       }
+      const layersNeedingTileRepaint = [
+        ...new Set([...turnedOnLayerNames, ...sourcesAddedThisPass]),
+      ];
+      repaintLayersTurnedOn(mapRef.current, layerStatus, layersNeedingTileRepaint, {
+        regridFreshlyAdded: sourcesAddedThisPass.has('ownership'),
+      });
       prevLayerStatusForRepaintRef.current = { ...layerStatus };
       applyRegridParcelOutlineForBasemap(
         mapRef.current,
         activeBasemapIdRef?.current || baseMapRef.current
       );
       applyLabelLayersRef.current();
-      reapplySelectionHighlightIfNeededRef.current();
+      enrichSelectionFromRenderedOwnershipTilesRef.current();
+      if (pendingHighlightIdsRef.current?.length) {
+        void restoreHighlightsFromUrlRef.current();
+      }
       bringLabelsToTop();
       applyCompositeLabelStyleForBasemap(
         mapRef.current,
         activeBasemapIdRef?.current || baseMapRef.current
       );
+      if (propertyTourSlideIdRef.current === 'vicinity' || isPropertyTourVicinitySlideActive()) {
+        ensureTourVicinityNearbyLayersOnTop(mapRef.current);
+      }
       const needsTileReload = sourcesNeedingTileReload.size > 0;
 
       try {
@@ -2426,21 +3030,49 @@ useEffect(() => {
           if (typeof mapRef.current.triggerRepaint === 'function') mapRef.current.triggerRepaint();
         } catch (_) {}
         scheduleDeferredTileRefresh(mapRef.current, sourcesNeedingTileReload, false);
+        if (propertyTourSlideIdRef.current === 'vicinity' || isPropertyTourVicinitySlideActive()) {
+          const bumpTourLayers = () => ensureTourVicinityNearbyLayersOnTop(mapRef.current);
+          try {
+            mapRef.current.once('idle', bumpTourLayers);
+          } catch (_) {
+            /* ignore */
+          }
+          window.setTimeout(bumpTourLayers, 550);
+        }
       }
 
+      try {
+        restackDataAndParcelsOnceRef.current();
+      } catch (_) {
+        /* ignore */
+      }
+      const selectionAfterStack = selectedFeatureRef.current;
+      if (selectionAfterStack?.length) {
+        const visibleSelection = filterSelectionToVisibleLayers(
+          selectionAfterStack,
+          resolveLayerStatusForSelection(layerStatusRef.current)
+        );
+        if (visibleSelection.length !== selectionAfterStack.length) {
+          selectedFeatureRef.current = visibleSelection;
+          setSelectedFeatures(visibleSelection);
+        }
+        if (visibleSelection.length) {
+          repaintSelectionHighlightRef.current(visibleSelection, { syncOwnership: false });
+        } else {
+          removeHighlight();
+        }
+      }
       const wantedBasemap = normalizeBasemapId(
         activeBasemapIdRef?.current || baseMapRef.current || urlBasemapIdRef.current
       );
       if (
         wantedBasemap &&
-        needsBasemapOverlayMaintenance(mapRef.current, wantedBasemap)
+        mapRef.current &&
+        verifyBasemapAppliedOnMap(mapRef.current, wantedBasemap) &&
+        !needsBasemapOverlayMaintenance(mapRef.current, wantedBasemap)
       ) {
-        repairBasemapOverlaysRef.current(wantedBasemap);
-        try {
-          restackDataLayersAboveBasemapOverlays(mapRef.current);
-        } catch (_) {
-          /* ignore */
-        }
+        lastAppliedBasemapRef.current = wantedBasemap;
+        initialBasemapRestoreCompleteRef.current = true;
       }
     };
 
@@ -2449,7 +3081,9 @@ useEffect(() => {
       finishLayerStack();
       return new Promise((resolve) => {
         const afterLoad = () => {
-          syncOwnershipLayerStack(mapRef.current);
+          if (parcelMapVisibility.showRegrid) {
+            syncOwnershipTileLayer(mapRef.current, parcelMapVisibility);
+          }
           finishLayerStack();
           resolve();
         };
@@ -2462,7 +3096,7 @@ useEffect(() => {
         } catch (_) {
           resolve();
         }
-      });
+      }).then(() => undefined);
     }
 
     return new Promise((resolve) => {
@@ -2471,12 +3105,18 @@ useEffect(() => {
           map.once('style.load', runRegridWhenStyleReady);
           return;
         }
-        syncOwnershipLayerStack(map);
+        syncOwnershipTileLayer(map, parcelMapVisibility);
         finishLayerStack();
         resolve();
       };
       runRegridWhenStyleReady();
     });
+  };
+
+  runUpdateLayersRef.current = () => Promise.resolve(updateLayers());
+
+  flushPendingLayerSyncRef.current = () => {
+    runUpdateLayersRef.current();
   };
 
   /** After basemap style swap: tear down and re-add the full Regrid MVT stack from TileJSON. */
@@ -2583,6 +3223,12 @@ useEffect(() => {
       if (isDragging) {
         return;
       }
+
+      if (window.innerWidth <= 768) {
+        const event = new CustomEvent('map-user-interaction');
+        window.dispatchEvent(event);
+        document.dispatchEvent(event);
+      }
   
       if (isDrawingRef.current === true) {
         return;
@@ -2631,33 +3277,30 @@ useEffect(() => {
           }
           // Print all attributes of the clicked parcel
           
-          const hostedLayer = resolveHostedMapLayerFromFeature(clickedFeature);
-          if (hostedLayer) {
+          const featureForSelection = stampSelectionFeature(clickedFeature);
+
+          const prevSelection = selectedFeatureRef.current || [];
+          const isAlreadySelected = prevSelection.some((f) =>
+            featuresShareSelectionId(f, featureForSelection)
+          );
+          let nextSelection;
+          if (e.originalEvent.shiftKey) {
+            nextSelection = isAlreadySelected
+              ? prevSelection.filter((f) => !featuresShareSelectionId(f, featureForSelection))
+              : [...prevSelection, featureForSelection];
+          } else if (isAlreadySelected && prevSelection.length === 1) {
+            nextSelection = [];
+          } else {
+            nextSelection = [featureForSelection];
           }
 
-          setSelectedFeatures((prevFeatures) => {
-            const isAlreadySelected = prevFeatures.some((f) =>
-              featuresShareSelectionId(f, clickedFeature)
-            );
-            if (e.originalEvent.shiftKey) {
-              if (isAlreadySelected) {
-                const updatedSelection = prevFeatures.filter(
-                  (f) => !featuresShareSelectionId(f, clickedFeature)
-                );
-                highlightFeature(updatedSelection);
-                return updatedSelection;
-              }
-              const updatedSelection = [...prevFeatures, clickedFeature];
-              highlightFeature(updatedSelection);
-              return updatedSelection;
-            }
-            if (isAlreadySelected && prevFeatures.length === 1) {
-              removeHighlight();
-              return [];
-            }
-            highlightFeature([clickedFeature]);
-            return [clickedFeature];
-          });
+          selectedFeatureRef.current = nextSelection;
+          setSelectedFeatures(nextSelection);
+          if (!nextSelection.length) {
+            removeHighlight();
+          } else {
+            deferSelectionHighlightUntilSettledRef.current(nextSelection);
+          }
 
           const isRegridParcelClick =
             clickedFeature.layer?.id === 'regrid-parcels-layer' ||
@@ -2668,9 +3311,15 @@ useEffect(() => {
           } else {
             setActiveSidePanelTab('info');
           }
+          if (window.innerWidth <= 768 && typeof window.__openMobileInfoPeek === 'function') {
+            window.__openMobileInfoPeek();
+          }
         } else {
           setSelectedFeatures([]);
           removeHighlight();
+          if (window.innerWidth <= 768 && typeof window.__collapseSidePanel === 'function') {
+            window.__collapseSidePanel();
+          }
         }
       }
   
@@ -2823,103 +3472,39 @@ useEffect(() => {
   };
 
 
-   /** =============== Add Layers After Basemap Change ===============
-   * useEffect: If the map style reloads (due to changing base layers),
-   * we re-run `updateLayers` to ensure our data layers are re-added/visible.
-   */
+   /** =============== Layer sync (basemap overlays applied inside updateLayers) =============== */
   useEffect(() => {
-    if (basemapRestoreBlockingLayersRef.current || basemapApplyInProgressRef.current) {
-      return undefined;
-    }
     const map = mapRef.current;
-    if (!map) return undefined;
-    if (!map.isStyleLoaded()) {
-      const onStyleLoad = () => {
-        if (basemapRestoreBlockingLayersRef.current || basemapApplyInProgressRef.current) return;
-        updateLayers();
-      };
-      map.once('style.load', onStyleLoad);
-      return () => {
-        map.off('style.load', onStyleLoad);
-      };
-    }
-    updateLayers();
-    return undefined;
+    if (!map || !mapIsReady) return undefined;
+
+    const syncLayers = () => {
+      if (!map.isStyleLoaded()) {
+        const onStyleLoad = () => {
+          runUpdateLayersRef.current();
+        };
+        map.once('style.load', onStyleLoad);
+        return () => {
+          map.off('style.load', onStyleLoad);
+        };
+      }
+      runUpdateLayersRef.current();
+      return undefined;
+    };
+
+    return syncLayers();
   }, [
     layerStatus,
     layerOrder,
+    currentBasemapId,
+    basemap,
     regridTileJsonVersion,
     propertyMapWizardActive,
     isPrinting,
     printParcelsOverlayVisible,
+    mapIsReady,
   ]);
 
-  // --- 8. Basemap handlers ---
-
-  /** Switch basemap overlay on the persistent outdoors style; re-sync layers, labels, and highlights. */
-  const handleBasemapChange = (styleId, enable3D = false, onReady) => {
-    if (!mapRef.current) return;
-    mapDebug.trace('handleBasemapChange', styleId);
-    if (styleId === 'imagery' || styleId === 'imagery-3d') {
-      handleSetImageryBasemap(styleId === 'imagery-3d', onReady);
-      return;
-    }
-
-    basemapApplyGenerationRef.current += 1;
-    if (enable3D) setIs3DEnabled(true);
-
-    const runAfterOverlayReady = () => {
-      void updateLayers().then(() => {
-        try {
-          mapRef.current.resize();
-        } catch (_) {
-          /* ignore */
-        }
-        applyLabelLayers();
-        applyBasemapEnhancements();
-        if (selectedFeature?.length > 0) {
-          highlightFeature(selectedFeature);
-        }
-        restackDataAndParcelsOnce();
-        applyCompositeLabelStyleForBasemap(mapRef.current, styleId);
-        if (verifyBasemapAppliedOnMap(mapRef.current, styleId)) {
-          lastAppliedBasemapRef.current = styleId;
-        }
-        try {
-          onReady?.();
-        } catch (_) {
-          /* ignore */
-        }
-      });
-    };
-
-    withPersistentOutdoorsBase(() => {
-      publishBasemapSelection(styleId);
-      hideManagedBasemapOverlays();
-      try {
-        if (styleId === 'satellite-streets-v12') {
-          setPersistentBaseStyleUnderlayVisibility(false);
-          addMapboxStyleRasterOverlay(
-            SATELLITE_STREETS_OVERLAY_SOURCE_ID,
-            SATELLITE_STREETS_OVERLAY_LAYER_ID,
-            'satellite-v9'
-          );
-          setPersistentBaseLabelsVisibility(true);
-        } else if (styleId === 'streets-v11') {
-          setPersistentBaseStyleUnderlayVisibility(false);
-          addMapboxStyleRasterOverlay(STREETS_OVERLAY_SOURCE_ID, STREETS_OVERLAY_LAYER_ID, 'streets-v11');
-          setPersistentBaseLabelsVisibility(false);
-        } else {
-          // Discover/default: no basemap overlay and keep native labels visible.
-          setPersistentBaseStyleUnderlayVisibility(true);
-          setPersistentBaseLabelsVisibility(true);
-        }
-      } catch (e) {
-        console.error('Failed applying persistent basemap overlay:', styleId, e);
-      }
-      runAfterOverlayReady();
-    });
-  };
+  // --- 8. Basemap overlay helpers (applied via repairBasemapOverlays inside updateLayers) ---
 
   const ESRI_WORLD_IMAGERY_SOURCE_ID = 'esri-world-imagery-source';
 
@@ -2966,8 +3551,12 @@ useEffect(() => {
   };
 
 
-  /** Add or show the Esri World Imagery raster basemap and hide the outdoors underlay. */
-  const addEsriWorldImageryRaster = () => {
+  /**
+   * Add or show the Esri World Imagery raster basemap.
+   * @param {{ hideUnderlay?: boolean }} [options] When false, keep Discover fills visible while Esri tiles preload (avoids grey flash).
+   */
+  const addEsriWorldImageryRaster = (options = {}) => {
+    const hideUnderlay = options.hideUnderlay !== false;
     if (!mapRef.current) return;
     const map = mapRef.current;
     if (!map.getSource(ESRI_WORLD_IMAGERY_SOURCE_ID)) {
@@ -2997,45 +3586,18 @@ useEffect(() => {
       map.setLayoutProperty(ESRI_WORLD_IMAGERY_LAYER_ID, 'visibility', 'visible');
       stackRasterBasemapAboveBackground(map, ESRI_WORLD_IMAGERY_LAYER_ID);
     }
-    setPersistentBaseStyleUnderlayVisibility(false);
-    setPersistentBaseLabelsVisibility(true);
-    applyCompositeLabelStyleForBasemap(map, 'imagery');
-  };
-
-
-  /** True when any non-symbol Mapbox base layer is still visible (blocks imagery from showing). */
-  const hasVisiblePersistentStyleUnderlay = (map) => {
-    if (!map?.getStyle) return false;
-    try {
-      const styleLayers = map.getStyle().layers || [];
-      return styleLayers.some((layer) => {
-        if (isAppOverlayOrDataLayer(layer)) return false;
-        if (layer.type === 'symbol') return false;
-        if (layer.id === 'background') return false;
-        return map.getLayoutProperty(layer.id, 'visibility') !== 'none';
-      });
-    } catch (_) {
-      return false;
+    if (hideUnderlay) {
+      setPersistentBaseStyleUnderlayVisibility(false);
+      setPersistentBaseLabelsVisibility(true);
+      applyCompositeLabelStyleForBasemap(map, 'imagery');
     }
   };
 
-
-  /** True when Esri imagery layer is visible and the outdoors underlay is fully hidden. */
-  const isImageryBasemapFullyApplied = (map) => {
-    if (!map?.getLayer?.(ESRI_WORLD_IMAGERY_LAYER_ID)) return false;
-    try {
-      if (map.getLayoutProperty(ESRI_WORLD_IMAGERY_LAYER_ID, 'visibility') === 'none') return false;
-    } catch (_) {
-      return false;
-    }
-    return !hasVisiblePersistentStyleUnderlay(map);
-  };
-
-  ensureImageryBasemapRef.current = () => {
+  ensureImageryBasemapRef.current = (options = {}) => {
     const map = mapRef.current;
     if (!map || !map.isStyleLoaded?.()) return false;
     try {
-      addEsriWorldImageryRaster();
+      addEsriWorldImageryRaster(options);
       return verifyBasemapAppliedOnMap(map, 'imagery');
     } catch (err) {
       console.error('ensureImageryBasemap failed:', err);
@@ -3118,7 +3680,8 @@ useEffect(() => {
     const id = String(basemapId || '').trim();
     try {
       if (id === 'imagery' || id === 'imagery-3d' || id === 'esri-world-imagery') {
-        const repaired = Boolean(ensureImageryBasemapRef.current());
+        hideManagedBasemapOverlays();
+        const repaired = Boolean(ensureImageryBasemapRef.current({ hideUnderlay: true }));
         if (repaired) restackDataLayersAboveBasemapOverlays(map);
         return (
           repaired &&
@@ -3168,31 +3731,52 @@ useEffect(() => {
     return false;
   };
 
-
-  /** Ensure outdoors-v12 is loaded, then run overlay work after `style.load` (or immediately if already loaded). */
-  const withPersistentOutdoorsBase = (work) => {
+  scheduleBasemapUntilVerifiedRef.current = (basemapId, attempt = 0) => {
     const map = mapRef.current;
-    if (!map || typeof work !== 'function') return;
-    const nextStyleUrl = `mapbox://styles/mapbox/${PERSISTENT_BASE_STYLE_ID}`;
-    if (currentStyleUrlRef.current === nextStyleUrl && map.isStyleLoaded?.()) {
-      work();
-      return;
-    }
-    currentStyleUrlRef.current = nextStyleUrl;
-    map.setStyle(nextStyleUrl);
-    let settled = false;
-    const finish = () => {
-      if (settled) return;
-      settled = true;
+    const id = normalizeBasemapId(
+      basemapId || urlBasemapIdRef.current || activeBasemapIdRef?.current || baseMapRef.current
+    );
+    if (!map || !id) return;
+
+    const basemapStackOk = () =>
+      map.isStyleLoaded?.() &&
+      verifyBasemapAppliedOnMap(map, id) &&
+      !needsBasemapOverlayMaintenance(map, id);
+
+    const markVerified = () => {
+      window.clearTimeout(basemapVerifyRetryTimerRef.current);
+      basemapVerifyRetryTimerRef.current = null;
+      lastAppliedBasemapRef.current = id;
+      needsInitialBasemapApplyRef.current = false;
+      initialBasemapRestoreCompleteRef.current = true;
       try {
-        map.off('style.load', finish);
+        syncMapUrlRef.current();
       } catch (_) {
         /* ignore */
       }
-      work();
     };
-    map.once('style.load', finish);
-    window.setTimeout(finish, 10000);
+
+    if (basemapStackOk()) {
+      markVerified();
+      return;
+    }
+
+    const MAX_ATTEMPTS = 14;
+    if (attempt >= MAX_ATTEMPTS) {
+      initialBasemapRestoreCompleteRef.current = true;
+      return;
+    }
+
+    void runUpdateLayersRef.current().then(() => {
+      if (basemapStackOk()) {
+        markVerified();
+        return;
+      }
+      window.clearTimeout(basemapVerifyRetryTimerRef.current);
+      basemapVerifyRetryTimerRef.current = window.setTimeout(() => {
+        scheduleBasemapUntilVerifiedRef.current(id, attempt + 1);
+      }, 160 + attempt * 90);
+    });
   };
 
 
@@ -3203,6 +3787,7 @@ useEffect(() => {
     const styleLayers = map.getStyle().layers || [];
     styleLayers.forEach((layer) => {
       if (layer.type !== 'symbol') return;
+      if (isTourVicinityMapLayerId(layer.id)) return;
       try {
         const live = map.getLayer(layer.id);
         if (!live?.layout) return;
@@ -3211,6 +3796,10 @@ useEffect(() => {
         /* layer may be mid-removal */
       }
     });
+    if (propertyTourSlideIdRef.current === 'vicinity' || isPropertyTourVicinitySlideActive()) {
+      ensureTourVicinityNearbyLayersOnTop(map);
+    }
+    ensureTourEditRadiusLayersOnTop(map);
   }, [mapRef]);
 
 
@@ -3264,7 +3853,14 @@ useEffect(() => {
       if (wantedBasemap && needsBasemapOverlayMaintenance(map, wantedBasemap)) {
         repairBasemapOverlaysRef.current(wantedBasemap);
       }
-      reapplySelectionHighlightIfNeededRef.current();
+      const selection = selectedFeatureRef.current;
+      if (selection?.length) {
+        repaintSelectionHighlightRef.current(selection, { syncOwnership: false });
+      }
+      if (propertyTourSlideIdRef.current === 'vicinity' || isPropertyTourVicinitySlideActive()) {
+        ensureTourVicinityNearbyLayersOnTop(map);
+      }
+      ensureTourEditRadiusLayersOnTop(map);
     };
 
     map.on(CV_REGRID_RESTACK_EVENT, restack);
@@ -3369,6 +3965,9 @@ useEffect(() => {
       if (!mapRef.current || map !== mapRef.current) return;
       bringLabelsToTop();
       fireRegridRestack(map);
+      if (propertyTourSlideIdRef.current === 'vicinity' || isPropertyTourVicinitySlideActive()) {
+        ensureTourVicinityNearbyLayersOnTop(map);
+      }
     });
   }, [
     layerLabels,
@@ -3388,132 +3987,6 @@ useEffect(() => {
       clearLabelSourceWaitHandlers(mapRef.current);
     };
   }, [applyLabelLayers, clearLabelSourceWaitHandlers]);
-
-
-  /** Switch to Esri World Imagery (optionally with 3D terrain); re-sync data layers when ready. */
-  const handleSetImageryBasemap = (enable3D = false, onReady) => {
-    if (!mapRef.current) {
-      basemapApplyInProgressRef.current = false;
-      restoringPrintBasemapRef.current = false;
-      try {
-        onReady?.();
-      } catch (_) {
-        /* ignore */
-      }
-      return;
-    }
-
-    // Preserve the 3D toggle across basemap switches — only force-on for explicit `imagery-3d` ids.
-    if (enable3D) setIs3DEnabled(true);
-    const basemapId =
-      enable3D || is3DEnabledRef.current ? 'imagery-3d' : 'imagery';
-    basemapApplyGenerationRef.current += 1;
-    basemapApplyInProgressRef.current = true;
-    const applyGeneration = basemapApplyGenerationRef.current;
-    publishBasemapSelection(basemapId);
-
-    const runImageryBasemapBody = () => {
-      let done = false;
-      const finishReady = () => {
-        if (done) return;
-        if (applyGeneration !== basemapApplyGenerationRef.current) return;
-        const map = mapRef.current;
-        let applied =
-          map &&
-          verifyBasemapAppliedOnMap(map, basemapId) &&
-          !needsBasemapOverlayMaintenance(map, basemapId);
-        if (!applied) {
-          try {
-            repairBasemapOverlaysRef.current(basemapId);
-          } catch (_) {
-            /* ignore */
-          }
-          applied =
-            map &&
-            verifyBasemapAppliedOnMap(map, basemapId) &&
-            !needsBasemapOverlayMaintenance(map, basemapId);
-        }
-        done = true;
-        lastAppliedBasemapRef.current = basemapId;
-        needsInitialBasemapApplyRef.current = false;
-        initialBasemapRestoreCompleteRef.current = true;
-        basemapApplyInProgressRef.current = false;
-        restoringPrintBasemapRef.current = false;
-        basemapRestoreBlockingLayersRef.current = false;
-        try {
-          onReady?.();
-        } catch (_) {
-          /* ignore */
-        }
-      };
-
-      try {
-        ensureImageryBasemapRef.current();
-      } catch (e) {
-        console.error('Failed to add Imagery overlay:', e);
-      }
-
-      const applyPostLayerEnhancements = () => {
-        applyBasemapEnhancements();
-        bringLabelsToTop();
-        if (selectedFeature?.length > 0) {
-          highlightFeature(selectedFeature);
-        }
-        restackDataAndParcelsOnce();
-      };
-
-      const runLayerSync = () => {
-        basemapRestoreBlockingLayersRef.current = false;
-        try {
-          const maybePromise = updateLayers();
-          return Promise.resolve(maybePromise)
-            .then(() => {
-              applyPostLayerEnhancements();
-              finishReady();
-            })
-            .catch(() => {
-              applyPostLayerEnhancements();
-              finishReady();
-            });
-        } catch (_) {
-          applyPostLayerEnhancements();
-          finishReady();
-          return Promise.resolve();
-        }
-      };
-
-      runLayerSync();
-      // Unblock reconcile retries if overlay never becomes visible (do not mark lastApplied).
-      window.setTimeout(() => {
-        if (done) return;
-        basemapApplyInProgressRef.current = false;
-        restoringPrintBasemapRef.current = false;
-        basemapRestoreBlockingLayersRef.current = false;
-      }, 2000);
-    };
-
-    const map = mapRef.current;
-    let styleReady = false;
-    try {
-      styleReady = typeof map.isStyleLoaded === 'function' && map.isStyleLoaded();
-    } catch (_) {
-      styleReady = false;
-    }
-
-    /**
-     * Same style URL as flat Imagery; avoid setStyle (often no style.load) when upgrading to 3D only.
-     */
-    if (enable3D && baseMapRef.current === 'imagery' && styleReady) {
-      publishBasemapSelection('imagery-3d');
-      runImageryBasemapBody();
-      return;
-    }
-
-    withPersistentOutdoorsBase(() => {
-      hideManagedBasemapOverlays(true);
-      runImageryBasemapBody();
-    });
-  };
 
 
   /** Remove Mapbox terrain contour line and hillshade layers from the map. */
@@ -3635,7 +4108,11 @@ useEffect(() => {
   const applyBasemapEnhancements = useCallback(() => {
     const map = mapRef.current;
     if (!map || !map.isStyleLoaded?.()) return;
-    if (is3DEnabled) {
+    const use3D =
+      is3DEnabled ||
+      is3DEnabledRef.current ||
+      baseMapRef.current === 'imagery-3d';
+    if (use3D) {
       try {
         if (!map.getSource('mapbox-dem')) {
           map.addSource('mapbox-dem', {
@@ -3706,18 +4183,30 @@ useEffect(() => {
       applyParcelVisualizationVisibility(map, parcelMapVisibilityRef.current);
       bringLabelsToTop();
       applyCompositeLabelStyleForBasemap(map, regridStyleBasemapRef.current);
+      if (propertyTourSlideIdRef.current === 'vicinity' || isPropertyTourVicinitySlideActive()) {
+        ensureTourVicinityNearbyLayersOnTop(map);
+      }
       const wantedBasemap = String(
         activeBasemapIdRef?.current || regridStyleBasemapRef.current || ''
       ).trim();
       if (wantedBasemap && needsBasemapOverlayMaintenance(map, wantedBasemap)) {
         repairBasemapOverlaysRef.current(wantedBasemap);
+        if (propertyTourSlideIdRef.current === 'vicinity' || isPropertyTourVicinitySlideActive()) {
+          ensureTourVicinityNearbyLayersOnTop(map);
+        }
       }
       fireRegridRestack(map);
+      const selection = selectedFeatureRef.current;
+      if (selection?.length) {
+        repaintSelectionHighlightRef.current(selection, { syncOwnership: false });
+      }
       if (typeof map.triggerRepaint === 'function') map.triggerRepaint();
     } catch (_) {
       /* ignore */
     }
   }, [mapRef, activeBasemapIdRef]);
+
+  restackDataAndParcelsOnceRef.current = restackDataAndParcelsOnce;
 
   maintainBasemapStackRef.current = () => {
     const map = mapRef.current;
@@ -3735,6 +4224,9 @@ useEffect(() => {
       }
       bringLabelsToTop();
       applyCompositeLabelStyleForBasemap(map, wanted);
+      if (propertyTourSlideIdRef.current === 'vicinity' || isPropertyTourVicinitySlideActive()) {
+        ensureTourVicinityNearbyLayersOnTop(map);
+      }
     } catch (_) {
       /* ignore */
     }
@@ -3760,55 +4252,9 @@ useEffect(() => {
     syncMapUrlRef.current();
   };
 
-  /** Unblock layerStatus effect and run one final stack sync (saved print map open / basemap restore). */
-  const finishBasemapApplyRef = useRef(() => {});
-  finishBasemapApplyRef.current = () => {
-    basemapRestoreBlockingLayersRef.current = false;
-    restoringPrintBasemapRef.current = false;
-    basemapApplyInProgressRef.current = false;
-    initialBasemapRestoreCompleteRef.current = true;
-    const map = mapRef.current;
-    if (!map) {
-      syncMapUrlRef.current();
-      return;
-    }
-
-    const run = () => {
-      void Promise.resolve(updateLayers()).then(() => {
-        try {
-          applyLabelLayers();
-        } catch (_) {
-          /* ignore */
-        }
-        restackDataAndParcelsOnce();
-        maintainBasemapStackRef.current();
-        syncMapUrlRef.current();
-      });
-    };
-
-    if (map.isStyleLoaded?.()) {
-      run();
-      return;
-    }
-    map.once('idle', run);
-  };
-
   useEffect(() => {
-    window.setBasemapLayerSyncBlocked = (blocked) => {
-      const on = Boolean(blocked);
-      basemapRestoreBlockingLayersRef.current = on;
-      if (on) {
-        restoringPrintBasemapRef.current = true;
-        basemapApplyInProgressRef.current = true;
-        const map = mapRef.current;
-        if (map?.isStyleLoaded?.()) {
-          try {
-            applyParcelVisualizationVisibility(map, { showRegrid: false });
-          } catch (_) {
-            /* ignore */
-          }
-        }
-      }
+    window.setBasemapLayerSyncBlocked = () => {
+      // no-op: basemap overlays and data layers share the updateLayers pipeline
     };
     return () => {
       delete window.setBasemapLayerSyncBlocked;
@@ -3821,12 +4267,11 @@ useEffect(() => {
   }, [mapIsReady, applyBasemapEnhancements]);
 
   /**
-   * First map ready: one full applyBasemapById for URL/context basemap.
-   * After that: debounced overlay repair only — never re-run setStyle on zoom/ownership churn.
+   * Debounced basemap verify on idle — runs updateLayers when overlays drift from selection.
    */
   useEffect(() => {
     const map = mapRef.current;
-    if (!mapIsReady || !map?.isStyleLoaded?.()) return undefined;
+    if (!mapIsReady || !map) return undefined;
 
     const getWantedBasemapId = () =>
       normalizeBasemapId(
@@ -3838,16 +4283,14 @@ useEffect(() => {
       );
 
     const syncBasemapIfNeeded = () => {
-      if (basemapRestoreBlockingLayersRef.current || basemapApplyInProgressRef.current) return;
-      if (!initialBasemapRestoreCompleteRef.current) return;
-
+      if (!mapRef.current?.isStyleLoaded?.()) return;
       const wanted = getWantedBasemapId();
       if (!wanted) return;
 
-      const map = mapRef.current;
+      const liveMap = mapRef.current;
       const overlaysOk =
-        verifyBasemapAppliedOnMap(map, wanted) &&
-        !needsBasemapOverlayMaintenance(map, wanted);
+        verifyBasemapAppliedOnMap(liveMap, wanted) &&
+        !needsBasemapOverlayMaintenance(liveMap, wanted);
 
       if (overlaysOk) {
         lastAppliedBasemapRef.current = activeBasemapIdRef?.current || wanted;
@@ -3856,12 +4299,12 @@ useEffect(() => {
         return;
       }
 
-      if (repairBasemapOverlaysRef.current(wanted)) {
-        lastAppliedBasemapRef.current = activeBasemapIdRef?.current || wanted;
-      }
+      lastAppliedBasemapRef.current = null;
+      runUpdateLayersRef.current();
     };
 
     syncBasemapIfNeeded();
+    map.once('style.load', syncBasemapIfNeeded);
 
     let debounceId;
     const onIdle = () => {
@@ -3873,6 +4316,7 @@ useEffect(() => {
     return () => {
       window.clearTimeout(debounceId);
       try {
+        map.off('style.load', syncBasemapIfNeeded);
         map.off('idle', onIdle);
       } catch (_) {
         /* ignore */
@@ -3882,117 +4326,208 @@ useEffect(() => {
 
   /** Re-apply when the URL `basemap` param changes after initial load (back/forward, edited address bar). */
   useEffect(() => {
-    const fromUrl = getBasemapIdFromSearch(window.location.search);
+    const { id: fromUrl, enable3D, raw } = parseBasemapFromSearch(window.location.search);
     const hadParam = queryString.parse(window.location.search).basemap != null;
     if (!hadParam && fromUrl === DEFAULT_BASEMAP_ID) {
-      prevUrlBasemapRef.current = fromUrl;
+      prevUrlBasemapRef.current = raw || fromUrl;
       return;
     }
-    if (fromUrl === prevUrlBasemapRef.current) return;
-    prevUrlBasemapRef.current = fromUrl;
+    const urlKey = raw || fromUrl;
+    if (urlKey === prevUrlBasemapRef.current) return;
+    prevUrlBasemapRef.current = urlKey;
 
     if (!initialBasemapRestoreCompleteRef.current) return;
 
-    urlBasemapIdRef.current = fromUrl;
-    publishBasemapSelection(fromUrl);
+    const publishedId = enable3D && fromUrl === 'imagery' ? 'imagery-3d' : fromUrl;
+    urlBasemapIdRef.current = publishedId;
+    publishBasemapSelection(publishedId);
 
     if (!mapIsReady || !mapRef.current?.isStyleLoaded?.()) return;
-    applyBasemapByIdRef.current(fromUrl);
+    applyBasemapByIdRef.current(fromUrl, undefined, { enable3D });
   }, [routerLocation.search, mapIsReady, publishBasemapSelection]);
 
   if (applyTourPropertyBasemapRef) {
     applyTourPropertyBasemapRef.current = async () => {
-      if (!mapRef.current) return;
-      try {
-        if (baseMapRef.current === 'imagery-3d') return;
-      } catch (_) {
-        /* ignore */
+      const map = mapRef.current;
+      if (!map) return;
+
+      is3DEnabledRef.current = true;
+      setIs3DEnabled(true);
+
+      if (isTourImagery3DActive(map)) {
+        applyBasemapEnhancements();
+        return;
       }
-      await Promise.race([
+
+      const applyOnce = () =>
         new Promise((resolve) => {
           try {
-            handleSetImageryBasemap(true, () => resolve());
+            applyBasemapByIdRef.current('imagery', resolve, { enable3D: true });
           } catch (_) {
             resolve();
           }
-        }),
-        new Promise((resolve) => window.setTimeout(resolve, 8000)),
-      ]);
+        });
+
+      const deadline = Date.now() + 22000;
+      while (Date.now() < deadline) {
+        await applyOnce();
+        applyBasemapEnhancements();
+        await waitUntilTourImagery3DActive(map, { timeoutMs: 3500, pollMs: 150 });
+        if (isTourImagery3DActive(map)) return;
+      }
+      applyBasemapEnhancements();
     };
   }
 
   /** Same code path as the basemap picker — used when opening a saved print map or client share. */
   const applyBasemapByIdRef = useRef(() => {});
-  applyBasemapByIdRef.current = (basemapId) => {
+  applyBasemapByIdRef.current = (basemapId, onReady, options = {}) => {
+    const raw = String(basemapId || '').trim().toLowerCase();
     const id = normalizeBasemapId(basemapId);
-    mapDebug.trace('applyBasemapById', id);
-    basemapApplyGenerationRef.current += 1;
-    basemapApplyInProgressRef.current = true;
-    basemapRestoreBlockingLayersRef.current = true;
-    restoringPrintBasemapRef.current = true;
-    lastAppliedBasemapRef.current = null;
+    const enable3D = options.enable3D === true || raw === 'imagery-3d';
+    mapDebug.trace('applyBasemapById', id, { enable3D });
     if (pendingPrintBasemapRestoreRef) pendingPrintBasemapRestoreRef.current = null;
 
-    const onDone = () => {
-      const appliedId = String(activeBasemapIdRef?.current || id).trim();
+    if (enable3D) {
+      is3DEnabledRef.current = true;
+      setIs3DEnabled(true);
+    }
+
+    const publishedId = enable3D && id === 'imagery' ? 'imagery-3d' : id;
+    publishBasemapSelection(publishedId);
+    lastAppliedBasemapRef.current = null;
+    restoringPrintBasemapRef.current = true;
+
+    void runUpdateLayersRef.current().then(() => {
+      restoringPrintBasemapRef.current = false;
+      try {
+        applyBasemapEnhancements();
+        applyLabelLayers();
+      } catch (_) {
+        /* ignore */
+      }
+      const appliedId = normalizeBasemapId(activeBasemapIdRef?.current || publishedId);
       const map = mapRef.current;
-      const verified =
+      if (
         map &&
         verifyBasemapAppliedOnMap(map, appliedId) &&
-        !needsBasemapOverlayMaintenance(map, appliedId);
-      if (verified) {
+        !needsBasemapOverlayMaintenance(map, appliedId)
+      ) {
         lastAppliedBasemapRef.current = appliedId;
+        initialBasemapRestoreCompleteRef.current = true;
         needsInitialBasemapApplyRef.current = false;
+        try {
+          syncMapUrlRef.current();
+        } catch (_) {
+          /* ignore */
+        }
+      } else {
+        scheduleBasemapUntilVerifiedRef.current(appliedId);
       }
-      initialBasemapRestoreCompleteRef.current = true;
-      if (activeBasemapIdRef) activeBasemapIdRef.current = appliedId;
-      finishBasemapApplyRef.current();
-    };
-
-    publishBasemapSelection(id);
-
-    if (id === 'imagery') {
-      handleSetImageryBasemap(false, onDone);
-      return;
-    }
-    if (id === 'outdoors-v12' || id === 'satellite-streets-v12' || id === 'streets-v11') {
-      handleBasemapChange(id, false, onDone);
-      return;
-    }
-
-    handleBasemapChange(id, false, onDone);
+      try {
+        onReady?.();
+      } catch (_) {
+        /* ignore */
+      }
+    });
   };
 
+  /** Property tour: re-apply Esri + terrain if UI says 3D but the live map stack is still flat. */
   useEffect(() => {
-    window.applyBasemapById = (basemapId) => applyBasemapByIdRef.current(basemapId);
+    if (!mapIsReady || !mapRef.current) return undefined;
+    const map = mapRef.current;
+    const isTourMode = () =>
+      typeof document !== 'undefined' &&
+      document.documentElement.classList.contains('shared-tour-mode');
+
+    const reconcileTourImagery3D = () => {
+      if (!isTourMode()) return;
+      try {
+        // Don't fight an in-flight tour fly/orbit — that stalls zoom+orbit on first pass.
+        if (typeof map.isMoving === 'function' && map.isMoving()) return;
+      } catch (_) {
+        /* ignore */
+      }
+      if (isTourImagery3DActive(map) && is3DEnabledRef.current) return;
+      is3DEnabledRef.current = true;
+      setIs3DEnabled(true);
+      try {
+        applyBasemapByIdRef.current('imagery', undefined, { enable3D: true });
+        applyBasemapEnhancements();
+      } catch (_) {
+        /* ignore */
+      }
+    };
+
+    if (isTourMode()) reconcileTourImagery3D();
+    map.on('idle', reconcileTourImagery3D);
+    return () => {
+      try {
+        map.off('idle', reconcileTourImagery3D);
+      } catch (_) {
+        /* ignore */
+      }
+    };
+  }, [mapIsReady]);
+
+  useEffect(() => {
+    window.applyBasemapById = (basemapId, onReady) => {
+      const raw = String(basemapId || '').trim().toLowerCase();
+      applyBasemapByIdRef.current(basemapId, onReady, { enable3D: raw === 'imagery-3d' });
+    };
+    /** Light re-apply when overlays are stale (e.g. Create Map route change) without a full slow restore. */
+    window.nudgeBasemapById = (basemapId) => {
+      const id = normalizeBasemapId(
+        basemapId || activeBasemapIdRef?.current || currentBasemapId || getBasemapIdFromSearch(window.location.search)
+      );
+      if (id && activeBasemapIdRef) activeBasemapIdRef.current = id;
+      lastAppliedBasemapRef.current = null;
+      runUpdateLayersRef.current();
+    };
     return () => {
       delete window.applyBasemapById;
+      delete window.nudgeBasemapById;
     };
-  }, []);
+  }, [currentBasemapId, activeBasemapIdRef]);
 
   /** After map is ready, apply `?basemap=` from URL (ownership stacks in `updateLayers` like other layers). */
   useEffect(() => {
-    if (!mapIsReady || !mapRef.current?.isStyleLoaded?.()) return undefined;
-    if (initialUrlBasemapAppliedRef.current) return undefined;
-    initialUrlBasemapAppliedRef.current = true;
+    if (!mapIsReady || !mapRef.current) return undefined;
 
-    const basemapId = getBasemapIdFromSearch(window.location.search);
-    urlBasemapIdRef.current = basemapId;
-    initialBasemapRestoreCompleteRef.current = false;
-    needsInitialBasemapApplyRef.current = true;
-    mapDebug.trace('applyBasemapById (url on mapIsReady)', basemapId);
-    applyBasemapByIdRef.current(basemapId);
-    return undefined;
+    const applyBasemapFromUrl = () => {
+      const map = mapRef.current;
+      if (!map?.isStyleLoaded?.()) return;
+      if (initialUrlBasemapAppliedRef.current) return;
+      initialUrlBasemapAppliedRef.current = true;
+
+      const { id: basemapId, enable3D } = parseBasemapFromSearch(window.location.search);
+      urlBasemapIdRef.current = enable3D && basemapId === 'imagery' ? 'imagery-3d' : basemapId;
+      initialBasemapRestoreCompleteRef.current = false;
+      needsInitialBasemapApplyRef.current = true;
+      mapDebug.trace('applyBasemapById (url on mapIsReady)', basemapId, { enable3D });
+      applyBasemapByIdRef.current(basemapId, undefined, { enable3D });
+    };
+
+    applyBasemapFromUrl();
+    if (initialUrlBasemapAppliedRef.current) return undefined;
+
+    const map = mapRef.current;
+    map.once('style.load', applyBasemapFromUrl);
+    map.once('idle', applyBasemapFromUrl);
+    return () => {
+      try {
+        map.off('style.load', applyBasemapFromUrl);
+        map.off('idle', applyBasemapFromUrl);
+      } catch (_) {
+        /* ignore */
+      }
+    };
   }, [mapIsReady]);
 
 
-  /** UI basemap picker entry point — records URL state and delegates to `applyBasemapByIdRef`. */
+  /** UI basemap picker — same path as saved print maps and URL restore. */
   const selectBasemapById = (id) => {
-    const next = normalizeBasemapId(id);
-    urlBasemapIdRef.current = next;
-    needsInitialBasemapApplyRef.current = false;
-    writeBasemapToUrlRef.current(next);
-    applyBasemapByIdRef.current(next);
+    applyBasemapByIdRef.current(id);
   };
 
   // Basemap configuration with thumbnails — all options use selectBasemapById (single apply path).
@@ -4370,20 +4905,51 @@ useEffect(() => {
 
   // --- 9. Feature selection & highlight ---
 
-  /** Draw red fill/outline GeoJSON highlight layers for the selected map features. */
+  /** `layerStatus` uses `ownership`; Regrid MVT is registered under the same key for queries. */
+  const highlightDictLayerMatchesStatus = (dictLayer, statusLayerName) =>
+    dictLayer === statusLayerName ||
+    (statusLayerName === 'ownership' && dictLayer === 'regrid-parcels');
+
+  /** Hide GeoJSON selection overlay (hosted / legacy layers). */
+  const hideGeoJsonSelectionHighlight = (map) => {
+    if (!map?.getStyle) return;
+    try {
+      if (map.getSource(SELECTION_HIGHLIGHT_SOURCE_ID)) {
+        map.getSource(SELECTION_HIGHLIGHT_SOURCE_ID).setData(EMPTY_FEATURE_COLLECTION);
+      }
+      [SELECTION_HIGHLIGHT_FILL_ID, SELECTION_HIGHLIGHT_LINE_ID].forEach((id) => {
+        if (map.getLayer(id)) {
+          map.setLayoutProperty(id, 'visibility', 'none');
+        }
+      });
+    } catch (_) {
+      /* ignore */
+    }
+  };
+
+  const stampSelectionFeature = (feature) => {
+    if (!feature) return feature;
+    const layerId =
+      feature.properties?.cvMapLayer || resolveHostedMapLayerFromFeature(feature);
+    if (!layerId) return feature;
+    if (feature.properties?.cvMapLayer === layerId) return feature;
+    return {
+      ...feature,
+      properties: {
+        ...(feature.properties || {}),
+        cvMapLayer: layerId,
+      },
+    };
+  };
+
+  /** Draw red highlight — Regrid via MVT filter; hosted/legacy via GeoJSON overlay. */
   const highlightFeature = (inputFeatures, overrideLayerStatus, overrideHighlightSettings) => {
-    // Use passed highlightSettings if available, otherwise fall back to global
-    let effectiveHighlightSettings = overrideHighlightSettings || highlightSettings;
+    let effectiveHighlightSettings =
+      overrideHighlightSettings || highlightSettingsRef.current || highlightSettings;
     
     // Safety check: if highlightSettings is null, use defaults
     if (!effectiveHighlightSettings) {
-      effectiveHighlightSettings = {
-        fillColor: '#FF0000',
-        fillOpacity: 0.5,
-        fillOutlineColor: '#FF0000',
-        lineColor: '#FF0000',
-        lineWidth: 3
-      };
+      effectiveHighlightSettings = DEFAULT_HIGHLIGHT_SETTINGS;
     }
 
     // Print / map maker: show parcel boundary via line only — avoid tinted fill over imagery.
@@ -4396,7 +4962,9 @@ useEffect(() => {
     }
     
     
-    const effectiveLayerStatus = overrideLayerStatus ?? layerStatus;
+    const effectiveLayerStatus = resolveLayerStatusForSelection(
+      overrideLayerStatus ?? layerStatus
+    );
 
     if (!inputFeatures || inputFeatures.length === 0) {
       selectionHighlightSnapshotRef.current = null;
@@ -4406,9 +4974,56 @@ useEffect(() => {
 
     const normalizedInputFeatures = inputFeatures
       .map(normalizeInputFeatureForHighlight)
-      .filter(Boolean);
+      .filter(Boolean)
+      .map(stampSelectionFeature);
 
-    // Create a mapping of feature identifiers to their features
+    const visibleInputFeatures = filterSelectionToVisibleLayers(
+      normalizedInputFeatures,
+      effectiveLayerStatus
+    );
+
+    if (visibleInputFeatures.length === 0) {
+      selectionHighlightSnapshotRef.current = null;
+      removeHighlight();
+      return;
+    }
+
+    const map = mapRef.current;
+    const regridSelectionFeatures = visibleInputFeatures.filter(isRegridParcelSelectionFeature);
+    let geoJsonInputFeatures = visibleInputFeatures.filter(
+      (feature) => !isRegridParcelSelectionFeature(feature)
+    );
+    const isTileSourcedRegridFeature = (feature) =>
+      feature.layer?.id === 'regrid-parcels-layer' ||
+      feature.layer?.id === 'regrid-parcels-outline';
+
+    if (regridSelectionFeatures.length) {
+      const hasRegridMvt = Boolean(map?.getSource?.('regrid-parcels'));
+      const tileSourced = regridSelectionFeatures.every(isTileSourcedRegridFeature);
+
+      if (hasRegridMvt) {
+        setRegridParcelSelectionHighlight(map, regridSelectionFeatures, effectiveHighlightSettings);
+        bringRegridParcelLayersBeforeSymbolLabels(map);
+      }
+
+      if (tileSourced && hasRegridMvt) {
+        hideGeoJsonSelectionHighlight(map);
+      } else if (regridSelectionFeatures.some((feature) => feature?.geometry)) {
+        geoJsonInputFeatures = [...geoJsonInputFeatures, ...regridSelectionFeatures];
+      } else if (!hasRegridMvt) {
+        clearRegridParcelSelectionHighlight(map);
+      }
+    } else {
+      clearRegridParcelSelectionHighlight(map);
+    }
+
+    if (geoJsonInputFeatures.length === 0) {
+      hideGeoJsonSelectionHighlight(map);
+      selectionHighlightSnapshotRef.current = null;
+      return;
+    }
+
+    // Create a mapping of feature identifiers to their features (hosted + legacy only)
     const featureDict = {};
     const layerToFeatureMap = {}; // Track which layer each feature came from
     const geometrySeenByIdentifier = {};
@@ -4423,34 +5038,17 @@ useEffect(() => {
       inputFeaturesByIdentifier[idKey] = inputFeature;
     };
     
-    normalizedInputFeatures.forEach((feature) => {
+    geoJsonInputFeatures.forEach((feature) => {
       const props = feature.properties || {};
 
-      // Check if this is a Regrid parcel first
-      const isRegridParcel = feature.layer?.id === 'regrid-parcels-layer' || 
-                            feature.layer?.id === 'regrid-parcels-outline' ||
-                            Boolean(props.ll_uuid || props.parcelnumb || props.global_parcel_uid);
-      
-      if (isRegridParcel) {
-        const identifier = props.ll_uuid || 
-                          props.parcelnumb || 
-                          props.parcel_id ||
-                          props.global_parcel_uid ||
-                          props.id ||
-                          feature.id;
-        registerHighlightIdentifier(identifier, 'regrid-parcels', feature);
-        return;
-      }
-
-      const hostedLayer = resolveHostedMapLayerFromFeature(feature);
-      if (hostedLayer) {
+      const hostedLayer = getMapLayerToggleIdForFeature(feature);
+      if (hostedLayer && hostedLayer !== 'ownership') {
         const identifier = getHostedFeatureClickId(feature, hostedLayer);
         registerHighlightIdentifier(identifier, hostedLayer, feature);
         return;
       }
       
       // Legacy / non-MVT features
-      // We need to find the layer name that this feature came from
       const possibleIdentifiers = [
         props.GFI,
         props.Name,
@@ -4461,15 +5059,16 @@ useEffect(() => {
         props.global_parcel_uid,
       ].filter(Boolean);
       
-      // Find the layer that contains this feature
       let sourceLayerName = null;
-      const visibleLayers = Object.keys(effectiveLayerStatus).filter((layerName) => effectiveLayerStatus[layerName]);
+      const visibleLayers = Object.keys(effectiveLayerStatus).filter(
+        (layerName) => effectiveLayerStatus[layerName] && layerName !== 'ownership'
+      );
       
       for (const layerName of visibleLayers) {
         const queryLayerIds = getQueryLayerIdsForTileLayer(layerName, mapRef.current);
         if (queryLayerIds.length) {
           const queriedFeatures = mapRef.current.queryRenderedFeatures({ layers: queryLayerIds });
-          const foundFeature = queriedFeatures.find(qf => {
+          const foundFeature = queriedFeatures.find((qf) => {
             const qfId = getFeatureIdentifier(qf, layerName);
             return possibleIdentifiers.includes(qfId);
           });
@@ -4485,30 +5084,30 @@ useEffect(() => {
         const identifier = getFeatureIdentifier(feature, sourceLayerName);
         if (identifier) {
           registerHighlightIdentifier(identifier, sourceLayerName, feature);
-        } else {
         }
       } else {
         const fallbackId =
           props.GFI || props.pidn || props.global_parcel_uid || props.ll_uuid || props.parcelnumb;
         if (fallbackId) {
-          const fallbackLayer = props.ll_uuid || props.parcelnumb || props.global_parcel_uid
-            ? 'regrid-parcels'
-            : 'ownership';
-          registerHighlightIdentifier(fallbackId, fallbackLayer, feature);
-        } else {
+          registerHighlightIdentifier(fallbackId, 'ownership', feature);
         }
       }
     });
 
-    // Query features from all visible layers and match them
-    const visibleLayers = Object.keys(effectiveLayerStatus).filter((layerName) => effectiveLayerStatus[layerName]);
+    const visibleLayers = Object.keys(effectiveLayerStatus).filter(
+      (layerName) => effectiveLayerStatus[layerName] && layerName !== 'ownership'
+    );
     visibleLayers.forEach((layerName) => {
       const queryLayerIds = getQueryLayerIdsForTileLayer(layerName, mapRef.current);
       if (!queryLayerIds.length) return;
       const queriedFeatures = mapRef.current.queryRenderedFeatures({ layers: queryLayerIds });
       queriedFeatures.forEach((visibleFeature) => {
         const visibleIdentifier = String(getFeatureIdentifier(visibleFeature, layerName) ?? '');
-        if (visibleIdentifier && featureDict[visibleIdentifier] && layerToFeatureMap[visibleIdentifier] === layerName) {
+        if (
+          visibleIdentifier &&
+          featureDict[visibleIdentifier] &&
+          highlightDictLayerMatchesStatus(layerToFeatureMap[visibleIdentifier], layerName)
+        ) {
           const geometryKey = JSON.stringify(visibleFeature.geometry || {});
           const seen = geometrySeenByIdentifier[visibleIdentifier];
           if (seen && !seen.has(geometryKey)) {
@@ -4518,33 +5117,8 @@ useEffect(() => {
         }
       });
     });
-    
-    // Also query Regrid parcels if any Regrid features are being highlighted
-    const hasRegridFeatures = Object.values(layerToFeatureMap).some(layer => layer === 'regrid-parcels');
-    if (hasRegridFeatures && mapRef.current.getLayer('regrid-parcels-layer')) {
-      // Query only from fill layer to avoid duplicate geometries from outline + fill.
-      const regridFeatures = mapRef.current.queryRenderedFeatures({ layers: ['regrid-parcels-layer'] });
-      regridFeatures.forEach((regridFeature) => {
-        const regridIdentifier = String(
-          regridFeature.properties.ll_uuid ||
-            regridFeature.properties.parcelnumb ||
-            regridFeature.properties.parcel_id ||
-            regridFeature.properties.id ||
-            regridFeature.id ||
-            ''
-        );
-        if (regridIdentifier && featureDict[regridIdentifier] && layerToFeatureMap[regridIdentifier] === 'regrid-parcels') {
-          const geometryKey = JSON.stringify(regridFeature.geometry || {});
-          const seen = geometrySeenByIdentifier[regridIdentifier];
-          if (seen && !seen.has(geometryKey)) {
-            seen.add(geometryKey);
-            featureDict[regridIdentifier].push(turf.feature(regridFeature.geometry, regridFeature.properties));
-          }
-        }
-      });
-    }
 
-    // Search results may include geometry before parcel tiles render in the viewport.
+    // Search results may include geometry before tiles render in the viewport.
     Object.keys(featureDict).forEach((identifier) => {
       if (featureDict[identifier].length > 0) return;
       const inputFeature = inputFeaturesByIdentifier[identifier];
@@ -4591,10 +5165,29 @@ useEffect(() => {
       Array.isArray(selectionHighlightSnapshotRef.current) &&
       selectionHighlightSnapshotRef.current.length > 0
     ) {
-      dedupedUnifiedFeatures.push(...selectionHighlightSnapshotRef.current);
+      const visibleSnapshots = filterSelectionToVisibleLayers(
+        selectionHighlightSnapshotRef.current,
+        effectiveLayerStatus
+      );
+      if (visibleSnapshots.length > 0) {
+        dedupedUnifiedFeatures.push(...visibleSnapshots);
+      }
     }
 
     if (dedupedUnifiedFeatures.length === 0) {
+      if (map && geoJsonInputFeatures.length) {
+        const retry = () =>
+          highlightFeatureRef.current(inputFeatures, overrideLayerStatus, overrideHighlightSettings);
+        try {
+          map.once('idle', retry);
+        } catch (_) {
+          /* ignore */
+        }
+        window.setTimeout(retry, 150);
+        window.setTimeout(retry, 450);
+        window.setTimeout(retry, 900);
+        window.setTimeout(retry, 1500);
+      }
       return;
     }
 
@@ -4604,68 +5197,82 @@ useEffect(() => {
   /** Persistent selection highlight — update GeoJSON in place (no remove/re-add on pan). */
   const upsertSelectionHighlight = (features, settings) => {
     const map = mapRef.current;
-    if (!map?.isStyleLoaded?.() || !features?.length) return;
+    if (!map || !features?.length) return;
 
-    try {
-      const data = JSON.parse(JSON.stringify(turf.featureCollection(features)));
-      const beforeId = getFirstSymbolLayerId(map);
-      const fillPaint = {
-        'fill-color': settings.fillColor,
-        'fill-outline-color': settings.fillOutlineColor,
-        'fill-opacity': settings.fillOpacity ?? 1,
-      };
-      const linePaint = {
-        'line-color': settings.lineColor,
-        'line-width': settings.lineWidth ?? 3,
-      };
+    const paint = () => {
+      if (!map.getStyle?.()) return;
+      try {
+        const data = JSON.parse(JSON.stringify(turf.featureCollection(features)));
+        const beforeId = getFirstSymbolLayerId(map);
+        const fillPaint = {
+          'fill-color': settings.fillColor,
+          'fill-outline-color': settings.fillOutlineColor,
+          'fill-opacity': settings.fillOpacity ?? 1,
+        };
+        const linePaint = {
+          'line-color': settings.lineColor,
+          'line-width': settings.lineWidth ?? 3,
+        };
 
-      if (!map.getSource(SELECTION_HIGHLIGHT_SOURCE_ID)) {
-        map.addSource(SELECTION_HIGHLIGHT_SOURCE_ID, { type: 'geojson', data });
-      } else {
-        map.getSource(SELECTION_HIGHLIGHT_SOURCE_ID).setData(data);
+        if (!map.getSource(SELECTION_HIGHLIGHT_SOURCE_ID)) {
+          map.addSource(SELECTION_HIGHLIGHT_SOURCE_ID, { type: 'geojson', data });
+        } else {
+          map.getSource(SELECTION_HIGHLIGHT_SOURCE_ID).setData(data);
+        }
+
+        if (!map.getLayer(SELECTION_HIGHLIGHT_FILL_ID)) {
+          map.addLayer(
+            {
+              id: SELECTION_HIGHLIGHT_FILL_ID,
+              type: 'fill',
+              source: SELECTION_HIGHLIGHT_SOURCE_ID,
+              paint: fillPaint,
+            },
+            beforeId
+          );
+        } else {
+          map.setLayoutProperty(SELECTION_HIGHLIGHT_FILL_ID, 'visibility', 'visible');
+          Object.entries(fillPaint).forEach(([key, val]) => {
+            map.setPaintProperty(SELECTION_HIGHLIGHT_FILL_ID, key, val);
+          });
+        }
+
+        if (!map.getLayer(SELECTION_HIGHLIGHT_LINE_ID)) {
+          map.addLayer(
+            {
+              id: SELECTION_HIGHLIGHT_LINE_ID,
+              type: 'line',
+              source: SELECTION_HIGHLIGHT_SOURCE_ID,
+              paint: linePaint,
+            },
+            beforeId
+          );
+        } else {
+          map.setLayoutProperty(SELECTION_HIGHLIGHT_LINE_ID, 'visibility', 'visible');
+          Object.entries(linePaint).forEach(([key, val]) => {
+            map.setPaintProperty(SELECTION_HIGHLIGHT_LINE_ID, key, val);
+          });
+        }
+
+        selectionHighlightSnapshotRef.current = features.map((f) => JSON.parse(JSON.stringify(f)));
+        bringHighlightLayersToTop(map);
+      } catch (error) {
+        console.error('Error upserting selection highlight:', error);
       }
+    };
 
-      if (!map.getLayer(SELECTION_HIGHLIGHT_FILL_ID)) {
-        map.addLayer(
-          {
-            id: SELECTION_HIGHLIGHT_FILL_ID,
-            type: 'fill',
-            source: SELECTION_HIGHLIGHT_SOURCE_ID,
-            paint: fillPaint,
-          },
-          beforeId
-        );
-      } else {
-        map.setLayoutProperty(SELECTION_HIGHLIGHT_FILL_ID, 'visibility', 'visible');
-        Object.entries(fillPaint).forEach(([key, val]) => {
-          map.setPaintProperty(SELECTION_HIGHLIGHT_FILL_ID, key, val);
-        });
+    if (!map.isStyleLoaded?.()) {
+      try {
+        map.once('idle', paint);
+      } catch (_) {
+        window.setTimeout(paint, 50);
       }
-
-      if (!map.getLayer(SELECTION_HIGHLIGHT_LINE_ID)) {
-        map.addLayer(
-          {
-            id: SELECTION_HIGHLIGHT_LINE_ID,
-            type: 'line',
-            source: SELECTION_HIGHLIGHT_SOURCE_ID,
-            paint: linePaint,
-          },
-          beforeId
-        );
-      } else {
-        map.setLayoutProperty(SELECTION_HIGHLIGHT_LINE_ID, 'visibility', 'visible');
-        Object.entries(linePaint).forEach(([key, val]) => {
-          map.setPaintProperty(SELECTION_HIGHLIGHT_LINE_ID, key, val);
-        });
-      }
-
-      selectionHighlightSnapshotRef.current = features.map((f) => JSON.parse(JSON.stringify(f)));
-      bringHighlightLayersToTop(map);
-      fireRegridRestack(map);
-    } catch (error) {
-      console.error('Error upserting selection highlight:', error);
+      return;
     }
+    paint();
   };
+
+  upsertSelectionHighlightRef.current = upsertSelectionHighlight;
 
   /** Raise selection highlight above parcel/MVT layers after ownership restack. */
   const bringHighlightLayersToTop = useCallback((map) => {
@@ -4685,15 +5292,70 @@ useEffect(() => {
     const selection = selectedFeatureRef.current;
     const map = mapRef.current;
     if (!selection?.length || !map?.getStyle) return;
+    deferSelectionHighlightUntilSettledRef.current(selection);
+  }, []);
 
-    const snap = selectionHighlightSnapshotRef.current;
-    const settings = highlightSettingsRef.current || highlightSettings;
-    if (snap?.length) {
-      upsertSelectionHighlight(snap, settings);
-      return;
+  /** Sync ownership stack, then repaint selection (MVT filter for Regrid, GeoJSON for others). */
+  const repaintSelectionHighlight = useCallback((features, { syncOwnership = false } = {}) => {
+    const map = mapRef.current;
+    if (!map?.getStyle?.() || !features?.length) return;
+    if (syncOwnership && parcelMapVisibilityRef.current?.showRegrid) {
+      syncOwnershipTileLayer(map, parcelMapVisibilityRef.current);
     }
-    highlightFeatureRef.current(selection);
-  }, [highlightSettings]);
+    highlightFeatureRef.current(
+      features,
+      resolveLayerStatusForSelection(layerStatusRef.current)
+    );
+  }, []);
+
+  const deferSelectionHighlightUntilSettled = useCallback((features) => {
+    if (!features?.length) return;
+
+    const map = mapRef.current;
+    if (!map) return;
+
+    selectionHighlightSettleGenRef.current += 1;
+    const generation = selectionHighlightSettleGenRef.current;
+
+    const settledReapply = () => {
+      if (generation !== selectionHighlightSettleGenRef.current) return;
+      repaintSelectionHighlight(features, { syncOwnership: true });
+    };
+
+    try {
+      map.once('idle', settledReapply);
+    } catch (_) {
+      /* ignore */
+    }
+
+    let onRegridSourceData;
+    try {
+      onRegridSourceData = (e) => {
+        if (e?.sourceId === 'regrid-parcels' && e.isSourceLoaded) {
+          settledReapply();
+        }
+      };
+      map.on('sourcedata', onRegridSourceData);
+    } catch (_) {
+      onRegridSourceData = null;
+    }
+
+    [0, 120, 350, 600, 1000, 1500].forEach((ms) => {
+      window.setTimeout(() => {
+        settledReapply();
+        if (ms === 1500 && onRegridSourceData) {
+          try {
+            map.off('sourcedata', onRegridSourceData);
+          } catch (_) {
+            /* ignore */
+          }
+        }
+      }, ms);
+    });
+  }, [repaintSelectionHighlight]);
+
+  deferSelectionHighlightUntilSettledRef.current = deferSelectionHighlightUntilSettled;
+  repaintSelectionHighlightRef.current = repaintSelectionHighlight;
 
   highlightFeatureRef.current = highlightFeature;
   reapplySelectionHighlightIfNeededRef.current = reapplySelectionHighlightIfNeeded;
@@ -4710,18 +5372,8 @@ useEffect(() => {
     const map = mapRef.current;
     if (!map?.getStyle) return;
 
-    try {
-      if (map.getSource(SELECTION_HIGHLIGHT_SOURCE_ID)) {
-        map.getSource(SELECTION_HIGHLIGHT_SOURCE_ID).setData(EMPTY_FEATURE_COLLECTION);
-      }
-      [SELECTION_HIGHLIGHT_FILL_ID, SELECTION_HIGHLIGHT_LINE_ID].forEach((id) => {
-        if (map.getLayer(id)) {
-          map.setLayoutProperty(id, 'visibility', 'none');
-        }
-      });
-    } catch (_) {
-      /* ignore */
-    }
+    clearRegridParcelSelectionHighlight(map);
+    hideGeoJsonSelectionHighlight(map);
 
     // Legacy dynamic highlight-layer-* cleanup
     (map.getStyle().layers || []).forEach((layer) => {
@@ -4753,6 +5405,8 @@ useEffect(() => {
   /** Clear selection/highlight when a layer is toggled off (ownership/Regrid is skipped in `updateLayers`). */
   useEffect(() => {
     if (!mapIsReady || !selectedFeature?.length) return;
+    // Parcel wizard turns ownership off in layerStatus but still shows/selects Regrid parcels.
+    if (propertyMapWizardActive) return;
 
     const hiddenLayerNames = Object.keys(layerStatus).filter((name) => !layerStatus[name]);
     if (hiddenLayerNames.length === 0) return;
@@ -4769,15 +5423,30 @@ useEffect(() => {
     const clearedRegrid =
       !layerStatus.ownership && selectedFeature.some(isRegridParcelPolygonFeature);
 
+    selectedFeatureRef.current = nextSelection;
+
     if (nextSelection.length === 0) {
       setSelectedFeatures([]);
       removeHighlight();
+      if (clearedRegrid) {
+        clearPendingHighlightRestore();
+        syncMapUrlRef.current();
+      }
     } else {
       setSelectedFeatures(nextSelection);
       highlightFeature(nextSelection);
     }
 
-  }, [layerStatus, mapIsReady, selectedFeature, highlightFeature, removeHighlight, setSelectedFeatures]);
+  }, [
+    layerStatus,
+    mapIsReady,
+    selectedFeature,
+    propertyMapWizardActive,
+    highlightFeature,
+    removeHighlight,
+    setSelectedFeatures,
+    clearPendingHighlightRestore,
+  ]);
 
 
   /** Property wizard: turn merged parcel geometry into one or more boundary print polygons. */
@@ -4866,7 +5535,9 @@ useEffect(() => {
 
     setLayerStatus({ ownership: true });
     setLayerOrder(['ownership']);
-    handleBasemapChange('outdoors-v12', false);
+    publishBasemapSelection('outdoors-v12');
+    lastAppliedBasemapRef.current = null;
+    runUpdateLayersRef.current();
 
     try {
       mapRef.current.stop();
@@ -4897,7 +5568,7 @@ useEffect(() => {
     toggleLayerLabels,
     removeHighlight,
     clearAllDrawings,
-    handleBasemapChange,
+    publishBasemapSelection,
   ]);
 
   /** Re-apply fill/line paint on existing highlight layers when highlight settings change. */
@@ -4926,6 +5597,8 @@ useEffect(() => {
       mapRef.current.setPaintProperty(SELECTION_HIGHLIGHT_LINE_ID, 'line-width', highlightSettings.lineWidth ?? 3);
     }
 
+    applyRegridParcelSelectionHighlightPaint(mapRef.current, highlightSettings);
+
     // 🎨 Force a repaint to ensure changes are visible immediately
     try {
       // Method 1: Try to trigger a repaint
@@ -4934,7 +5607,7 @@ useEffect(() => {
       }
       
       // Method 2: Force a resize to trigger redraw
-      mapRef.current.resize();
+      safeMapResize(mapRef.current);
       
       // Method 3: Force a style update
       if (mapRef.current.getStyle()) {
@@ -4942,7 +5615,12 @@ useEffect(() => {
       }
       
       // Method 4: Force persistent highlight layers to refresh by temporarily hiding/showing
-      [SELECTION_HIGHLIGHT_FILL_ID, SELECTION_HIGHLIGHT_LINE_ID].forEach((layerId) => {
+      [
+        SELECTION_HIGHLIGHT_FILL_ID,
+        SELECTION_HIGHLIGHT_LINE_ID,
+        REGRID_PARCELS_SELECTION_FILL_ID,
+        REGRID_PARCELS_SELECTION_LINE_ID,
+      ].forEach((layerId) => {
         if (mapRef.current.getLayer(layerId)) {
           mapRef.current.setLayoutProperty(layerId, 'visibility', 'none');
           setTimeout(() => {
@@ -4958,207 +5636,155 @@ useEffect(() => {
   
 
   useEffect(() => {
-    if (activeTab === 'map') {
-      setTimeout(() => {
-        if (mapRef.current) {
-          mapRef.current.resize();
-          if (isPrinting) {
-            mapRef.current.triggerRepaint?.();
-            setOverlayRenderVersion((v) => v + 1);
-            requestAnimationFrame(() => setOverlayRenderVersion((v) => v + 1));
-          }
-        }
-      }, 50); // Slight delay ensures layout is fully applied
-    }
-  }, [activeTab, isPrinting]);
+    if (activeTab !== 'map' || !mapIsReady || !mapRef?.current) return undefined;
+
+    const map = mapRef.current;
+    const timeoutId = window.setTimeout(() => {
+      if (mapRef.current !== map) return;
+      safeMapResize(map);
+      if (isPrinting) {
+        map.triggerRepaint?.();
+        setOverlayRenderVersion((v) => v + 1);
+        requestAnimationFrame(() => setOverlayRenderVersion((v) => v + 1));
+      }
+    }, 50);
+
+    return () => window.clearTimeout(timeoutId);
+  }, [activeTab, isPrinting, mapIsReady, mapRef]);
 
   useEffect(() => {
-    if (mapRef.current && mapRef.current.isStyleLoaded()) {
-      setTimeout(() => {
-        mapRef.current.resize();
-        if (isPrinting) {
-          mapRef.current.triggerRepaint?.();
-          setOverlayRenderVersion((v) => v + 1);
-        }
-      }, 100); // Allow slight delay for DOM to apply new dimensions
-    }
-  }, [paperSize, isPrinting]);
+    if (!mapIsReady || !mapRef?.current?.isStyleLoaded?.()) return undefined;
+
+    const map = mapRef.current;
+    const timeoutId = window.setTimeout(() => {
+      if (mapRef.current !== map) return;
+      safeMapResize(map);
+      if (isPrinting) {
+        map.triggerRepaint?.();
+        setOverlayRenderVersion((v) => v + 1);
+      }
+    }, 100);
+
+    return () => window.clearTimeout(timeoutId);
+  }, [paperSize, isPrinting, mapIsReady, mapRef]);
   
   useEffect(() => {
     if (!mapIsReady || !mapRef.current) return;
     const map = mapRef.current;
 
     const notifyInteraction = () => {
-      if (typeof window !== 'undefined' && window.__collapseSidePanel) {
-        window.__collapseSidePanel();
+      if (typeof window !== 'undefined') {
+        if (typeof window.__shrinkSidePanel === 'function') {
+          window.__shrinkSidePanel();
+        } else if (typeof window.__collapseSidePanel === 'function') {
+          window.__collapseSidePanel();
+        }
       }
       const event = new CustomEvent('map-user-interaction');
       window.dispatchEvent(event);
       document.dispatchEvent(event);
     };
 
+    map.on('dragstart', notifyInteraction);
     map.on('movestart', notifyInteraction);
     map.on('zoomstart', notifyInteraction);
     map.on('rotatestart', notifyInteraction);
     map.on('pitchstart', notifyInteraction);
-    map.on('click', notifyInteraction);
-    map.on('touchstart', notifyInteraction);
 
     return () => {
+      map.off('dragstart', notifyInteraction);
       map.off('movestart', notifyInteraction);
       map.off('zoomstart', notifyInteraction);
       map.off('rotatestart', notifyInteraction);
       map.off('pitchstart', notifyInteraction);
-      map.off('click', notifyInteraction);
-      map.off('touchstart', notifyInteraction);
     };
   }, [mapIsReady]);
 
-  /** GPS / browser geolocation → fly map to user position (Capacitor on native, navigator on web). */
+  /** GPS fix → optional save, dot overlay, and fly (regional on first allow, tight on button). */
+  const applyUserGeolocation = useCallback(
+    async ({ zoomMode = 'near', save = true } = {}) => {
+      const map = mapRef.current;
+      if (!map) {
+        throw new Error('Map not ready');
+      }
+
+      const isNative = isNativeApp();
+      const position = await getPreciseUserPosition({ isNative, Geolocation });
+      const { latitude, longitude, accuracy } = extractGeolocationCoords(position);
+
+      if (!latitude || !longitude) {
+        throw new Error('Invalid location coordinates');
+      }
+
+      let saved = null;
+      if (save) {
+        saved = saveMapLocationFromGeolocation({ latitude, longitude, accuracy });
+      }
+
+      showUserLocationOverlay(map, mapboxgl, turf, { longitude, latitude, accuracy });
+
+      const zoom =
+        zoomMode === 'region'
+          ? saved?.regionZoom ?? computeRegionalZoom(accuracy)
+          : SAVED_LOCATION_ZOOM_NEAR;
+
+      map.flyTo({
+        center: [longitude, latitude],
+        zoom,
+        duration: 1200,
+        essential: true,
+      });
+
+      return { latitude, longitude, accuracy };
+    },
+    []
+  );
+
   const handleZoomToLocation = async () => {
-    if (!mapRef.current) return;
-    
-    const isNative = isNativeApp();
+    if (!mapRef.current || isLocatingUser) return;
 
-    // Show loading indicator
-    setIsMapLoading(true);
+    setIsLocatingUser(true);
 
-    // Safety timeout to ensure loading state doesn't get stuck
-    const timeoutDuration = isNative ? 15000 : 15000;
     const safetyTimeout = setTimeout(() => {
-      setIsMapLoading(false);
+      setIsLocatingUser(false);
       alert('Location request timed out. Please try again.');
-    }, timeoutDuration);
+    }, 14000);
 
     const clearSafetyTimeout = () => {
       clearTimeout(safetyTimeout);
     };
 
     try {
-      let position;
-
-      if (isNative) {
-        // Try Capacitor Geolocation plugin first, fallback to browser API if not available
-        
-        // Check if Capacitor Geolocation is available
-        let useCapacitorPlugin = typeof Geolocation !== 'undefined' && 
-                                 Geolocation.requestPermissions && 
-                                 Geolocation.getCurrentPosition;
-        
-        if (useCapacitorPlugin) {
-          try {
-            // Request permissions first
-            const permissionStatus = await Geolocation.requestPermissions();
-            
-            if (permissionStatus.location !== 'granted') {
-              clearSafetyTimeout();
-              setIsMapLoading(false);
-              alert('Location permission denied.\n\nPlease enable location services:\nSettings > Privacy > Location Services > Teton County GIS');
-              return;
-            }
-
-            // Get current position
-            position = await Geolocation.getCurrentPosition({
-              enableHighAccuracy: false,
-              timeout: 10000,
-              maximumAge: 300000 // Accept cached location up to 5 minutes old
-            });
-            
-          } catch (error) {
-            // Fall through to browser geolocation
-            useCapacitorPlugin = false;
-            position = null;
-          }
-        }
-        
-        // Fallback to browser geolocation if Capacitor plugin not available or failed
-        if (!useCapacitorPlugin || !position) {
-    
-    if (!navigator.geolocation) {
-            clearSafetyTimeout();
-            setIsMapLoading(false);
-            alert('Geolocation is not supported. Please enable location services.');
-            return;
-          }
-          
-          // Use browser geolocation with settings optimized for native WebView
-          position = await new Promise((resolve, reject) => {
-            navigator.geolocation.getCurrentPosition(
-              (pos) => resolve(pos),
-              (err) => reject(err),
-              {
-                enableHighAccuracy: false, // Less aggressive for WebView
-                timeout: 12000,
-                maximumAge: 300000 // Accept cached location up to 5 minutes old
-              }
-            );
-          });
-        }
-      } else {
-        // Use browser geolocation API for web
-        if (!navigator.geolocation) {
-          clearSafetyTimeout();
-          setIsMapLoading(false);
-      alert('Geolocation is not supported by your browser');
-      return;
-    }
-
-
-        // Wrap browser geolocation in a promise
-        position = await new Promise((resolve, reject) => {
-    navigator.geolocation.getCurrentPosition(
-            (pos) => resolve(pos),
-            (err) => reject(err),
-            {
-              enableHighAccuracy: true,
-              timeout: 12000,
-              maximumAge: 60000
-            }
-          );
-        });
-      }
-
+      await applyUserGeolocation({ zoomMode: 'near', save: true });
       clearSafetyTimeout();
-      
-      // Extract coordinates (Capacitor uses different structure)
-      const latitude = position.coords?.latitude || position.latitude;
-      const longitude = position.coords?.longitude || position.longitude;
-      
-      
-      if (!latitude || !longitude) {
-        throw new Error('Invalid location coordinates');
+      setIsLocatingUser(false);
+      if (tourActive && tourStep?.id === 'geolocate') {
+        window.dispatchEvent(new CustomEvent('cv-tutorial-geolocate'));
       }
-        
-      // Zoom tighter so the "zoom to me" action is parcel-level, not broad area.
-        mapRef.current.flyTo({
-          center: [longitude, latitude],
-        zoom: 18,
-          duration: 1500
-        });
-
-        setIsMapLoading(false);
     } catch (error) {
       clearSafetyTimeout();
-        console.error('Error getting user location:', error);
-        setIsMapLoading(false);
-      
+      console.error('Error getting user location:', error);
+      setIsLocatingUser(false);
+
       let errorMessage = 'Unable to get your location.';
-      if (error.code === error.PERMISSION_DENIED || (error.message && error.message.includes('permission'))) {
-        errorMessage = isNative 
+      const isNative = isNativeApp();
+      if (error.code === 1 || (error.message && error.message.includes('permission'))) {
+        markLocationPermissionDenied();
+        errorMessage = isNative
           ? 'Location permission denied.\n\nPlease enable location services:\nSettings > Privacy > Location Services > Teton County GIS'
           : 'Location permission denied. Please enable location services in your browser settings.';
-      } else if (error.code === error.POSITION_UNAVAILABLE || (error.message && error.message.includes('unavailable'))) {
+      } else if (error.code === 2 || (error.message && error.message.includes('unavailable'))) {
         errorMessage = isNative
           ? 'Location unavailable.\n\nIf using iOS Simulator:\nFeatures > Location > Custom Location\n\nOn device: Check location services are enabled.'
           : 'Location information is unavailable.';
-      } else if (error.code === error.TIMEOUT || (error.message && error.message.includes('timeout'))) {
+      } else if (error.code === 3 || (error.message && error.message.includes('timeout'))) {
         errorMessage = isNative
           ? 'Location request timed out.\n\nIf using iOS Simulator:\nFeatures > Location > Custom Location\n\nOn device: Check location services.'
           : 'Location request timed out. Please try again.';
       } else {
         errorMessage = `Error: ${error.message || 'Unknown error occurred'}`;
       }
-      
+
       alert(errorMessage);
     }
   };
@@ -5167,101 +5793,144 @@ useEffect(() => {
 
   return (
     <div className="map-container">
-      {isMapLoading && <Spinner />}
-      <MobileSearch />
+      {isMapLoading ? <MapLoadingOverlay phraseSet="map" /> : null}
       {routerLocation.pathname === '/map' && <MapReportBuilderBar />}
-      <div className="location-zoom-button-container" data-tour="location-zoom">
-        <button 
-          className="location-zoom-button" 
-          onClick={handleZoomToLocation}
-          title="Zoom to My Location"
+      <div className="map-floating-controls-stack">
+        <div
+          className="map-floating-control-container map-floating-control-3d-container"
+          data-tour="map-3d-toggle"
         >
-          <img
-            src="/location-icon.svg"
-            alt="Zoom to Location"
-            className="location-icon"
-          />
-        </button>
-      </div>
-      <div
-        className={`layer-selector-container${isBasemapTutorialStep ? ' tutorial-force-open' : ''}`}
-        data-tour="basemap-selector"
-      >
-        <button className="layer-selector-button" data-tour="basemap-toggle-button">
-          <img
-            src="/basemap.png"
-            alt="Layers"
-            className="layer-icon"
-          />
-        </button>
-        <div className="layer-selector-popup" data-tour="basemap-popup">
-          <div className="basemap-grid">
-            {basemapConfig.map((basemapOption) => {
-              const activeBasemapId =
-                String(currentBasemapId || activeBasemapIdRef?.current || baseMapRef.current || '').trim();
-              const isActive =
-                basemapOption.id === 'imagery'
-                  ? activeBasemapId === 'imagery' || activeBasemapId === 'imagery-3d'
-                  : activeBasemapId === basemapOption.id;
-              return (
+          <button
+            className={`map-floating-control-button ${is3DEnabled ? 'active' : ''}`}
+            onClick={() => setIs3DEnabled((prev) => !prev)}
+            title="Toggle 3D terrain"
+          >
+            <span className="map-floating-control-text">3D</span>
+          </button>
+        </div>
+        <div
+          className="map-floating-control-container map-floating-control-contours-container"
+          data-tour="map-contours-toggle"
+        >
+          <button
+            className={`map-floating-control-button ${isContoursEnabled ? 'active' : ''}`}
+            onClick={() => setIsContoursEnabled((prev) => !prev)}
+            title="Toggle contour lines"
+          >
+            <svg
+              className="map-floating-control-icon"
+              viewBox="0 0 24 24"
+              aria-hidden="true"
+            >
+              <path
+                d="M2 6c2 0 2-2 4-2s2 2 4 2 2-2 4-2 2 2 4 2 2-2 4-2M2 12c2 0 2-2 4-2s2 2 4 2 2-2 4-2 2 2 4 2 2-2 4-2M2 18c2 0 2-2 4-2s2 2 4 2 2-2 4-2 2 2 4 2 2-2 4-2"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="1.8"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              />
+            </svg>
+          </button>
+        </div>
+        {!shareViewerReadOnly && (
+          <div className="location-zoom-button-container" data-tour="location-zoom">
+            <button
+              className={`location-zoom-button${isLocatingUser ? ' is-locating' : ''}`}
+              onClick={handleZoomToLocation}
+              disabled={isLocatingUser}
+              title="Zoom to My Location"
+            >
+              {isLocatingUser ? (
+                <span className="location-zoom-spinner" aria-hidden="true" />
+              ) : (
+                <img
+                  src="/location-icon.svg"
+                  alt="Zoom to Location"
+                  className="location-icon"
+                />
+              )}
+            </button>
+          </div>
+        )}
+        <div
+          className={[
+            'layer-selector-container',
+            isBasemapTutorialStep ? 'tutorial-force-open' : '',
+            isBasemapSelectorOpen ? 'is-open' : '',
+          ]
+            .filter(Boolean)
+            .join(' ')}
+          data-tour="basemap-selector"
+        >
+          <button
+            type="button"
+            className={`layer-selector-button${isBasemapSelectorOpen ? ' active' : ''}`}
+            data-tour="basemap-toggle-button"
+            aria-expanded={isMobileViewport ? isBasemapSelectorOpen : undefined}
+            onClick={() => {
+              if (isMobileViewport) {
+                setIsBasemapSelectorOpen((open) => !open);
+              }
+            }}
+          >
+            <img
+              src="/basemap.png"
+              alt="Layers"
+              className="layer-icon"
+            />
+          </button>
+          <div className="layer-selector-popup" data-tour="basemap-popup">
+            <div className="basemap-sheet-header">
+              <span className="basemap-sheet-grabber" aria-hidden="true" />
+              <h3 className="basemap-sheet-title">Basemap</h3>
+              {isMobileViewport && (
                 <button
-                  key={basemapOption.id}
-                  className={`basemap-option ${isActive ? 'active' : ''}`}
-                  data-tour={basemapOption.id === 'imagery' ? 'basemap-option-imagery' : undefined}
-                  onClick={basemapOption.onClick}
-                  title={basemapOption.label}
+                  type="button"
+                  className="basemap-sheet-close"
+                  aria-label="Close basemap selector"
+                  onClick={() => setIsBasemapSelectorOpen(false)}
                 >
-                  <img
-                    src={basemapOption.image}
-                    alt={basemapOption.label}
-                    className="basemap-thumbnail"
-                    onError={(e) => {
-                      e.target.src = basemapOption.fallback || '/logo192.png';
-                    }}
-                  />
-                  <span className="basemap-label">{basemapOption.label}</span>
+                  ×
                 </button>
-              );
-            })}
+              )}
+            </div>
+            <div className="basemap-grid">
+              {basemapConfig.map((basemapOption) => {
+                const activeBasemapId =
+                  String(currentBasemapId || activeBasemapIdRef?.current || baseMapRef.current || '').trim();
+                const isActive =
+                  basemapOption.id === 'imagery'
+                    ? activeBasemapId === 'imagery' || activeBasemapId === 'imagery-3d'
+                    : activeBasemapId === basemapOption.id;
+                return (
+                  <button
+                    key={basemapOption.id}
+                    className={`basemap-option ${isActive ? 'active' : ''}`}
+                    data-tour={basemapOption.id === 'imagery' ? 'basemap-option-imagery' : undefined}
+                    onClick={() => {
+                      basemapOption.onClick();
+                      if (isMobileViewport) {
+                        setIsBasemapSelectorOpen(false);
+                      }
+                    }}
+                    title={basemapOption.label}
+                  >
+                    <img
+                      src={basemapOption.image}
+                      alt={basemapOption.label}
+                      className="basemap-thumbnail"
+                      onError={(e) => {
+                        e.target.src = basemapOption.fallback || '/logo192.png';
+                      }}
+                    />
+                    <span className="basemap-label">{basemapOption.label}</span>
+                  </button>
+                );
+              })}
+            </div>
           </div>
         </div>
-      </div>
-      <div
-        className="map-floating-control-container map-floating-control-3d-container"
-        data-tour="map-3d-toggle"
-      >
-        <button
-          className={`map-floating-control-button ${is3DEnabled ? 'active' : ''}`}
-          onClick={() => setIs3DEnabled((prev) => !prev)}
-          title="Toggle 3D terrain"
-        >
-          <span className="map-floating-control-text">3D</span>
-        </button>
-      </div>
-      <div
-        className="map-floating-control-container map-floating-control-contours-container"
-        data-tour="map-contours-toggle"
-      >
-        <button
-          className={`map-floating-control-button ${isContoursEnabled ? 'active' : ''}`}
-          onClick={() => setIsContoursEnabled((prev) => !prev)}
-          title="Toggle contour lines"
-        >
-          <svg
-            className="map-floating-control-icon"
-            viewBox="0 0 24 24"
-            aria-hidden="true"
-          >
-            <path
-              d="M2 6c2 0 2-2 4-2s2 2 4 2 2-2 4-2 2 2 4 2 2-2 4-2M2 12c2 0 2-2 4-2s2 2 4 2 2-2 4-2 2 2 4 2 2-2 4-2M2 18c2 0 2-2 4-2s2 2 4 2 2-2 4-2 2 2 4 2 2-2 4-2"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="1.8"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-            />
-          </svg>
-        </button>
       </div>
       {!isClientShareMapRoute && (
       <ToolPanel
@@ -5269,7 +5938,6 @@ useEffect(() => {
         onZoomOut={() => mapRef.current.zoomOut()}
         onDrawLine={drawLine}
         onDrawPolygon={drawPolygon}
-        onSelectParcels={selectParcelsWithPolygon}
         onDeleteSelectedFeature={deleteSelectedFeature}
         onClear={clearAllDrawings}
       />
@@ -6076,7 +6744,10 @@ useEffect(() => {
       )}
       </div>
 
-      {shareViewerReadOnly && currentSharePhotoElement && currentSharePhotoGallery.length > 0 && (
+      {shareViewerReadOnly &&
+        currentSharePhotoElement &&
+        currentSharePhotoGallery.length > 0 &&
+        !sharePhotoPopupFullscreen && (
         <div
           className="shared-photo-card-wrap"
           style={currentSharePhotoCardStyle}
@@ -6138,72 +6809,16 @@ useEffect(() => {
           </article>
         </div>
       )}
-      {shareViewerReadOnly &&
-        sharePhotoPopupFullscreen &&
-        currentSharePhotoElement &&
-        currentSharePhotoGallery.length > 0 && (
-          <div className="shared-photo-fullscreen" role="dialog" aria-label="Photo gallery fullscreen">
-            <button
-              type="button"
-              className="shared-photo-fullscreen-backdrop"
-              aria-label="Close fullscreen"
-              onClick={() => setSharePhotoPopupFullscreen(false)}
-            />
-            <div
-              className="shared-photo-fullscreen-stage"
-              onTouchStart={(e) => {
-                sharePhotoTouchStartXRef.current = e.changedTouches?.[0]?.clientX ?? null;
-              }}
-              onTouchEnd={(e) => {
-                const startX = sharePhotoTouchStartXRef.current;
-                const endX = e.changedTouches?.[0]?.clientX ?? null;
-                sharePhotoTouchStartXRef.current = null;
-                if (!Number.isFinite(startX) || !Number.isFinite(endX)) return;
-                const delta = endX - startX;
-                if (Math.abs(delta) < 40) return;
-                stepSharePhotoPopup(delta < 0 ? 1 : -1);
-              }}
-            >
-              <button
-                type="button"
-                className="shared-photo-fullscreen-close"
-                onClick={() => setSharePhotoPopupFullscreen(false)}
-              >
-                x
-              </button>
-              {currentSharePhotoGallery.length > 1 && (
-                <span className="shared-photo-fullscreen-count">
-                  Photo {sharePhotoPopupIndex + 1} of {currentSharePhotoGallery.length}
-                </span>
-              )}
-              {currentSharePhotoGallery.length > 1 && (
-                <button
-                  type="button"
-                  className="shared-photo-fullscreen-nav shared-photo-fullscreen-nav-prev"
-                  aria-label="Previous photo"
-                  onClick={() => stepSharePhotoPopup(-1)}
-                >
-                  {'<'}
-                </button>
-              )}
-              <img
-                src={currentSharePhotoGallery[Math.min(sharePhotoPopupIndex, currentSharePhotoGallery.length - 1)]}
-                alt={currentSharePhotoElement.label || 'Photo point'}
-                className="shared-photo-fullscreen-image"
-              />
-              {currentSharePhotoGallery.length > 1 && (
-                <button
-                  type="button"
-                  className="shared-photo-fullscreen-nav shared-photo-fullscreen-nav-next"
-                  aria-label="Next photo"
-                  onClick={() => stepSharePhotoPopup(1)}
-                >
-                  {'>'}
-                </button>
-              )}
-            </div>
-          </div>
-        )}
+      {shareViewerReadOnly && currentSharePhotoElement && (
+        <SharedPhotoFullscreen
+          open={sharePhotoPopupFullscreen && currentSharePhotoGallery.length > 0}
+          onClose={() => setSharePhotoPopupFullscreen(false)}
+          gallery={currentSharePhotoGallery}
+          photoIndex={sharePhotoPopupIndex}
+          onStepPhoto={stepSharePhotoPopup}
+          alt={currentSharePhotoElement.label || 'Photo point'}
+        />
+      )}
 
       {isPrinting && !isPropertyTourRoute && (
         <div
@@ -6213,41 +6828,26 @@ useEffect(() => {
         >
           <label
             className={`print-parcels-toggle${
-              propertyMapWizardActive ||
-              (!shareViewerReadOnly && !layerStatus.ownership)
-                ? ' print-parcels-toggle-disabled'
-                : ''
+              propertyMapWizardActive ? ' print-parcels-toggle-disabled' : ''
             }`}
             title={
               propertyMapWizardActive
                 ? 'Parcels stay on while you select boundaries'
-                : shareViewerReadOnly
-                  ? 'Show or hide parcel outlines (synced with Layers tab)'
-                  : !layerStatus.ownership
-                    ? 'Turn on Ownership in the Layers tab to show parcels'
-                    : 'Show or hide parcel outlines on the map'
+                : 'Show or hide parcel outlines (synced with Layers → Ownership)'
             }
           >
             <input
               type="checkbox"
-              checked={
-                shareViewerReadOnly
-                  ? Boolean(layerStatus.ownership)
-                  : propertyMapWizardActive ||
-                    (Boolean(layerStatus.ownership) && printParcelsOverlayVisible)
-              }
-              disabled={propertyMapWizardActive || (!shareViewerReadOnly && !layerStatus.ownership)}
+              checked={propertyMapWizardActive || Boolean(layerStatus.ownership)}
+              disabled={propertyMapWizardActive}
               onChange={(e) => {
                 if (propertyMapWizardActive) return;
-                if (shareViewerReadOnly) {
-                  setLayerStatus((prev) => ({
-                    ...(prev || {}),
-                    ownership: e.target.checked,
-                  }));
-                  return;
-                }
-                if (!layerStatus.ownership) return;
-                setPrintParcelsOverlayVisible(e.target.checked);
+                const next = e.target.checked;
+                setPrintParcelsOverlayVisible(next);
+                setLayerStatus((prev) => ({
+                  ...(prev || {}),
+                  ownership: next,
+                }));
               }}
             />
             <span>Parcels</span>
@@ -6324,18 +6924,31 @@ useEffect(() => {
         role !== "demo" &&
         !isClientShareMapRoute && (
         <div className="map-overlay">
-          <h2 className="overlay-title">Login to Access the Map</h2>
+          <h2 className="overlay-title">
+            {user ? "Subscription required" : "Login to Access the Map"}
+          </h2>
           <p className="overlay-text">
-            You must have an active subscription to interact with the data.
+            {user
+              ? "Choose a plan and start your free trial to interact with the data."
+              : "You must have an active subscription to interact with the data."}
           </p>
           <button
             className="overlay-button"
             onClick={() => {
-              navigate("/login");
+              navigate(user ? "/signup" : "/login");
             }}
           >
-            Sign In
+            {user ? "Choose a plan" : "Sign In"}
           </button>
+          {user && (
+            <button
+              type="button"
+              className="overlay-button overlay-button--secondary"
+              onClick={() => navigateToMarketingHome(navigate)}
+            >
+              Return home
+            </button>
+          )}
         </div>
       )}
     </div>

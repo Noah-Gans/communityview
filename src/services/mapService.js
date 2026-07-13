@@ -50,9 +50,12 @@ function formatCallableError(err) {
 }
 
 async function finalizeNearbyTourGeoJson(origin, featureCollection, amenityKey, options = {}) {
+  const fetchRadiusMeters = resolveTourNearbyFetchRadiusMeters(options.searchRadiusMeters);
   return enrichNearbyTourFeatureCollection(origin, featureCollection, {
     amenityKey: amenityKey != null ? String(amenityKey) : '',
     skipCurate: Boolean(options.skipCurate),
+    searchRadiusMeters: fetchRadiusMeters,
+    editorMode: Boolean(options.editorMode),
   });
 }
 
@@ -179,7 +182,7 @@ export const mapService = {
    * Fallback without browser Google key: Cloud Function `getNearbyGooglePlaces` (requires
    * `google.places_key`). Distance and ~drive time are added in the client (Mapbox when configured).
    *
-   * @param {{ lat: number, lng: number, radiusMeters?: number, amenityKey: string, shareToken?: string }} params
+   * @param {{ lat: number, lng: number, radiusMeters?: number, amenityKey: string, shareToken?: string, forceRefresh?: boolean, editorMode?: boolean, preferBrowser?: boolean }} params
    * @returns {Promise<{ type: 'FeatureCollection', features: unknown[] }>}
    */
   async getNearbyGooglePlaces(params) {
@@ -187,9 +190,17 @@ export const mapService = {
     const lng = Number(params?.lng);
     const amenityKey = String(params?.amenityKey || '').trim();
     const shareToken = String(params?.shareToken || '').trim();
+    const forceRefresh = params?.forceRefresh === true;
+    const editorMode = params?.editorMode === true;
+    const preferBrowser = params?.preferBrowser === true;
     const fetchRadiusMeters = resolveTourNearbyFetchRadiusMeters(params?.radiusMeters);
     if (!Number.isFinite(lat) || !Number.isFinite(lng) || !amenityKey) {
-      return finalizeNearbyTourGeoJson({ lat, lng }, { type: 'FeatureCollection', features: [] }, amenityKey);
+      return finalizeNearbyTourGeoJson(
+        { lat, lng },
+        { type: 'FeatureCollection', features: [] },
+        amenityKey,
+        { searchRadiusMeters: fetchRadiusMeters }
+      );
     }
 
     const origin = { lat, lng };
@@ -197,46 +208,15 @@ export const mapService = {
     let rawFc = { type: 'FeatureCollection', features: [] };
     const hints = [];
 
-    // 1) Firebase callable — uses `google.places_key` from functions config (where you set the backend key).
-    try {
-      const result = await getNearbyGooglePlacesFunction({
-        lat,
-        lng,
-        radiusMeters: fetchRadiusMeters,
-        amenityKey,
-        ...(shareToken ? { shareToken } : {}),
-      });
-      const data = result?.data;
-      const serverVersion = Number(data?.nearbyDataVersion);
-      const serverFresh =
-        !Number.isFinite(serverVersion) || serverVersion === TOUR_NEARBY_DATA_VERSION;
-      if (data && data.type === 'FeatureCollection' && Array.isArray(data.features)) {
-        const fromPersistedTourCache = data.fromTourNearbyCache === true;
-        if (data.features.length || fromPersistedTourCache) {
-          if (!serverFresh && process.env.NODE_ENV === 'development') {
-            console.warn(
-              `[mapService] Using Cloud Function nearby data v${serverVersion || '?'} (app expects v${TOUR_NEARBY_DATA_VERSION}). Redeploy getNearbyGooglePlaces to avoid stale filters.`
-            );
-          }
-          return finalizeNearbyTourGeoJson(origin, data, amenityKey);
+    const tryBrowserPlaces = async () => {
+      if (typeof window === 'undefined' || !googleBrowserKey) {
+        if (!googleBrowserKey) {
+          hints.push(
+            'No browser key: set REACT_APP_GOOGLE_MAPS_API_KEY in .env.development and restart npm start to use your own Places quota.'
+          );
         }
+        return false;
       }
-      if (!serverFresh) {
-        hints.push(
-          `Cloud Function is outdated (nearby v${serverVersion || '?'}; app expects v${TOUR_NEARBY_DATA_VERSION}). Redeploy functions:getNearbyGooglePlaces.`
-        );
-      } else {
-        hints.push('Cloud Function returned no places for this location.');
-      }
-    } catch (err) {
-      hints.push(`Cloud Function: ${formatCallableError(err)}`);
-      if (process.env.NODE_ENV === 'development') {
-        console.warn('[mapService] getNearbyGooglePlaces callable failed.', err);
-      }
-    }
-
-    // 2) Browser REST — only when the callable did not return places (see early return above).
-    if (typeof window !== 'undefined' && googleBrowserKey) {
       try {
         const fc = await fetchNearbyTourAmenityGoogleMapsJs({
           lat,
@@ -244,22 +224,85 @@ export const mapService = {
           radiusMeters: fetchRadiusMeters,
           amenityKey,
           apiKey: googleBrowserKey,
+          editorMode,
         });
         if (fc?.features?.length) {
-          return finalizeNearbyTourGeoJson(origin, fc, amenityKey);
+          rawFc = fc;
+          return true;
         }
         if (fc?.apiError) hints.push(`Browser Places API: ${fc.apiError}`);
         else hints.push('Browser Places API returned no results.');
       } catch (err) {
         hints.push(`Browser Places: ${err?.message || String(err)}`);
       }
+      return false;
+    };
+
+    const tryCloudPlaces = async () => {
+      try {
+        const result = await getNearbyGooglePlacesFunction({
+          lat,
+          lng,
+          radiusMeters: fetchRadiusMeters,
+          amenityKey,
+          forceRefresh,
+          editorMode,
+          ...(shareToken ? { shareToken } : {}),
+        });
+        const data = result?.data;
+        const serverVersion = Number(data?.nearbyDataVersion);
+        const serverFresh =
+          !Number.isFinite(serverVersion) || serverVersion === TOUR_NEARBY_DATA_VERSION;
+        if (data && data.type === 'FeatureCollection' && Array.isArray(data.features)) {
+          const fromPersistedTourCache = data.fromTourNearbyCache === true;
+          if (data.features.length || fromPersistedTourCache) {
+            if (!serverFresh && process.env.NODE_ENV === 'development') {
+              console.warn(
+                `[mapService] Using Cloud Function nearby data v${serverVersion || '?'} (app expects v${TOUR_NEARBY_DATA_VERSION}). Redeploy getNearbyGooglePlaces to avoid stale filters.`
+              );
+            }
+            return finalizeNearbyTourGeoJson(origin, data, amenityKey, {
+              searchRadiusMeters: fetchRadiusMeters,
+              skipCurate: fromPersistedTourCache,
+              editorMode,
+            });
+          }
+        }
+        if (!serverFresh) {
+          hints.push(
+            `Cloud Function is outdated (nearby v${serverVersion || '?'}; app expects v${TOUR_NEARBY_DATA_VERSION}). Redeploy functions:getNearbyGooglePlaces.`
+          );
+        } else {
+          hints.push('Cloud Function returned no places for this location.');
+        }
+      } catch (err) {
+        hints.push(`Cloud Function: ${formatCallableError(err)}`);
+        if (process.env.NODE_ENV === 'development') {
+          console.warn('[mapService] getNearbyGooglePlaces callable failed.', err);
+        }
+      }
+      return null;
+    };
+
+    if (preferBrowser && googleBrowserKey) {
+      const browserOk = await tryBrowserPlaces();
+      if (browserOk) {
+        return finalizeNearbyTourGeoJson(origin, rawFc, amenityKey, {
+          searchRadiusMeters: fetchRadiusMeters,
+          editorMode,
+        });
+      }
+      const cloudResult = await tryCloudPlaces();
+      if (cloudResult) return cloudResult;
     } else {
-      hints.push(
-        'No browser key: uncomment REACT_APP_GOOGLE_MAPS_API_KEY=... in .env.development and restart npm start.'
-      );
+      const cloudResult = await tryCloudPlaces();
+      if (cloudResult) return cloudResult;
+      await tryBrowserPlaces();
     }
 
-    const finalized = await finalizeNearbyTourGeoJson(origin, rawFc, amenityKey);
+    const finalized = await finalizeNearbyTourGeoJson(origin, rawFc, amenityKey, {
+      searchRadiusMeters: fetchRadiusMeters,
+    });
     if (!finalized?.features?.length) {
       throw new Error(hints.filter(Boolean).join(' '));
     }
@@ -270,8 +313,9 @@ export const mapService = {
    * Persist tour nearby amenities on the shared map (Firestore `tourNearbyCache`).
    * @param {string} shareToken
    * @param {object} tourNearbyCache
+   * @param {object} [tourSettings] Enabled amenity slides + search radius
    */
-  async saveTourNearbyCache(shareToken, tourNearbyCache) {
+  async saveTourNearbyCache(shareToken, tourNearbyCache, tourSettings) {
     const token = String(shareToken || '').trim();
     if (!token || !tourNearbyCache) {
       return { success: false };
@@ -280,8 +324,13 @@ export const mapService = {
       const result = await saveTourNearbyCacheFunction({
         shareToken: token,
         tourNearbyCache,
+        tourSettings: tourSettings || undefined,
       });
-      return result?.data || { success: true };
+      const data = result?.data;
+      if (data && data.success === false) {
+        throw new Error('Tour save was rejected by the server.');
+      }
+      return data || { success: true };
     } catch (error) {
       console.error('Error saving tour nearby cache:', error);
       throw error;

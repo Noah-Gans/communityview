@@ -32,11 +32,27 @@
     <priority>0.3</priority>
   </url>
 
-  <!-- Updates page -->
+  <!-- Features page -->
   <url>
-    <loc>https://communityview.ai/updates</loc>
-    <lastmod>2025-01-27</lastmod>
-    <changefreq>weekly</changefreq>
+    <loc>https://communityview.ai/features</loc>
+    <lastmod>2026-06-22</lastmod>
+    <changefreq>monthly</changefreq>
+    <priority>0.6</priority>
+  </url>
+
+  <!-- Pricing page -->
+  <url>
+    <loc>https://communityview.ai/pricing</loc>
+    <lastmod>2026-06-22</lastmod>
+    <changefreq>monthly</changefreq>
+    <priority>0.6</priority>
+  </url>
+
+  <!-- FAQ page -->
+  <url>
+    <loc>https://communityview.ai/faq</loc>
+    <lastmod>2026-06-22</lastmod>
+    <changefreq>monthly</changefreq>
     <priority>0.5</priority>
   </url>
 

@@ -2,6 +2,8 @@
 
 import {
   PRINCIPAL_AQUIFER_COLORS,
+  PUBLIC_LAND_OWNER_TYPE_MATCH_KEY,
+  PUBLIC_LAND_STATE_COLOR,
   SURFACE_WATER_BODY_FTYPE_COLORS,
   SURFACE_WATER_FLOWLINE_FTYPE_COLORS,
   SURFACE_WATER_FTYPE_MATCH_KEY,
@@ -75,6 +77,8 @@ export function isImageryOrSatelliteBasemap(basemapId) {
   if (id.includes('imagery')) return true;
   if (id.includes('satellite')) return true;
   if (id.includes('ortho')) return true;
+  if (id.includes('high-def')) return true;
+  if (id.includes('aerial')) return true;
   if (id === 'esri-world-imagery') return true;
   return false;
 }
@@ -169,6 +173,36 @@ function buildMatchFillPaint(propertyOrExpr, colorMap, defaultColor, defaultOpac
   return {
     'fill-color': colorExpression,
     'fill-opacity': opacityExpression,
+  };
+}
+
+/** PADUS fee layer: color by owner name, with state-owned (`Own_Type` = STAT) forced blue. */
+export function getPublicLandFillPaint() {
+  const colorMap = zoningColorMaps.publicLandColors;
+  const zeroOpacityValues = new Set(['Private', 'Water']);
+  const defaultColor = '#9c8f59';
+  const defaultOpacity = 0.5;
+  const ownerPaint = buildMatchFillPaint(
+    PUBLIC_LAND_OWNER_MATCH_KEY,
+    colorMap,
+    defaultColor,
+    defaultOpacity,
+    zeroOpacityValues
+  );
+
+  return {
+    'fill-color': [
+      'case',
+      ['==', PUBLIC_LAND_OWNER_TYPE_MATCH_KEY, 'STAT'],
+      PUBLIC_LAND_STATE_COLOR,
+      ownerPaint['fill-color'],
+    ],
+    'fill-opacity': [
+      'case',
+      ['==', PUBLIC_LAND_OWNER_TYPE_MATCH_KEY, 'STAT'],
+      defaultOpacity,
+      ownerPaint['fill-opacity'],
+    ],
   };
 }
 
@@ -324,9 +358,10 @@ const zoningColorMaps = {
     'Local Government': '#DB35E0',
     'National Park Service': '#a670db',
     'Private': '#A9A9A9',
-    'State': '#4169E1',
-    'State (Wyoming Game & Fish)': '#4169E1',
-    'Water': '#87CEEB',
+    State: PUBLIC_LAND_STATE_COLOR,
+    STATE: PUBLIC_LAND_STATE_COLOR,
+    'State (Wyoming Game & Fish)': PUBLIC_LAND_STATE_COLOR,
+    Water: '#87CEEB',
     default: '#A9A9A9',
   },
   conservation_easements: {
@@ -613,6 +648,7 @@ const MVT_DATA_DRIVEN_LINE_LAYERS = {
 
 export function getDataDrivenFillPaintForLayer(layerName) {
   if (layerName === 'surface_water') return getSurfaceWaterBodyFillPaint();
+  if (layerName === 'public_land') return getPublicLandFillPaint();
   const spec = MVT_DATA_DRIVEN_FILL_LAYERS[layerName];
   if (spec) {
     return buildMatchFillPaint(

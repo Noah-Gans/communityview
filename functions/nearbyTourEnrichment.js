@@ -1,4 +1,4 @@
-const { curateNearbyTourFeatures } = require("./nearbyTourRanking");
+const { curateNearbyTourFeatures, sortNearbyTourFeaturesForEditor } = require("./nearbyTourRanking");
 
 /** Straight-line distance + drive-time estimate for tour nearby POIs (matches client enrichment). */
 
@@ -58,7 +58,18 @@ function enrichNearbyTourFeatureCollection(origin, featureCollection, amenityKey
     return { type: "FeatureCollection", features };
   }
 
-  const curated = curateNearbyTourFeatures(features, { amenityKey });
+  if (options.editorMode) {
+    const sorted = sortNearbyTourFeaturesForEditor(features, {
+      amenityKey,
+      searchRadiusMeters: options.searchRadiusMeters,
+    });
+    return { type: "FeatureCollection", features: sorted };
+  }
+
+  const curated = curateNearbyTourFeatures(features, {
+    amenityKey,
+    searchRadiusMeters: options.searchRadiusMeters,
+  });
   return { type: "FeatureCollection", features: curated };
 }
 

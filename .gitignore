@@ -13,6 +13,7 @@ node_modules/
 .DS_Store
 .env
 .env.development
+.env.production
 .env.local
 .env.development.local
 .env.test.local
@@ -49,6 +50,13 @@ android/.idea/
 firebase-debug.log
 firestore-debug.log
 functions/.runtimeconfig.json
+
+# Marketing source recordings (large; keep exported frames in tour-frames/)
+public/marketing/source/*.mov
+public/marketing/source/*.mp4
+
+# Local .mov recordings in public/ root (deploy uses marketing/*.mp4 instead)
+public/*.mov
 
 # Python
 __pycache__/

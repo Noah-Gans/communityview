@@ -5,6 +5,7 @@ import { doc, setDoc, onSnapshot } from 'firebase/firestore';
 import { getFunctions, httpsCallable } from 'firebase/functions';
 import { REGRID_BATCH_REPORTS_ENABLED } from '../config/featureFlags';
 import { fetchSavedMapsSummaries, invalidateSavedMapsCache } from '../utils/savedMapsCache';
+import { normalizeCountyRecord } from '../utils/searchCountyCache';
 
 const UserContext = createContext(null);
 
@@ -19,6 +20,9 @@ export function UserProvider({ children }) {
   
   const [highlightSettings, setHighlightSettings] = useState(null);
   const [userProfile, setUserProfile] = useState(null);
+  const [defaultSearchCounty, setDefaultSearchCounty] = useState(null);
+  const [searchCountyModePreference, setSearchCountyModePreferenceState] = useState(null);
+  const [searchCountySetupDismissed, setSearchCountySetupDismissed] = useState(false);
 
   // User authentication with real-time subscription updates
   useEffect(() => {
@@ -72,9 +76,20 @@ export function UserProvider({ children }) {
                 lastName: data.lastName || '',
                 contactPhone: data.contactPhone || '',
                 contactEmail: data.contactEmail || '',
+                contactWebsite: data.contactWebsite || '',
                 profilePhotoUrl: data.profilePhotoUrl || '',
                 firmLogoUrl: data.firmLogoUrl || '',
               });
+              setDefaultSearchCounty(normalizeCountyRecord(data.defaultSearchCounty));
+              const modePref = data.searchCountyMode;
+              setSearchCountyModePreferenceState(
+                modePref === 'saved' || modePref === 'map' || modePref === 'nationwide'
+                  ? modePref
+                  : modePref === 'session'
+                    ? 'saved'
+                    : null
+              );
+              setSearchCountySetupDismissed(Boolean(data.searchCountySetupDismissed));
               
               // 🎯 Load highlight settings if they exist, otherwise use defaults
               if (data.highlightSettings) {
@@ -97,6 +112,9 @@ export function UserProvider({ children }) {
               clearTimeout(firestoreTimeout);
               setSubscriptionStatus('none');
               setUserProfile(null);
+              setDefaultSearchCounty(null);
+              setSearchCountyModePreferenceState(null);
+              setSearchCountySetupDismissed(false);
               // 🎯 Set defaults for new users
               setHighlightSettings({
                 fillColor: 'rgba(255, 0, 0, 0.25)',
@@ -128,6 +146,9 @@ export function UserProvider({ children }) {
         setRole(null);
         setHighlightSettings(null);
         setUserProfile(null);
+        setDefaultSearchCounty(null);
+        setSearchCountyModePreferenceState(null);
+        setSearchCountySetupDismissed(false);
         setLoading(false);
       }
     });
@@ -153,6 +174,52 @@ export function UserProvider({ children }) {
       } catch (error) {
         console.error('❌ Error saving highlight settings to Firebase:', error);
       }
+    }
+  };
+
+  const saveDefaultSearchCounty = async (county) => {
+    const normalized = normalizeCountyRecord(county);
+    if (!normalized) return;
+
+    setDefaultSearchCounty(normalized);
+    if (!user) return;
+
+    try {
+      await setDoc(
+        doc(db, 'users', user.uid),
+        { defaultSearchCounty: normalized },
+        { merge: true }
+      );
+    } catch (error) {
+      console.error('Error saving default search county:', error);
+    }
+  };
+
+  const setSearchCountyModePreference = async (mode) => {
+    if (mode !== 'saved' && mode !== 'map' && mode !== 'nationwide') return;
+
+    setSearchCountyModePreferenceState(mode);
+    if (!user) return;
+
+    try {
+      await setDoc(doc(db, 'users', user.uid), { searchCountyMode: mode }, { merge: true });
+    } catch (error) {
+      console.error('Error saving search county mode:', error);
+    }
+  };
+
+  const dismissSearchCountySetupPrompt = async () => {
+    setSearchCountySetupDismissed(true);
+    if (!user) return;
+
+    try {
+      await setDoc(
+        doc(db, 'users', user.uid),
+        { searchCountySetupDismissed: true },
+        { merge: true }
+      );
+    } catch (error) {
+      console.error('Error dismissing search county setup:', error);
     }
   };
 
@@ -287,6 +354,12 @@ export function UserProvider({ children }) {
       highlightSettings, 
       setHighlightSettings: setHighlightSettingsWithTracking,
       userProfile,
+      defaultSearchCounty,
+      searchCountyModePreference,
+      searchCountySetupDismissed,
+      saveDefaultSearchCounty,
+      setSearchCountyModePreference,
+      dismissSearchCountySetupPrompt,
       hasAccessToFeature
     }}>
       {children}

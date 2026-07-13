@@ -5,6 +5,7 @@
 
 import { TOUR_NEARBY_SEARCH_RADIUS_METERS } from './propertyTourSlides';
 import { TOUR_NEARBY_DATA_VERSION } from './tourNearbyRanking';
+import { normalizeSlidePrintElements } from './tourSlidePrintElements';
 
 /** ~0.5 mi — search center drift beyond this invalidates cached amenities. */
 const SEARCH_CENTER_MATCH_EPSILON_DEG = 0.008;
@@ -38,10 +39,11 @@ export function tourNearbySearchCentersMatch(a, b) {
   );
 }
 
-export function isTourNearbyFirestoreRootValid(cache, searchCenter) {
+export function isTourNearbyFirestoreRootValid(cache, searchCenter, expectedRadiusMeters) {
   if (!cache || typeof cache !== 'object') return false;
   if (Number(cache.dataVersion) !== TOUR_NEARBY_DATA_VERSION) return false;
-  if (Number(cache.searchRadiusMeters) !== TOUR_NEARBY_SEARCH_RADIUS_METERS) return false;
+  const expectedRadius = Number(expectedRadiusMeters) || TOUR_NEARBY_SEARCH_RADIUS_METERS;
+  if (Number(cache.searchRadiusMeters) !== expectedRadius) return false;
   const cachedCenter = cache.searchCenter;
   if (!cachedCenter || !searchCenter) return false;
   if (!tourNearbySearchCentersMatch(cachedCenter, searchCenter)) return false;
@@ -80,6 +82,7 @@ function sanitizeFeature(feature) {
   if (Array.isArray(raw.googleTypes) && raw.googleTypes.length) {
     props.googleTypes = raw.googleTypes.map((t) => String(t));
   }
+  if (raw.tourHidden === true) props.tourHidden = true;
 
   return {
     type: 'Feature',
@@ -109,20 +112,24 @@ export function normalizeTourNearbyCacheFromFirestore(raw) {
     if (!src[key]) continue;
     byAmenity[key] = sanitizeAmenityCollection(src[key]);
   }
-  if (!Object.keys(byAmenity).length) return null;
+  const tourSettings =
+    raw.tourSettings && typeof raw.tourSettings === 'object' ? raw.tourSettings : null;
+  if (!Object.keys(byAmenity).length && !tourSettings) return null;
 
   return {
     dataVersion: Number(raw.dataVersion) || 0,
     searchRadiusMeters: Number(raw.searchRadiusMeters) || TOUR_NEARBY_SEARCH_RADIUS_METERS,
     searchCenter: { lat, lng },
     byAmenity,
+    tourSettings,
   };
 }
 
 /** Build React `nearbyContextByAmenity` from persisted tour cache. */
-export function hydrateNearbyContextByAmenity(tourNearbyCache, searchCenter) {
+export function hydrateNearbyContextByAmenity(tourNearbyCache, searchCenter, expectedRadiusMeters) {
   const root = normalizeTourNearbyCacheFromFirestore(tourNearbyCache);
-  if (!root || !isTourNearbyFirestoreRootValid(root, searchCenter)) return null;
+  const expectedRadius = Number(expectedRadiusMeters) || root?.searchRadiusMeters || TOUR_NEARBY_SEARCH_RADIUS_METERS;
+  if (!root || !isTourNearbyFirestoreRootValid(root, searchCenter, expectedRadius)) return null;
 
   const out = {};
   for (const [key, fc] of Object.entries(root.byAmenity)) {
@@ -137,24 +144,79 @@ export function hydrateNearbyContextByAmenity(tourNearbyCache, searchCenter) {
   return out;
 }
 
-/** Package in-memory amenity state for `saveTourNearbyCache`. */
-export function buildTourNearbyCacheForSave(searchCenter, nearbyContextByAmenity) {
+/**
+ * Package in-memory amenity state for `saveTourNearbyCache`.
+ * @param {{ lat: number, lng: number }|null|undefined} searchCenter
+ * @param {Record<string, { fetched?: boolean, features?: unknown[] }>|null|undefined} nearbyContextByAmenity
+ * @param {number} searchRadiusMeters
+ * @param {string[]} [enabledAmenityKeys] Only these categories are written (edit save).
+ * @param {{ replace?: boolean, allowEmpty?: boolean }} [options]
+ */
+export function buildTourNearbyCacheForSave(
+  searchCenter,
+  nearbyContextByAmenity,
+  searchRadiusMeters,
+  enabledAmenityKeys = TOUR_NEARBY_AMENITY_KEYS,
+  options = {}
+) {
   const lat = finiteCoord(searchCenter?.lat);
   const lng = finiteCoord(searchCenter?.lng);
   if (lat == null || lng == null) return null;
 
+  const radius = Math.min(
+    50000,
+    Math.max(500, Number(searchRadiusMeters) || TOUR_NEARBY_SEARCH_RADIUS_METERS)
+  );
+
+  const planKeys =
+    Array.isArray(enabledAmenityKeys) && enabledAmenityKeys.length
+      ? enabledAmenityKeys.filter((k) => TOUR_NEARBY_AMENITY_KEYS.includes(k))
+      : [];
+  const cacheKeys = Object.keys(nearbyContextByAmenity || {}).filter(
+    (k) =>
+      TOUR_NEARBY_AMENITY_KEYS.includes(k) && nearbyContextByAmenity[k]?.fetched === true
+  );
+  const keys = [];
+  for (const k of [...planKeys, ...cacheKeys]) {
+    if (!keys.includes(k)) keys.push(k);
+  }
+  if (!keys.length) {
+    keys.push(...TOUR_NEARBY_AMENITY_KEYS);
+  }
+
   const byAmenity = {};
-  for (const key of TOUR_NEARBY_AMENITY_KEYS) {
+  for (const key of keys) {
     const entry = nearbyContextByAmenity?.[key];
     if (!entry || entry.fetched !== true) continue;
     byAmenity[key] = sanitizeAmenityCollection(entry);
   }
-  if (!Object.keys(byAmenity).length) return null;
+  if (!Object.keys(byAmenity).length && !options.allowEmpty) return null;
 
-  return {
+  const payload = {
     dataVersion: TOUR_NEARBY_DATA_VERSION,
-    searchRadiusMeters: TOUR_NEARBY_SEARCH_RADIUS_METERS,
+    searchRadiusMeters: radius,
     searchCenter: { lat, lng },
     byAmenity,
   };
+  if (options.replace) payload.replace = true;
+  if (options.tourSettings && typeof options.tourSettings === 'object') {
+    const enabledKeys = Array.isArray(options.tourSettings.enabledAmenityKeys)
+      ? options.tourSettings.enabledAmenityKeys.filter((k) => TOUR_NEARBY_AMENITY_KEYS.includes(k))
+      : keys;
+    payload.tourSettings = {
+      searchRadiusMeters: radius,
+      enabledAmenityKeys: enabledKeys.length ? enabledKeys : keys,
+    };
+    if (options.tourSettings.amenityRadiusMeters) {
+      payload.tourSettings.amenityRadiusMeters = { ...options.tourSettings.amenityRadiusMeters };
+    }
+    const slidePrintElements = normalizeSlidePrintElements(options.tourSettings.slidePrintElements);
+    if (Object.keys(slidePrintElements).length) {
+      payload.tourSettings.slidePrintElements = slidePrintElements;
+    }
+    if (Array.isArray(options.tourSettings.slidePlan) && options.tourSettings.slidePlan.length) {
+      payload.tourSettings.slidePlan = [...options.tourSettings.slidePlan];
+    }
+  }
+  return payload;
 }

@@ -8,7 +8,10 @@ export const TOUR_NEARBY_TARGET_MIN = 5;
 export const TOUR_NEARBY_MAX_RESULTS = 7;
 
 /** Bump when fetch/filter logic changes so tour caches refetch. */
-export const TOUR_NEARBY_DATA_VERSION = 26;
+export const TOUR_NEARBY_DATA_VERSION = 28;
+
+/** Edit tour: show as many Google results as we can (Places API nearby cap). */
+export const TOUR_NEARBY_EDITOR_MAX_RESULTS = 20;
 
 const METERS_PER_MILE = 1609.344;
 
@@ -29,8 +32,8 @@ const DEFAULT_MAX_DISTANCE_METERS = 12000;
 /** Transit: closest stop matters more than stars. */
 const DISTANCE_FIRST_AMENITIES = new Set(['transit']);
 
-/** Include unrated POIs after rated picks (parks often lack Google ratings). */
-const ALLOW_UNRATED_AMENITIES = new Set(['parks_rec', 'trailheads']);
+/** Include unrated POIs after rated picks (parks / rural groceries often lack Google ratings). */
+const ALLOW_UNRATED_AMENITIES = new Set(['parks_rec', 'trailheads', 'grocery']);
 
 function distanceSortDivisor(amenityKey) {
   if (amenityKey === 'fitness') return 12;
@@ -40,6 +43,19 @@ function distanceSortDivisor(amenityKey) {
 
 function maxDistanceMetersForAmenity(amenityKey) {
   return MAX_DISTANCE_METERS_BY_AMENITY[amenityKey] ?? DEFAULT_MAX_DISTANCE_METERS;
+}
+
+/**
+ * Post-fetch distance cap — when the user chose a search radius, honor it instead of the legacy ~10 mi caps.
+ * @param {string} amenityKey
+ * @param {number} [searchRadiusMeters]
+ */
+export function resolveMaxDistanceMetersForCuration(amenityKey, searchRadiusMeters) {
+  const fetchRadius = Number(searchRadiusMeters);
+  if (Number.isFinite(fetchRadius) && fetchRadius > 0) {
+    return fetchRadius;
+  }
+  return maxDistanceMetersForAmenity(amenityKey);
 }
 
 /**
@@ -187,7 +203,7 @@ function assignStablePlaceIds(features, amenityKey) {
 /**
  * Category filter + distance cap + adaptive quality selection (not a fixed count).
  * @param {unknown[]} features
- * @param {{ amenityKey?: string, maxResults?: number }} [options]
+ * @param {{ amenityKey?: string, maxResults?: number, searchRadiusMeters?: number }} [options]
  */
 export function curateNearbyTourFeatures(features, options = {}) {
   const amenityKey = options.amenityKey != null ? String(options.amenityKey) : '';
@@ -195,7 +211,8 @@ export function curateNearbyTourFeatures(features, options = {}) {
     TOUR_NEARBY_MAX_RESULTS,
     options.maxResults ?? TOUR_NEARBY_MAX_RESULTS
   );
-  const maxMiles = maxDistanceMetersForAmenity(amenityKey) / METERS_PER_MILE;
+  const maxMiles =
+    resolveMaxDistanceMetersForCuration(amenityKey, options.searchRadiusMeters) / METERS_PER_MILE;
   const distanceFirst = DISTANCE_FIRST_AMENITIES.has(amenityKey);
 
   const passesRowFilters = (f, lenient) => {
@@ -262,4 +279,57 @@ export function curateNearbyTourFeatures(features, options = {}) {
   }
 
   return assignStablePlaceIds(selected.slice(0, maxCap), amenityKey);
+}
+
+/**
+ * Edit tour: keep up to 20 matches, best-rated and closest first (lenient filters).
+ * @param {unknown[]} features
+ * @param {{ amenityKey?: string, searchRadiusMeters?: number }} [options]
+ */
+export function sortNearbyTourFeaturesForEditor(features, options = {}) {
+  const amenityKey = options.amenityKey != null ? String(options.amenityKey) : '';
+  const maxCap = TOUR_NEARBY_EDITOR_MAX_RESULTS;
+  const maxMiles =
+    resolveMaxDistanceMetersForCuration(amenityKey, options.searchRadiusMeters) / METERS_PER_MILE;
+
+  const passesRowFilters = (f, lenient) => {
+    if (!f || f.geometry?.type !== 'Point') return false;
+    const p = f.properties || {};
+    if (amenityKey && p.amenityKey && String(p.amenityKey) !== amenityKey) return false;
+    if (!hasNearbyDisplayName(p)) return false;
+    if (amenityKey && !isAllowedNearbyFeatureProperties(p, amenityKey, { lenient })) return false;
+    const mi = Number(p.straightLineMiles);
+    if (!Number.isFinite(mi) || mi > maxMiles) return false;
+    if (p.business_status === 'CLOSED_PERMANENTLY') return false;
+    return true;
+  };
+
+  let filtered = (features || []).filter((f) => passesRowFilters(f, true));
+  if (!filtered.length) {
+    filtered = (features || []).filter((f) => passesRowFilters(f, false));
+  }
+
+  const rated = filtered.filter((f) => hasGoogleRating(f?.properties));
+  const unrated = filtered.filter((f) => !hasGoogleRating(f?.properties));
+  const groceryTypeBoost = (f) => {
+    if (amenityKey !== 'grocery') return 0;
+    const types = f?.properties?.googleTypes;
+    if (!Array.isArray(types)) return 0;
+    if (types.includes('supermarket') || types.includes('grocery_store')) return 2;
+    if (types.includes('food_store')) return 1;
+    return 0;
+  };
+  rated.sort((a, b) => {
+    const boost = groceryTypeBoost(b) - groceryTypeBoost(a);
+    if (boost !== 0) return boost;
+    return compareByQualityScore(a, b, amenityKey);
+  });
+  unrated.sort((a, b) => {
+    const boost = groceryTypeBoost(b) - groceryTypeBoost(a);
+    if (boost !== 0) return boost;
+    return compareByDistanceThenRating(a, b);
+  });
+
+  const merged = [...rated, ...unrated].slice(0, maxCap);
+  return assignStablePlaceIds(merged, amenityKey);
 }

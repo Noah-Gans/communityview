@@ -7,6 +7,22 @@ import { getBasemapIdFromSearch } from './map/mapConstants';
 // Create the context
 const MapContext = createContext();
 
+function parseLayerStateFromSearch(search) {
+  const params = queryString.parse(search || '');
+  if (!params.layers) {
+    return { layerStatus: {}, layerOrder: [] };
+  }
+  const layerOrder = String(params.layers)
+    .split(',')
+    .map((layer) => layer.trim())
+    .filter(Boolean);
+  const layerStatus = {};
+  layerOrder.forEach((layer) => {
+    layerStatus[layer] = true;
+  });
+  return { layerStatus, layerOrder };
+}
+
 // Provider component
 export const MapProvider = ({ children }) => {
   console.log("REMOUNT!!!!")
@@ -24,10 +40,20 @@ export const MapProvider = ({ children }) => {
   const [focusFeatures, setFocusFeatures] = useState([])
   const [hoveredFeatureId, setHoveredFeatureId] = useState(null); // State to track hovered feature
   // ✅ PERSIST layer status & order using useRef
-  const layerStatusRef = useRef({});
-  const layerOrderRef = useRef([]);
-  const [layerStatus, setLayerStatus] = useState({});
-  const [layerOrder, setLayerOrder] = useState([]); 
+  const initialLayerState = parseLayerStateFromSearch(
+    typeof window !== 'undefined' ? window.location.search : location.search
+  );
+  const layerStatusRef = useRef(initialLayerState.layerStatus);
+  const layerOrderRef = useRef(initialLayerState.layerOrder);
+  const initialSearch =
+    typeof window !== 'undefined' ? window.location.search : location.search;
+  const initialUrlParams = queryString.parse(initialSearch || '');
+  /** Pan/zoom URL updates change lat/lng only — do not re-apply stale ?layers= on every search change. */
+  const lastSyncedLayersParamRef = useRef(
+    initialUrlParams.layers != null ? String(initialUrlParams.layers) : ''
+  );
+  const [layerStatus, setLayerStatus] = useState(initialLayerState.layerStatus);
+  const [layerOrder, setLayerOrder] = useState(initialLayerState.layerOrder); 
   const [layerLabels, setLayerLabels] = useState({}); // Track which layers have labels enabled 
   /** Current selected basemap id (set by Map.js) so save/share persists actual map style choice. */
   const [currentBasemapId, setCurrentBasemapId] = useState(initialBasemapId);
@@ -35,6 +61,10 @@ export const MapProvider = ({ children }) => {
   const activeBasemapIdRef = useRef(initialBasemapId);
   /** Set by Print when opening a saved map — forces a full basemap + layer restack in Map.js. */
   const pendingPrintBasemapRestoreRef = useRef(null);
+  /** Set from Info panel “Create Map” — Print enters editor; Map.js adds a property boundary. */
+  const pendingCreateMapFromFeatureRef = useRef(null);
+  /** Basemap id at click time — reapplied before the editor is revealed. */
+  const pendingCreateMapBasemapIdRef = useRef(null);
 
   //================ Print Vars ==================
   const [paperSize, setPaperSize] = useState('full'); // default to "full" screen
@@ -49,6 +79,8 @@ export const MapProvider = ({ children }) => {
   const [activePrintTool, setActivePrintTool] = useState('select');
   /** True on /view/:token or /tour/:token — disable editing chrome and drag on print features. */
   const [shareViewerReadOnly, setShareViewerReadOnly] = useState(false);
+  /** Mobile top bar search on /print dashboard (My Maps). */
+  const [mobileMapsSearchQuery, setMobileMapsSearchQuery] = useState('');
   /** Print layout mode for PDF crop box workflow. */
   const [printLayoutMode, setPrintLayoutMode] = useState(false);
   /** Crop box in CSS px relative to #map canvas: {x,y,width,height}. */
@@ -82,27 +114,27 @@ export const MapProvider = ({ children }) => {
     console.log("🎯 selectedPrintElement:", selectedPrintElement?.id || "None");
   }, [printElements, selectedPrintElement]);
 
-  // ------------------- Initialize Layer State from URL -------------------
+  // ------------------- Sync layer state when URL ?layers= changes -------------------
   useEffect(() => {
-    console.log("Updating Layerss")
-    // Parse ?layers=... from location.search
-    const params = queryString.parse(location.search);
-    if (params.layers) {
-      const fromUrl = params.layers.split(',');
-      // Build { ownership: true, zoning: true, etc. }
-      const newLayerStatus = {};
-      fromUrl.forEach((layer) => {
-        newLayerStatus[layer] = true;
-      });
-      setLayerStatus(newLayerStatus);
-      setLayerOrder(fromUrl);
-    } else {
-      // Default: no overlay layers — user enables layers via URL or the layer panel.
-      setLayerStatus({});
-      setLayerOrder([]);
-    }
-  // Empty array so it only runs **once** on mount
-  }, []);
+    const params = queryString.parse(location.search || '');
+    // Absent ?layers= means “not specified” (e.g. /print dashboard) — keep in-memory toggles.
+    if (params.layers == null) return;
+
+    const layersParam = String(params.layers);
+    if (layersParam === lastSyncedLayersParamRef.current) return;
+    lastSyncedLayersParamRef.current = layersParam;
+
+    const next = parseLayerStateFromSearch(location.search);
+    layerStatusRef.current = next.layerStatus;
+    layerOrderRef.current = next.layerOrder;
+    setLayerStatus(next.layerStatus);
+    setLayerOrder(next.layerOrder);
+  }, [location.search]);
+
+  useEffect(() => {
+    layerStatusRef.current = layerStatus;
+    layerOrderRef.current = layerOrder;
+  }, [layerStatus, layerOrder]);
 
   
   
@@ -310,8 +342,12 @@ export const MapProvider = ({ children }) => {
     setCurrentBasemapId,
     activeBasemapIdRef,
     pendingPrintBasemapRestoreRef,
+    pendingCreateMapFromFeatureRef,
+    pendingCreateMapBasemapIdRef,
     shareViewerReadOnly,
     setShareViewerReadOnly,
+    mobileMapsSearchQuery,
+    setMobileMapsSearchQuery,
     printLayoutMode,
     setPrintLayoutMode,
     printLayoutRect,

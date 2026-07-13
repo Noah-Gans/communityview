@@ -1,5 +1,5 @@
 /** MVT tile fetch minzoom when map center is outside dense regions. */
-export const REGRID_VECTOR_MIN_ZOOM_SPARSE = 10;
+export const REGRID_VECTOR_MIN_ZOOM_SPARSE = 11;
 
 /** MVT tile fetch minzoom when map center is inside a dense region below. */
 export const REGRID_VECTOR_MIN_ZOOM_DENSE = 13;

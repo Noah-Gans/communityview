@@ -1,40 +1,46 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import './Pricing.css';
+import './styles/marketing-layout.css';
 import { useUser } from '../../contexts/UserContext';
+import { hasActiveSubscription } from '../../utils/subscriptionAccess';
 import { isNativeApp } from '../../utils/platformDetection';
+import { useIsMobile } from './hooks/useMarketing';
+import MarketingLayout from './components/MarketingLayout';
+import MarketingFooter from './components/MarketingFooter';
+import { pricingPlans, pricingHero } from './content/pricingPlans';
 
 const Pricing = () => {
   const navigate = useNavigate();
-  const { user } = useUser();
+  const { user, subscriptionStatus } = useUser();
   const [isAnnual, setIsAnnual] = useState(true);
-  const [currentCardIndex, setCurrentCardIndex] = useState(1); // Start on Plus (middle card)
+  const [currentCardIndex, setCurrentCardIndex] = useState(1);
   const cardsContainerRef = useRef(null);
   const touchStartX = useRef(0);
   const touchEndX = useRef(0);
   const isNative = isNativeApp();
-  const [isMobile, setIsMobile] = useState(window.innerWidth <= 768);
+  const isMobile = useIsMobile();
 
-  useEffect(() => {
-    const handleResize = () => {
-      setIsMobile(window.innerWidth <= 768);
-    };
-    window.addEventListener('resize', handleResize);
-    return () => window.removeEventListener('resize', handleResize);
-  }, []);
-
-  const handleSubscribe = (planType) => {
-    if (!user) {
-      // Pass the selected plan to signup page via state
-      navigate('/signup', { state: { selectedPlan: planType, billingCycle: isAnnual ? 'annual' : 'monthly' } });
+  const handleSubscribe = (plan) => {
+    if (plan.contact) {
+      window.location.href = 'mailto:noahgans@communityview.ai?subject=Enterprise Inquiry';
       return;
     }
-
-    // If user is signed in, take them to the map
-    navigate('/map');
+    if (!user) {
+      navigate('/signup', {
+        state: { selectedPlan: plan.id, billingCycle: isAnnual ? 'annual' : 'monthly' },
+      });
+      return;
+    }
+    if (hasActiveSubscription(subscriptionStatus)) {
+      navigate('/map');
+      return;
+    }
+    navigate('/signup', {
+      state: { selectedPlan: plan.id, billingCycle: isAnnual ? 'annual' : 'monthly' },
+    });
   };
 
-  // Handle swipe gestures
   const handleTouchStart = (e) => {
     touchStartX.current = e.touches[0].clientX;
   };
@@ -45,59 +51,44 @@ const Pricing = () => {
 
   const handleTouchEnd = () => {
     if (!touchStartX.current || !touchEndX.current) return;
-    
     const distance = touchStartX.current - touchEndX.current;
-    const minSwipeDistance = 50;
-
-    if (Math.abs(distance) > minSwipeDistance) {
-      if (distance > 0) {
-        // Swipe left - go to next card
-        setCurrentCardIndex((prev) => Math.min(prev + 1, 2));
-      } else {
-        // Swipe right - go to previous card
-        setCurrentCardIndex((prev) => Math.max(prev - 1, 0));
-      }
+    if (Math.abs(distance) > 50) {
+      setCurrentCardIndex((prev) =>
+        distance > 0 ? Math.min(prev + 1, pricingPlans.length - 1) : Math.max(prev - 1, 0)
+      );
     }
-    
     touchStartX.current = 0;
     touchEndX.current = 0;
   };
 
-  // Scroll to current card when index changes
   useEffect(() => {
-    if (cardsContainerRef.current) {
-      const cardWidth = cardsContainerRef.current.offsetWidth;
-      const scrollPosition = currentCardIndex * (cardWidth + 32); // 32px is gap
-      cardsContainerRef.current.scrollTo({
-        left: scrollPosition,
-        behavior: 'smooth'
-      });
+    if (!cardsContainerRef.current) return;
+    const card = cardsContainerRef.current.children[currentCardIndex];
+    if (card) {
+      card.scrollIntoView({ behavior: 'smooth', inline: 'center', block: 'nearest' });
     }
   }, [currentCardIndex]);
 
+  const swipeable = isNative || isMobile;
+
   return (
-    <div className="pricing-page">
-      {/* Hero Section */}
+    <MarketingLayout className="pricing-page">
       <div className="pricing-hero">
         <div className="pricing-badge">
-          <span>Simple, Transparent Pricing</span>
+          <span>{pricingHero.badge}</span>
         </div>
-        <h1 className="pricing-main-title">
-          Choose Your Plan
-        </h1>
-        <p className="pricing-subtitle">
-          Access professional-grade GIS tools with unparalleled data accuracy
-        </p>
-        
-        {/* Billing Toggle */}
+        <h1 className="pricing-main-title">{pricingHero.title}</h1>
+        <p className="pricing-subtitle">{pricingHero.subtitle}</p>
         <div className="billing-toggle">
-          <button 
+          <button
+            type="button"
             className={`toggle-option ${!isAnnual ? 'active' : ''}`}
             onClick={() => setIsAnnual(false)}
           >
             Monthly
           </button>
-          <button 
+          <button
+            type="button"
             className={`toggle-option ${isAnnual ? 'active' : ''}`}
             onClick={() => setIsAnnual(true)}
           >
@@ -107,236 +98,88 @@ const Pricing = () => {
         </div>
       </div>
 
-      {/* Pricing Cards - Swipeable Container */}
-      <div 
-        className={`pricing-cards-container ${isNative || window.innerWidth <= 768 ? 'swipeable' : ''}`}
+      <div
+        className={`pricing-cards-container${swipeable ? ' swipeable' : ''}`}
         ref={cardsContainerRef}
         onTouchStart={handleTouchStart}
         onTouchMove={handleTouchMove}
         onTouchEnd={handleTouchEnd}
       >
-        {/* Regular Plan */}
-        <div className="pricing-card regular-plan">
-          <div className="plan-header">
-            <h3 className="plan-name">Regular</h3>
-            <div className="plan-price">
-              <span className="price-amount">
-                ${isAnnual ? '15' : '18'}
-              </span>
-              <span className="price-period">/month</span>
-            </div>
-            {isAnnual && (
-              <p className="billing-note">Billed annually at $180/year</p>
-            )}
-            <p className="plan-description">
-              Essential GIS tools for everyday use
-            </p>
-            <p className="trial-notice">
-              🎉 Start with a 14-day free trial
-            </p>
-          </div>
-          
-          <button 
-            className="plan-button secondary"
-            onClick={() => handleSubscribe('regular')}
+        {pricingPlans.map((plan) => (
+          <div
+            key={plan.id}
+            className={`pricing-card ${plan.id}-plan${plan.featured ? ' featured' : ''}`}
           >
-            {user ? 'Go to Map' : 'Sign Up to Subscribe'}
-          </button>
+            <div className="plan-header">
+              <h3 className="plan-name">{plan.name}</h3>
+              <div className="plan-price">
+                {plan.customPrice ? (
+                  <span className="price-amount">Custom</span>
+                ) : (
+                  <>
+                    <span className="price-amount">
+                      ${isAnnual ? plan.annualMonthlyPrice : plan.monthlyPrice}
+                    </span>
+                    <span className="price-period">/month</span>
+                  </>
+                )}
+              </div>
+              {!plan.customPrice && isAnnual && (
+                <p className="billing-note">Billed annually at ${plan.annualTotal}/year</p>
+              )}
+              <p className="plan-description">{plan.description}</p>
+              {plan.trial && <p className="trial-notice">🎉 {plan.trial}</p>}
+            </div>
 
-          <div className="plan-features">
-            <div className="feature-item">
-              <span className="check-icon">✓</span>
-              <span>Complete ownership data</span>
-            </div>
-            <div className="feature-item">
-              <span className="check-icon">✓</span>
-              <span>All map layers & data</span>
-            </div>
-            <div className="feature-item">
-              <span className="check-icon">✓</span>
-              <span>Basic parcel search</span>
-            </div>
-            <div className="feature-item">
-              <span className="check-icon">✓</span>
-              <span>Limited report generation</span>
-            </div>
-            <div className="feature-item">
-              <span className="check-icon">✓</span>
-              <span>Limited print maps</span>
-            </div>
-            <div className="feature-item">
-              <span className="check-icon">✓</span>
-              <span>Daily data updates</span>
-            </div>
-            <div className="feature-item disabled">
-              <span className="x-icon">✕</span>
-              <span>Search by mailing address</span>
-            </div>
-            <div className="feature-item disabled">
-              <span className="x-icon">✕</span>
-              <span>Unlimited reports</span>
-            </div>
-            <div className="feature-item disabled">
-              <span className="x-icon">✕</span>
-              <span>Unlimited map making</span>
+            <button
+              type="button"
+              className={`plan-button ${plan.ctaVariant}`}
+              onClick={() => handleSubscribe(plan)}
+            >
+              {plan.contact ? 'Contact Us' : user ? 'Go to Map' : 'Sign Up to Subscribe'}
+            </button>
+
+            <div className="plan-features">
+              {plan.features.map((feature) => (
+                <div
+                  key={feature.text}
+                  className={`feature-item${feature.included ? '' : ' disabled'}`}
+                >
+                  <span className={feature.included ? 'check-icon' : 'x-icon'}>
+                    {feature.included ? '✓' : '✕'}
+                  </span>
+                  <span>{feature.text}</span>
+                </div>
+              ))}
             </div>
           </div>
-        </div>
-
-        {/* Plus Plan */}
-        <div className="pricing-card plus-plan featured">
-          <div className="plan-header">
-            <h3 className="plan-name">Plus</h3>
-            <div className="plan-price">
-              <span className="price-amount">
-                ${isAnnual ? '20' : '24'}
-              </span>
-              <span className="price-period">/month</span>
-            </div>
-            {isAnnual && (
-              <p className="billing-note">Billed annually at $240/year</p>
-            )}
-            <p className="plan-description">
-              Unlimited access to all professional features
-            </p>
-            <p className="trial-notice">
-              🎉 Start with a 14-day free trial
-            </p>
-          </div>
-          
-          <button 
-            className="plan-button primary"
-            onClick={() => handleSubscribe('plus')}
-          >
-            {user ? 'Go to Map' : 'Sign Up to Subscribe'}
-          </button>
-
-          <div className="plan-features">
-            <div className="feature-item">
-              <span className="check-icon">✓</span>
-              <span>All Regular features</span>
-            </div>
-            <div className="feature-item">
-              <span className="check-icon">✓</span>
-              <span>Search by mailing address</span>
-            </div>
-            <div className="feature-item">
-              <span className="check-icon">✓</span>
-              <span>Unlimited reports & export</span>
-            </div>
-            <div className="feature-item">
-              <span className="check-icon">✓</span>
-              <span>Unlimited map making</span>
-            </div>
-            <div className="feature-item">
-              <span className="check-icon">✓</span>
-              <span>Advanced search filters</span>
-            </div>
-            <div className="feature-item">
-              <span className="check-icon">✓</span>
-              <span>Professional print builder</span>
-            </div>
-            <div className="feature-item">
-              <span className="check-icon">✓</span>
-              <span>Priority support</span>
-            </div>
-            <div className="feature-item">
-              <span className="check-icon">✓</span>
-              <span>Export in multiple formats</span>
-            </div>
-          </div>
-        </div>
-
-        {/* Enterprise Plan */}
-        <div className="pricing-card enterprise-plan">
-          <div className="plan-header">
-            <h3 className="plan-name">Enterprise</h3>
-            <div className="plan-price">
-              <span className="price-amount">Custom</span>
-            </div>
-            <p className="plan-description">
-              Tailored solutions for organizations
-            </p>
-          </div>
-          
-          <button 
-            className="plan-button secondary"
-            onClick={() => window.location.href = 'mailto:noahgans@communityview.ai?subject=Enterprise Inquiry'}
-          >
-            Contact Us
-          </button>
-
-          <div className="plan-features">
-            <div className="feature-item">
-              <span className="check-icon">✓</span>
-              <span>All Plus features</span>
-            </div>
-            <div className="feature-item">
-              <span className="check-icon">✓</span>
-              <span>Custom layer hosting</span>
-            </div>
-            <div className="feature-item">
-              <span className="check-icon">✓</span>
-              <span>Multiple user accounts</span>
-            </div>
-            <div className="feature-item">
-              <span className="check-icon">✓</span>
-              <span>API access</span>
-            </div>
-            <div className="feature-item">
-              <span className="check-icon">✓</span>
-              <span>Custom analysis services</span>
-            </div>
-            <div className="feature-item">
-              <span className="check-icon">✓</span>
-              <span>Dedicated support</span>
-            </div>
-            <div className="feature-item">
-              <span className="check-icon">✓</span>
-              <span>Training & onboarding</span>
-            </div>
-          </div>
-        </div>
+        ))}
       </div>
 
-      {/* CTA Section */}
       <div className="pricing-cta">
         <h2 className="cta-title">Ready to get started?</h2>
         <p className="cta-description">
-          Join professionals who trust Community View for accurate, up-to-date GIS data
+          Join agents who use Community View for maps and property tours
         </p>
-        <button 
+        <button
+          type="button"
           className="cta-button"
-          onClick={() => user ? navigate('/map') : navigate('/signup')}
+          onClick={() => {
+            if (user && hasActiveSubscription(subscriptionStatus)) {
+              navigate('/map');
+            } else {
+              navigate('/signup');
+            }
+          }}
         >
           {user ? 'Go to Map' : 'Sign Up Now'}
           <span className="button-arrow">→</span>
         </button>
       </div>
 
-      {/* Footer */}
-      <footer className="intro-footer">
-        <div className="footer-content">
-          <div className="footer-brand">
-            <div className="footer-logo-container">
-              <img src="/logo.png" alt="Community View Logo" className="footer-logo-image" />
-            </div>
-            <p>Spatial GIS Solutions</p>
-          </div>
-          <div className="footer-links">
-            <button className="footer-button" onClick={() => navigate('/pricing')}>Pricing</button>
-            <button className="footer-button" onClick={() => navigate('/faq')}>FAQ</button>
-            {!isMobile && (
-              <button className="footer-button" onClick={() => navigate('/updates')}>Updates</button>
-            )}
-            <button className="footer-button" onClick={() => navigate('/features')}>Features</button>
-            <a className="footer-button" href="mailto:noahgans@communityview.ai" target="_blank" rel="noopener noreferrer">Contact</a>
-          </div>
-        </div>
-      </footer>
-    </div>
+      <MarketingFooter />
+    </MarketingLayout>
   );
 };
 
 export default Pricing;
-

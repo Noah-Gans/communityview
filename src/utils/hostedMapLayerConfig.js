@@ -1,5 +1,16 @@
 import { isRegridParcelPolygonFeature } from './regridParcelBoundary';
 
+/** Side panel legend + map fill for state-owned public land (PADUS `Own_Type` = STAT). */
+export const PUBLIC_LAND_STATE_COLOR = '#2563eb';
+
+/** PADUS owner type — `STAT` is state-owned land in hosted fee tiles. */
+export const PUBLIC_LAND_OWNER_TYPE_MATCH_KEY = [
+  'coalesce',
+  ['get', 'Own_Type'],
+  ['get', 'own_type'],
+  '',
+];
+
 /** Mapbox layer id → toggle id in `layerStatus` / SidePanel. */
 export const MAP_LAYER_ID_TO_TOGGLE = {
   'public_land-layer': 'public_land',

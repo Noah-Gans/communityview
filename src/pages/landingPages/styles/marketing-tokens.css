@@ -1,0 +1,14 @@
+:root {
+  --mkt-bg: #000000;
+  --mkt-bg-elevated: rgba(0, 0, 0, 0.9);
+  --mkt-accent: #00d4aa;
+  --mkt-accent-neon: #00ff00;
+  --mkt-accent-deep: #006b45;
+  --mkt-text: #ffffff;
+  --mkt-text-muted: rgba(255, 255, 255, 0.7);
+  --mkt-border: rgba(255, 255, 255, 0.1);
+  --mkt-section-pad: 80px;
+  --mkt-section-pad-mobile: 48px;
+  --mkt-max-width: 1200px;
+  --mkt-font: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Inter', 'SF Pro Display', sans-serif;
+}

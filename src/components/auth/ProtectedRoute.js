@@ -1,16 +1,15 @@
 import React from 'react';
 import { useUser } from '../../contexts/UserContext';
 import { Navigate } from 'react-router-dom';
+import MapLoadingOverlay from '../loading/MapLoadingOverlay';
 
 function ProtectedRoute({ children }) {
   const { user, subscriptionStatus, loading } = useUser();
 
-  // Debug logging
   console.log('🔒 ProtectedRoute check:', { user: !!user, subscriptionStatus, loading });
 
-  // If still checking Auth or Firestore, show a spinner or blank
   if (loading) {
-    return <div>Loading...</div>;
+    return <MapLoadingOverlay phraseSet="site" className="map-loading-overlay--app-boot" />;
   }
 
   // If no user or not active subscription, redirect

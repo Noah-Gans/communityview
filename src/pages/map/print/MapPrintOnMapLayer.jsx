@@ -20,6 +20,7 @@ import {
 import { buildMapLabelDisplayText, labelUsesGeoOffset } from '../../print/mapLabelUtils';
 import { getPointIconDefaultStyle } from '../../print/pointIconDefaultStyles';
 import { getMetricsForLineLngLat, getMetricsForPolygonLngLat } from './printToolUtils';
+import SharedPhotoFullscreen from '../../../components/map/SharedPhotoFullscreen';
 
 export default function MapPrintOnMapLayer(props) {
   const {
@@ -70,7 +71,6 @@ export default function MapPrintOnMapLayer(props) {
     setSharePhotoPopupFullscreen,
     sharePhotoPopupFullscreen,
     stepSharePhotoPopup,
-    sharePhotoTouchStartXRef,
     isPropertyTourRoute,
     propertyMapWizardActive,
     propertyMapWizardIntent,
@@ -910,7 +910,10 @@ export default function MapPrintOnMapLayer(props) {
         )}
       </div>
 
-      {shareViewerReadOnly && currentSharePhotoElement && currentSharePhotoGallery.length > 0 && (
+      {shareViewerReadOnly &&
+        currentSharePhotoElement &&
+        currentSharePhotoGallery.length > 0 &&
+        !sharePhotoPopupFullscreen && (
         <div
           className="shared-photo-card-wrap"
           style={currentSharePhotoCardStyle}
@@ -973,72 +976,16 @@ export default function MapPrintOnMapLayer(props) {
         </div>
       )}
 
-      {shareViewerReadOnly &&
-        sharePhotoPopupFullscreen &&
-        currentSharePhotoElement &&
-        currentSharePhotoGallery.length > 0 && (
-          <div className="shared-photo-fullscreen" role="dialog" aria-label="Photo gallery fullscreen">
-            <button
-              type="button"
-              className="shared-photo-fullscreen-backdrop"
-              aria-label="Close fullscreen"
-              onClick={() => setSharePhotoPopupFullscreen(false)}
-            />
-            <div
-              className="shared-photo-fullscreen-stage"
-              onTouchStart={(e) => {
-                sharePhotoTouchStartXRef.current = e.changedTouches?.[0]?.clientX ?? null;
-              }}
-              onTouchEnd={(e) => {
-                const startX = sharePhotoTouchStartXRef.current;
-                const endX = e.changedTouches?.[0]?.clientX ?? null;
-                sharePhotoTouchStartXRef.current = null;
-                if (!Number.isFinite(startX) || !Number.isFinite(endX)) return;
-                const delta = endX - startX;
-                if (Math.abs(delta) < 40) return;
-                stepSharePhotoPopup(delta < 0 ? 1 : -1);
-              }}
-            >
-              <button
-                type="button"
-                className="shared-photo-fullscreen-close"
-                onClick={() => setSharePhotoPopupFullscreen(false)}
-              >
-                x
-              </button>
-              {currentSharePhotoGallery.length > 1 && (
-                <span className="shared-photo-fullscreen-count">
-                  Photo {sharePhotoPopupIndex + 1} of {currentSharePhotoGallery.length}
-                </span>
-              )}
-              {currentSharePhotoGallery.length > 1 && (
-                <button
-                  type="button"
-                  className="shared-photo-fullscreen-nav shared-photo-fullscreen-nav-prev"
-                  aria-label="Previous photo"
-                  onClick={() => stepSharePhotoPopup(-1)}
-                >
-                  {'<'}
-                </button>
-              )}
-              <img
-                src={currentSharePhotoGallery[Math.min(sharePhotoPopupIndex, currentSharePhotoGallery.length - 1)]}
-                alt={currentSharePhotoElement.label || 'Photo point'}
-                className="shared-photo-fullscreen-image"
-              />
-              {currentSharePhotoGallery.length > 1 && (
-                <button
-                  type="button"
-                  className="shared-photo-fullscreen-nav shared-photo-fullscreen-nav-next"
-                  aria-label="Next photo"
-                  onClick={() => stepSharePhotoPopup(1)}
-                >
-                  {'>'}
-                </button>
-              )}
-            </div>
-          </div>
-        )}
+      {shareViewerReadOnly && currentSharePhotoElement && (
+        <SharedPhotoFullscreen
+          open={sharePhotoPopupFullscreen && currentSharePhotoGallery.length > 0}
+          onClose={() => setSharePhotoPopupFullscreen(false)}
+          gallery={currentSharePhotoGallery}
+          photoIndex={sharePhotoPopupIndex}
+          onStepPhoto={stepSharePhotoPopup}
+          alt={currentSharePhotoElement.label || 'Photo point'}
+        />
+      )}
 
       {isPrinting && !isPropertyTourRoute && (
         <div

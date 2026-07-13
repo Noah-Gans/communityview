@@ -1,6 +1,11 @@
 /**
- * Discover Regrid county paths from the map viewport (center + adjacent counties).
+ * County for search scope from map center (single Regrid parcels/point lookup).
  */
+
+import {
+  readSearchCountySessionState,
+  writeSearchCountySessionState,
+} from './searchCountyCache';
 
 export function countyLevelPath(path) {
   if (!path || typeof path !== 'string') return null;
@@ -33,37 +38,6 @@ export function toCountyDisplayFromPath(path) {
   return `${countyName} County, ${state}`;
 }
 
-export function buildMapCountySamplePoints(map) {
-  const center = map.getCenter();
-  const bounds = map.getBounds();
-  const north = bounds.getNorth();
-  const south = bounds.getSouth();
-  const east = bounds.getEast();
-  const west = bounds.getWest();
-  const latMid = (north + south) / 2;
-  const lngMid = (east + west) / 2;
-  const latSpan = Math.max(Math.abs(north - south), 0.05);
-  const lngSpan = Math.max(Math.abs(east - west), 0.05);
-  const latRing = Math.min(Math.max(latSpan * 0.55, 0.15), 1.2);
-  const lngRing = Math.min(Math.max(lngSpan * 0.55, 0.15), 1.2);
-
-  return [
-    { lat: center.lat, lon: center.lng, role: 'center' },
-    { lat: center.lat + latRing, lon: center.lng },
-    { lat: center.lat - latRing, lon: center.lng },
-    { lat: center.lat, lon: center.lng + lngRing },
-    { lat: center.lat, lon: center.lng - lngRing },
-    { lat: center.lat + latRing, lon: center.lng + lngRing },
-    { lat: center.lat + latRing, lon: center.lng - lngRing },
-    { lat: center.lat - latRing, lon: center.lng + lngRing },
-    { lat: center.lat - latRing, lon: center.lng - lngRing },
-    { lat: north, lon: lngMid },
-    { lat: south, lon: lngMid },
-    { lat: latMid, lon: east },
-    { lat: latMid, lon: west },
-  ];
-}
-
 async function lookupCountyAt(lat, lon, radiusMeters, regridRestGet, applyRegridSearchListParams) {
   const params = new URLSearchParams({
     lat: String(lat),
@@ -90,50 +64,79 @@ async function lookupCountyAt(lat, lon, radiusMeters, regridRestGet, applyRegrid
 }
 
 /**
- * @returns {Promise<Array<{ code, display, path, isCenter?: boolean }>>}
+ * One parcels/point at map center — bills 1 parcel record.
+ * @returns {Promise<{ code, display, path } | null>}
  */
-export async function discoverCountiesFromMap(map, { regridRestGet, applyRegridSearchListParams }) {
-  if (!map?.getCenter) return [];
+export async function discoverCountyAtMapCenter(map, { regridRestGet, applyRegridSearchListParams }) {
+  if (!map?.getCenter) return null;
 
-  const samplePoints = buildMapCountySamplePoints(map);
-  const byPath = new Map();
-  let centerPath = null;
+  const center = map.getCenter();
+  return lookupCountyAt(center.lat, center.lng, 0, regridRestGet, applyRegridSearchListParams);
+}
 
-  const results = await Promise.all(
-    samplePoints.map(async (point) => {
-      const radius = point.role === 'center' ? 0 : 50;
-      const county = await lookupCountyAt(
-        point.lat,
-        point.lon,
-        radius,
-        regridRestGet,
-        applyRegridSearchListParams
-      );
-      return { county, role: point.role };
-    })
-  );
+/** Dedupe concurrent ensure calls (e.g. React StrictMode double mount). */
+let inflightEnsureSessionCounty = null;
 
-  results.forEach(({ county, role }) => {
-    if (!county?.path) return;
-    if (!byPath.has(county.path)) {
-      byPath.set(county.path, { ...county, isCenter: role === 'center' });
-    }
-    if (role === 'center') centerPath = county.path;
-  });
+/**
+ * First search open in a tab session: one map-center lookup, stored as session + map county.
+ * Later opens read sessionStorage only (0 Regrid calls).
+ */
+export async function ensureSessionCountyFromMap(map, { regridRestGet, applyRegridSearchListParams }) {
+  const existing = readSearchCountySessionState();
+  if (existing?.sessionCounty) {
+    return {
+      sessionCounty: existing.sessionCounty,
+      mapCounty: existing.mapCounty || existing.sessionCounty,
+      fromCache: true,
+    };
+  }
 
-  const list = Array.from(byPath.values());
-  if (centerPath) {
-    list.forEach((entry) => {
-      entry.isCenter = entry.path === centerPath;
+  if (!map?.getCenter) {
+    return { sessionCounty: null, mapCounty: null, fromCache: false };
+  }
+
+  if (!inflightEnsureSessionCounty) {
+    inflightEnsureSessionCounty = discoverCountyAtMapCenter(map, {
+      regridRestGet,
+      applyRegridSearchListParams,
+    }).finally(() => {
+      inflightEnsureSessionCounty = null;
     });
   }
 
-  list.sort((a, b) => {
-    if (Boolean(a.isCenter) !== Boolean(b.isCenter)) {
-      return a.isCenter ? -1 : 1;
-    }
-    return a.display.localeCompare(b.display);
-  });
+  const county = await inflightEnsureSessionCounty;
+  if (!county) {
+    return { sessionCounty: null, mapCounty: null, fromCache: false };
+  }
 
-  return list;
+  writeSearchCountySessionState({ sessionCounty: county, mapCounty: county });
+  return { sessionCounty: county, mapCounty: county, fromCache: false };
+}
+
+/**
+ * Explicit “Update from map” — 1 Regrid call; updates map county only (session county unchanged).
+ */
+export async function refreshMapCenterCounty(map, { regridRestGet, applyRegridSearchListParams }) {
+  if (!map?.getCenter) return null;
+
+  const county = await discoverCountyAtMapCenter(map, { regridRestGet, applyRegridSearchListParams });
+  if (!county) return null;
+
+  const existing = readSearchCountySessionState();
+  writeSearchCountySessionState({
+    sessionCounty: existing?.sessionCounty || county,
+    mapCounty: county,
+  });
+  return county;
+}
+
+/** Build a county scope record from a parcel path (no API). */
+export function countyRecordFromParcelPath(path) {
+  const countyPath = countyLevelPath(path);
+  if (!countyPath) return null;
+  return {
+    code: toCountyCodeFromPath(countyPath),
+    display: toCountyDisplayFromPath(countyPath),
+    path: countyPath,
+  };
 }

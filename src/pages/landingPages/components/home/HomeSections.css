@@ -1,0 +1,301 @@
+.how-it-works-section {
+  max-width: 100%;
+}
+
+.how-it-works-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 24px;
+  max-width: var(--mkt-max-width);
+  margin: 0 auto;
+  text-align: left;
+}
+
+.how-it-works-step {
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 16px;
+  padding: 24px 20px;
+}
+
+.how-it-works-num {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  background: rgba(0, 107, 69, 0.35);
+  color: #00d4aa;
+  font-weight: 700;
+  font-size: 0.95rem;
+  margin-bottom: 12px;
+}
+
+.how-it-works-step h3 {
+  margin: 0 0 8px;
+  color: #fff;
+  font-size: 1.15rem;
+}
+
+.how-it-works-step p {
+  margin: 0;
+  color: rgba(255, 255, 255, 0.65);
+  line-height: 1.5;
+  font-size: 0.95rem;
+}
+
+.search-bridge-section {
+  max-width: 100%;
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.search-bridge-inner {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 40px;
+  align-items: center;
+  max-width: var(--mkt-max-width);
+  margin: 0 auto;
+  text-align: left;
+}
+
+.search-bridge-copy .marketing-section-subtitle {
+  margin-left: 0;
+}
+
+.search-bridge-image-wrap {
+  border-radius: 16px;
+  overflow: hidden;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  box-shadow: 0 20px 40px rgba(0, 0, 0, 0.4);
+}
+
+.search-bridge-image {
+  width: 100%;
+  display: block;
+}
+
+.ownership-details-section {
+  max-width: 100%;
+}
+
+.ownership-details-inner {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 40px;
+  align-items: center;
+  max-width: var(--mkt-max-width);
+  margin: 0 auto;
+  text-align: left;
+}
+
+.ownership-details-copy .marketing-section-subtitle {
+  margin-left: 0;
+}
+
+.ownership-details-bullets {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.ownership-details-bullets li {
+  position: relative;
+  padding: 6px 0 6px 20px;
+  color: rgba(255, 255, 255, 0.72);
+  line-height: 1.45;
+  font-size: 0.95rem;
+}
+
+.ownership-details-bullets li::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 13px;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #00d4aa;
+}
+
+.ownership-details-image-wrap {
+  border-radius: 16px;
+  overflow: hidden;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  box-shadow: 0 20px 40px rgba(0, 0, 0, 0.4);
+}
+
+.ownership-details-image {
+  width: 100%;
+  display: block;
+}
+
+.map-builder-section {
+  max-width: 100%;
+}
+
+.map-builder-inner {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 40px;
+  align-items: center;
+  max-width: var(--mkt-max-width);
+  margin: 0 auto;
+  text-align: left;
+}
+
+.map-builder-copy .marketing-section-subtitle {
+  margin-left: 0;
+}
+
+.map-builder-bullets {
+  margin: 0 0 24px;
+  padding: 0;
+  list-style: none;
+}
+
+.map-builder-bullets li {
+  position: relative;
+  padding: 6px 0 6px 20px;
+  color: rgba(255, 255, 255, 0.72);
+  line-height: 1.45;
+  font-size: 0.95rem;
+}
+
+.map-builder-bullets li::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 13px;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #00d4aa;
+}
+
+.map-builder-cta {
+  margin-top: 4px;
+}
+
+.map-builder-image-wrap {
+  border-radius: 16px;
+  overflow: hidden;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  box-shadow: 0 20px 40px rgba(0, 0, 0, 0.4);
+}
+
+.map-builder-image {
+  width: 100%;
+  display: block;
+}
+
+.nationwide-trust-section {
+  max-width: 100%;
+  background: rgba(0, 0, 0, 0.9);
+  border-top: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.nationwide-trust-points {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 16px;
+}
+
+.nationwide-trust-points li {
+  background: rgba(0, 107, 69, 0.2);
+  border: 1px solid rgba(0, 212, 170, 0.35);
+  color: #00d4aa;
+  padding: 10px 20px;
+  border-radius: 50px;
+  font-size: 0.95rem;
+  font-weight: 500;
+}
+
+.final-cta-section {
+  padding-bottom: 100px;
+}
+
+.final-cta-buttons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px;
+  justify-content: center;
+}
+
+.feature-stack-section {
+  width: 100%;
+}
+
+@media (max-width: 768px) {
+  .search-bridge-section,
+  .ownership-details-section,
+  .map-builder-section {
+    padding-left: 16px;
+    padding-right: 16px;
+  }
+
+  .search-bridge-inner,
+  .ownership-details-inner,
+  .map-builder-inner {
+    grid-template-columns: 1fr;
+    gap: 24px;
+    text-align: center;
+  }
+
+  .search-bridge-copy .marketing-section-title,
+  .ownership-details-copy .marketing-section-title,
+  .map-builder-copy .marketing-section-title {
+    text-align: center;
+  }
+
+  .search-bridge-copy .marketing-section-subtitle,
+  .ownership-details-copy .marketing-section-subtitle,
+  .map-builder-copy .marketing-section-subtitle {
+    margin-left: auto;
+    margin-right: auto;
+    text-align: center;
+  }
+
+  .ownership-details-bullets,
+  .map-builder-bullets {
+    max-width: 340px;
+    margin-left: auto;
+    margin-right: auto;
+    text-align: left;
+  }
+
+  .map-builder-cta {
+    display: flex;
+    justify-content: center;
+  }
+
+  .map-builder-cta.cta-button {
+    width: 100%;
+    max-width: 320px;
+    justify-content: center;
+  }
+
+  .search-bridge-image-wrap,
+  .ownership-details-image-wrap,
+  .map-builder-image-wrap {
+    border-radius: 12px;
+  }
+
+  .final-cta-buttons {
+    flex-direction: column;
+    align-items: center;
+    width: 100%;
+    max-width: 320px;
+    margin: 0 auto;
+  }
+
+  .final-cta-buttons .cta-button {
+    width: 100%;
+    justify-content: center;
+  }
+}

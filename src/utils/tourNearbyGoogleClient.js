@@ -10,12 +10,12 @@ import {
   isAllowedGooglePlaceForAmenity,
 } from './tourNearbyAmenityFilters';
 import { TOUR_NEARBY_SEARCH_RADIUS_METERS } from './propertyTourSlides';
-import { fetchTourNearbyPlacesNew } from './tourPlacesApiNew';
+import { fetchTourGroceryPlacesNew, fetchTourNearbyPlacesNew } from './tourPlacesApiNew';
 
 /** Place types for Places API (New) `includedTypes` — see Google Place Types (New). */
 const AMENITY_PLACE_TYPES = {
   parks_rec: ['park'],
-  grocery: ['supermarket', 'grocery_store'],
+  grocery: ['supermarket', 'grocery_store', 'food_store'],
   schools: ['primary_school', 'secondary_school', 'school'],
   fitness: ['gym'],
   trailheads: ['hiking_area', 'gym'],
@@ -73,7 +73,7 @@ function googlePlaceResultToFeature(r, amenityKey) {
 }
 
 /**
- * @param {{ lat: number, lng: number, radiusMeters?: number, amenityKey: string, apiKey: string }} params
+ * @param {{ lat: number, lng: number, radiusMeters?: number, amenityKey: string, apiKey: string, editorMode?: boolean }} params
  */
 export async function fetchNearbyTourAmenityGoogleMapsJs(params) {
   const lat = Number(params?.lat);
@@ -85,6 +85,8 @@ export async function fetchNearbyTourAmenityGoogleMapsJs(params) {
     Math.max(500, Number(params?.radiusMeters) || TOUR_NEARBY_SEARCH_RADIUS_METERS)
   );
 
+  const editorMode = params?.editorMode === true;
+
   if (!Number.isFinite(lat) || !Number.isFinite(lng) || !amenityKey || !apiKey) {
     return { type: 'FeatureCollection', features: [] };
   }
@@ -94,13 +96,24 @@ export async function fetchNearbyTourAmenityGoogleMapsJs(params) {
     return { type: 'FeatureCollection', features: [] };
   }
 
-  const { results: all, apiError } = await fetchTourNearbyPlacesNew(
-    lat,
-    lng,
-    fetchRadiusMeters,
-    apiKey,
-    types
-  );
+  let all = [];
+  let apiError = '';
+
+  if (amenityKey === 'grocery') {
+    const groceryResult = await fetchTourGroceryPlacesNew(lat, lng, fetchRadiusMeters, apiKey);
+    all = groceryResult.results;
+    apiError = groceryResult.apiError || '';
+  } else {
+    const nearbyResult = await fetchTourNearbyPlacesNew(
+      lat,
+      lng,
+      fetchRadiusMeters,
+      apiKey,
+      types
+    );
+    all = nearbyResult.results;
+    apiError = nearbyResult.apiError || '';
+  }
 
   const buildFeatures = (lenient) => {
     const seen = new Set();
@@ -116,7 +129,7 @@ export async function fetchNearbyTourAmenityGoogleMapsJs(params) {
     return out;
   };
 
-  let features = buildFeatures(false);
+  let features = buildFeatures(editorMode);
   if (!features.length && all.length && AMENITIES_WITH_LENIENT_FALLBACK.has(amenityKey)) {
     features = buildFeatures(true);
   }

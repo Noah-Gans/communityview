@@ -6,7 +6,7 @@ import {
 } from '../../components/map/mapStyles';
 import { getRegridVectorMinZoomForMap, REGRID_VECTOR_MIN_ZOOM_SPARSE } from '../../utils/regridParcelTileDensity';
 import { DEFAULT_BASEMAP_ID } from './mapConstants';
-import { getVectorLayerInsertBeforeId } from './mapBasemapUtils';
+import { getFirstSymbolLayerId, getVectorLayerInsertBeforeId } from './mapBasemapUtils';
 import {
   forceVectorTileSourceRefresh,
   getHostedTileLayerUrl,
@@ -29,7 +29,12 @@ export function ensureRegridTileProxyUrl(templateUrl) {
 export function removeRegridParcelLayersAndSource(map) {
   if (!map) return;
   try {
-    ['regrid-parcels-outline', 'regrid-parcels-layer'].forEach((id) => {
+    [
+      REGRID_PARCELS_SELECTION_LINE_ID,
+      REGRID_PARCELS_SELECTION_FILL_ID,
+      'regrid-parcels-outline',
+      'regrid-parcels-layer',
+    ].forEach((id) => {
       if (map.getLayer(id)) map.removeLayer(id);
     });
     if (map.getSource('regrid-parcels')) map.removeSource('regrid-parcels');
@@ -73,6 +78,191 @@ export function getRegridVectorSourceLayerId(tileJson) {
   return 'parcels';
 }
 
+export const REGRID_PARCELS_SELECTION_FILL_ID = 'regrid-parcels-selection-fill';
+export const REGRID_PARCELS_SELECTION_LINE_ID = 'regrid-parcels-selection-line';
+
+const REGRID_SELECTION_NOMATCH_FILTER = ['==', ['get', 'll_uuid'], ''];
+
+/** Map click / selection features that should use MVT filter highlight (not GeoJSON scan). */
+export function isRegridParcelSelectionFeature(feature) {
+  if (!feature) return false;
+  const props = feature.properties || {};
+  return (
+    feature.layer?.id === 'regrid-parcels-layer' ||
+    feature.layer?.id === 'regrid-parcels-outline' ||
+    Boolean(props.ll_uuid || props.parcelnumb || props.global_parcel_uid || props.parcel_id)
+  );
+}
+
+/** Mapbox filter matching selected parcel(s) by tile properties — no viewport feature scan. */
+export function buildRegridParcelSelectionFilter(features) {
+  if (!Array.isArray(features) || features.length === 0) return null;
+  const clauses = [];
+  const seen = new Set();
+  for (const feature of features) {
+    if (!isRegridParcelSelectionFeature(feature)) continue;
+    const props = feature.properties || {};
+    if (props.ll_uuid) {
+      const key = `ll:${props.ll_uuid}`;
+      if (!seen.has(key)) {
+        seen.add(key);
+        clauses.push(['==', ['get', 'll_uuid'], props.ll_uuid]);
+      }
+      continue;
+    }
+    if (props.parcelnumb) {
+      const key = `pn:${props.parcelnumb}`;
+      if (!seen.has(key)) {
+        seen.add(key);
+        clauses.push(['==', ['get', 'parcelnumb'], props.parcelnumb]);
+      }
+      continue;
+    }
+    if (props.global_parcel_uid) {
+      const key = `gpu:${props.global_parcel_uid}`;
+      if (!seen.has(key)) {
+        seen.add(key);
+        clauses.push(['==', ['get', 'global_parcel_uid'], props.global_parcel_uid]);
+      }
+      continue;
+    }
+    if (props.parcel_id) {
+      const key = `pid:${props.parcel_id}`;
+      if (!seen.has(key)) {
+        seen.add(key);
+        clauses.push(['==', ['get', 'parcel_id'], props.parcel_id]);
+      }
+    }
+  }
+  if (clauses.length === 0) return null;
+  if (clauses.length === 1) return clauses[0];
+  return ['any', ...clauses];
+}
+
+function addRegridParcelSelectionHighlightLayers(map, sourceLayerId, beforeId, vectorMinZoom, tileMaxZoom) {
+  if (!map?.addLayer || map.getLayer(REGRID_PARCELS_SELECTION_FILL_ID)) return;
+
+  map.addLayer(
+    {
+      id: REGRID_PARCELS_SELECTION_FILL_ID,
+      type: 'fill',
+      source: 'regrid-parcels',
+      'source-layer': sourceLayerId,
+      filter: REGRID_SELECTION_NOMATCH_FILTER,
+      paint: {
+        'fill-color': 'rgba(0, 0, 0, 0)',
+        'fill-opacity': 0,
+        'fill-outline-color': 'rgba(0, 0, 0, 0)',
+      },
+      layout: { visibility: 'none' },
+      minzoom: vectorMinZoom,
+      maxzoom: tileMaxZoom,
+    },
+    beforeId
+  );
+
+  map.addLayer(
+    {
+      id: REGRID_PARCELS_SELECTION_LINE_ID,
+      type: 'line',
+      source: 'regrid-parcels',
+      'source-layer': sourceLayerId,
+      filter: REGRID_SELECTION_NOMATCH_FILTER,
+      paint: {
+        'line-color': 'rgba(0, 0, 0, 0)',
+        'line-width': 3,
+      },
+      layout: {
+        visibility: 'none',
+        'line-join': 'round',
+        'line-cap': 'round',
+      },
+      minzoom: vectorMinZoom,
+      maxzoom: tileMaxZoom,
+    },
+    beforeId
+  );
+}
+
+/** Add MVT filter highlight layers when the Regrid source exists (idempotent). */
+export function ensureRegridParcelSelectionHighlightLayers(map) {
+  if (!map?.getSource?.('regrid-parcels') || !cachedRegridTileJson) return;
+  if (map.getLayer(REGRID_PARCELS_SELECTION_FILL_ID)) return;
+  const sourceLayerId = getRegridVectorSourceLayerId(cachedRegridTileJson);
+  const beforeId = getFirstSymbolLayerId(map);
+  const tileMaxZoom = cachedRegridTileJson.maxzoom || 21;
+  addRegridParcelSelectionHighlightLayers(
+    map,
+    sourceLayerId,
+    beforeId,
+    activeRegridVectorMinZoom,
+    tileMaxZoom
+  );
+}
+
+export function applyRegridParcelSelectionHighlightPaint(map, settings = {}) {
+  if (!map?.getLayer?.(REGRID_PARCELS_SELECTION_FILL_ID)) return;
+  const fillPaint = {
+    'fill-color': settings.fillColor ?? '#FF0000',
+    'fill-outline-color': settings.fillOutlineColor ?? settings.fillColor ?? '#FF0000',
+    'fill-opacity': settings.fillOpacity ?? 0.5,
+  };
+  const linePaint = {
+    'line-color': settings.lineColor ?? '#FF0000',
+    'line-width': settings.lineWidth ?? 3,
+  };
+  try {
+    Object.entries(fillPaint).forEach(([key, val]) => {
+      map.setPaintProperty(REGRID_PARCELS_SELECTION_FILL_ID, key, val);
+    });
+    Object.entries(linePaint).forEach(([key, val]) => {
+      map.setPaintProperty(REGRID_PARCELS_SELECTION_LINE_ID, key, val);
+    });
+  } catch (_) {
+    /* ignore */
+  }
+}
+
+/** Highlight selected parcels via MVT layer filter — O(selection), not O(viewport parcels). */
+export function setRegridParcelSelectionHighlight(map, features, settings = {}) {
+  if (!map?.isStyleLoaded?.()) return false;
+  ensureRegridParcelSelectionHighlightLayers(map);
+  if (!map.getLayer(REGRID_PARCELS_SELECTION_FILL_ID)) return false;
+
+  const filter = buildRegridParcelSelectionFilter(features);
+  if (!filter) {
+    clearRegridParcelSelectionHighlight(map);
+    return false;
+  }
+
+  try {
+    map.setFilter(REGRID_PARCELS_SELECTION_FILL_ID, filter);
+    map.setFilter(REGRID_PARCELS_SELECTION_LINE_ID, filter);
+    applyRegridParcelSelectionHighlightPaint(map, settings);
+    map.setLayoutProperty(REGRID_PARCELS_SELECTION_FILL_ID, 'visibility', 'visible');
+    map.setLayoutProperty(REGRID_PARCELS_SELECTION_LINE_ID, 'visibility', 'visible');
+    return true;
+  } catch (_) {
+    return false;
+  }
+}
+
+export function clearRegridParcelSelectionHighlight(map) {
+  if (!map?.getStyle?.()) return;
+  try {
+    if (map.getLayer(REGRID_PARCELS_SELECTION_FILL_ID)) {
+      map.setFilter(REGRID_PARCELS_SELECTION_FILL_ID, REGRID_SELECTION_NOMATCH_FILTER);
+      map.setLayoutProperty(REGRID_PARCELS_SELECTION_FILL_ID, 'visibility', 'none');
+    }
+    if (map.getLayer(REGRID_PARCELS_SELECTION_LINE_ID)) {
+      map.setFilter(REGRID_PARCELS_SELECTION_LINE_ID, REGRID_SELECTION_NOMATCH_FILTER);
+      map.setLayoutProperty(REGRID_PARCELS_SELECTION_LINE_ID, 'visibility', 'none');
+    }
+  } catch (_) {
+    /* ignore */
+  }
+}
+
 /**
  * Add Regrid MVT source + layers when TileJSON is known — same synchronous moment as hosted
  * PMTiles layers in `updateLayers` (source exists before stack reorder / idle).
@@ -89,6 +279,7 @@ export function addRegridParcelLayersFromTileJson(
     if (mapZoom >= activeRegridVectorMinZoom) {
       forceRegridParcelsSourceRefresh(map, tileUrls);
     }
+    ensureRegridParcelSelectionHighlightLayers(map);
     return;
   }
 
@@ -244,6 +435,8 @@ export function addRegridParcelLayersFromTileJson(
     maxzoom: tileMaxZoom,
   }, 'regrid-parcels-layer');
 
+  ensureRegridParcelSelectionHighlightLayers(map);
+
   applyRegridParcelOutlineForBasemap(map, regridStyleBasemapRef.current);
 
   // Source/layer minzoom blocks fetch below threshold — skip reload until zoom is in range.
@@ -289,7 +482,7 @@ export function forceRegridParcelsSourceRefresh(map, tilesOverride) {
 
 /**
  * Keep Regrid parcel source + layers on the map whenever ownership is on.
- * Tile requests are gated by source/layer `minzoom` (10 sparse / 13 dense) — never remove or
+ * Tile requests are gated by source/layer `minzoom` (11 sparse / 13 dense) — never remove or
  * hide layers based on current map zoom, so Mapbox can fetch MVT tiles as soon as zoom allows.
  */
 export function syncRegridParcelLayersIntoMap(map, parcelMapVisibility) {
@@ -303,7 +496,28 @@ export function syncRegridParcelLayersIntoMap(map, parcelMapVisibility) {
     addRegridParcelLayersFromTileJson(map, cachedRegridTileJson, vectorMinZoom);
   } else if (vectorMinZoom !== activeRegridVectorMinZoom) {
     rebuildRegridParcelStackForDensity(map, vectorMinZoom);
+  } else {
+    ensureRegridParcelSelectionHighlightLayers(map);
   }
+}
+
+/**
+ * Ownership layer sync — same contract as hosted MVT toggles inside `updateLayers`.
+ * @returns {boolean} true when the Regrid source was added this pass
+ */
+export function syncOwnershipTileLayer(map, parcelMapVisibility) {
+  if (!map?.isStyleLoaded?.()) return false;
+  if (parcelMapVisibility?.showRegrid) {
+    if (!cachedRegridTileJson) return false;
+    const hadSource = Boolean(map.getSource('regrid-parcels'));
+    syncRegridParcelLayersIntoMap(map, parcelMapVisibility);
+    applyParcelVisualizationVisibility(map, parcelMapVisibility);
+    bringRegridParcelLayersBeforeSymbolLabels(map);
+    return !hadSource && Boolean(map.getSource('regrid-parcels'));
+  }
+  applyParcelVisualizationVisibility(map, { showRegrid: false });
+  clearRegridParcelSelectionHighlight(map);
+  return false;
 }
 
 /** Fired after Mapbox Draw (or others) add layers post–style.load so we can re-pin Regrid. */
@@ -324,29 +538,22 @@ export function schedulePostBasemapRegridRestack(mapRef) {
   requestAnimationFrame(() => fireRegridRestack(mapRef?.current));
 }
 
-/** First composite/style symbol layer — Regrid sits directly below this, then `bringLabelsToTop` pins all labels above data. */
-export function getFirstSymbolLayerId(map) {
-  if (!map?.getStyle) return undefined;
-  try {
-    const firstSym = (map.getStyle().layers || []).find((layer) => layer.type === 'symbol');
-    return firstSym ? firstSym.id : undefined;
-  } catch (_) {
-    return undefined;
-  }
-}
+export { getFirstSymbolLayerId } from './mapBasemapUtils';
 
 /**
  * Raise Regrid above hosted MVT fills but below Mapbox composite labels (and custom label layers).
- * Must not use bare `moveLayer(id)` — that hoists parcels above basemap symbols until the user pans.
+ * Outline is moved last so ownership lines paint above semi-transparent data fills.
  */
 export function bringRegridParcelLayersBeforeSymbolLabels(map) {
   if (!map) return;
   const beforeId = getFirstSymbolLayerId(map);
   [
     'regrid-zoning-tiles-fill',
-    'regrid-zoning-tiles-outline',
     'regrid-parcels-layer',
+    'regrid-zoning-tiles-outline',
     'regrid-parcels-outline',
+    REGRID_PARCELS_SELECTION_FILL_ID,
+    REGRID_PARCELS_SELECTION_LINE_ID,
   ].forEach((id) => {
     if (map.getLayer(id)) {
       try {
@@ -362,7 +569,12 @@ export function bringRegridParcelLayersBeforeSymbolLabels(map) {
 export function setRegridParcelLayersVisibility(map, visible) {
   if (!map) return;
   const vis = visible ? 'visible' : 'none';
-  ['regrid-parcels-layer', 'regrid-parcels-outline'].forEach((id) => {
+  [
+    'regrid-parcels-layer',
+    'regrid-parcels-outline',
+    REGRID_PARCELS_SELECTION_FILL_ID,
+    REGRID_PARCELS_SELECTION_LINE_ID,
+  ].forEach((id) => {
     if (map.getLayer(id)) {
       try {
         map.setLayoutProperty(id, 'visibility', vis);
@@ -377,6 +589,9 @@ export function setRegridParcelLayersVisibility(map, visible) {
 export function applyParcelVisualizationVisibility(map, { showRegrid }) {
   if (!map) return;
   setRegridParcelLayersVisibility(map, Boolean(showRegrid));
+  if (!showRegrid) {
+    clearRegridParcelSelectionHighlight(map);
+  }
 }
 
 export function flushMapRepaintAfterLayerChange(map) {

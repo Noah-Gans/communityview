@@ -1,14 +1,21 @@
-import React, { useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useUser } from '../../contexts/UserContext';
+import { useMapContext } from '../../pages/MapContext';
 import './SignupSuccess.css';
 
 const SignupSuccess = () => {
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
   const { user, subscriptionStatus } = useUser();
+  const { setActiveTab } = useMapContext();
   const [countdown, setCountdown] = useState(5);
   const sessionId = searchParams.get('session_id');
+
+  const goToMap = useCallback(() => {
+    setActiveTab('map');
+    navigate('/map');
+  }, [navigate, setActiveTab]);
 
   useEffect(() => {
     // Start countdown
@@ -16,7 +23,7 @@ const SignupSuccess = () => {
       setCountdown((prev) => {
         if (prev <= 1) {
           clearInterval(timer);
-          navigate('/map');
+          goToMap();
           return 0;
         }
         return prev - 1;
@@ -24,7 +31,7 @@ const SignupSuccess = () => {
     }, 1000);
 
     return () => clearInterval(timer);
-  }, [navigate]);
+  }, [goToMap]);
 
   return (
     <div className="signup-success-page">
@@ -69,7 +76,7 @@ const SignupSuccess = () => {
 
         <button 
           className="go-to-map-btn"
-          onClick={() => navigate('/map')}
+          onClick={goToMap}
         >
           Go to Map Now
           <span className="btn-arrow">→</span>

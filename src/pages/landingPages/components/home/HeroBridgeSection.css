@@ -1,0 +1,226 @@
+.hero-bridge {
+  width: 100%;
+  max-width: 920px;
+  margin: 20px auto 0;
+  padding: 12px 4px 4px;
+  text-align: center;
+  position: relative;
+  z-index: 3;
+  flex-shrink: 0;
+}
+
+.hero-bridge__title {
+  margin: 0 0 8px;
+  font-size: clamp(1.1rem, 3vw, 1.55rem);
+  font-weight: 700;
+  color: #fff;
+  letter-spacing: -0.02em;
+  line-height: 1.2;
+  text-shadow: 0 2px 20px rgba(0, 0, 0, 0.9);
+}
+
+.hero-bridge__subtitle {
+  margin: 0 0 14px;
+  font-size: clamp(0.82rem, 1.9vw, 0.98rem);
+  color: rgba(255, 255, 255, 0.8);
+  line-height: 1.45;
+  max-width: 52ch;
+  margin-left: auto;
+  margin-right: auto;
+  text-shadow: 0 1px 14px rgba(0, 0, 0, 0.9);
+}
+
+.hero-bridge__cards {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+.hero-bridge__card {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+  width: 100%;
+  padding: 12px 14px 12px;
+  text-align: left;
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 12px;
+  transition:
+    border-color 0.2s ease,
+    background 0.2s ease,
+    transform 0.2s ease;
+  text-shadow: 0 1px 10px rgba(0, 0, 0, 0.85);
+}
+
+.hero-bridge__card:hover {
+  background: rgba(255, 255, 255, 0.09);
+  border-color: rgba(0, 212, 170, 0.4);
+  transform: translateY(-1px);
+}
+
+.hero-bridge__card-label {
+  font-size: 0.65rem;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: #00d4aa;
+}
+
+.hero-bridge__card-title {
+  font-size: clamp(0.88rem, 2vw, 1rem);
+  font-weight: 700;
+  color: #fff;
+  line-height: 1.2;
+  padding-right: 20px;
+}
+
+.hero-bridge__card-body {
+  font-size: clamp(0.72rem, 1.6vw, 0.82rem);
+  line-height: 1.35;
+  color: rgba(255, 255, 255, 0.72);
+}
+
+.hero-bridge__card-arrow {
+  position: absolute;
+  right: 12px;
+  top: 50%;
+  transform: translateY(-50%);
+  font-size: 1rem;
+  color: rgba(255, 255, 255, 0.45);
+  transition: color 0.2s ease, transform 0.2s ease;
+}
+
+.hero-bridge__card:hover .hero-bridge__card-arrow {
+  color: #00d4aa;
+  transform: translateY(-50%) translateX(2px);
+}
+
+.hero-bridge__nav {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 8px 12px;
+  margin-bottom: 10px;
+}
+
+.hero-bridge__nav-link {
+  padding: 0;
+  border: none;
+  background: none;
+  font: inherit;
+  font-size: 0.72rem;
+  font-weight: 500;
+  letter-spacing: 0.04em;
+  color: rgba(255, 255, 255, 0.5);
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  text-decoration-color: rgba(255, 255, 255, 0.25);
+  transition: color 0.2s ease;
+}
+
+.hero-bridge__nav-link:hover {
+  color: #00d4aa;
+  text-decoration-color: rgba(0, 212, 170, 0.5);
+}
+
+.hero-bridge__scroll-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 0 0;
+  border: none;
+  background: none;
+  font: inherit;
+  font-size: 0.7rem;
+  font-weight: 600;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: rgba(255, 255, 255, 0.42);
+  cursor: pointer;
+  transition: color 0.2s ease;
+}
+
+.hero-bridge__scroll-btn:hover {
+  color: #00d4aa;
+}
+
+.hero-bridge__scroll-arrow {
+  display: inline-block;
+  animation: hero-bridge-bounce 2.2s ease-in-out infinite;
+}
+
+@keyframes hero-bridge-bounce {
+  0%,
+  100% {
+    opacity: 0.45;
+    transform: translateY(0);
+  }
+  50% {
+    opacity: 1;
+    transform: translateY(3px);
+  }
+}
+
+@media (max-width: 768px) {
+  .hero-bridge {
+    margin-top: 16px;
+    padding: 16px 0 4px;
+  }
+
+  .hero-bridge__title {
+    font-size: clamp(1rem, 4.5vw, 1.25rem);
+    margin-bottom: 6px;
+  }
+
+  .hero-bridge__subtitle {
+    font-size: 0.8rem;
+    margin-bottom: 10px;
+    line-height: 1.4;
+  }
+
+  .hero-bridge__cards {
+    grid-template-columns: 1fr;
+    gap: 8px;
+    margin-bottom: 10px;
+  }
+
+  .hero-bridge__card {
+    padding: 10px 12px;
+  }
+
+  .hero-bridge__card-body {
+    display: none;
+  }
+
+  .hero-bridge__card-title {
+    font-size: 0.88rem;
+    padding-right: 18px;
+  }
+
+  .hero-bridge__nav {
+    gap: 6px 10px;
+    margin-bottom: 8px;
+  }
+
+  .hero-bridge__nav-link {
+    font-size: 0.68rem;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .hero-bridge__scroll-arrow {
+    animation: none;
+  }
+
+  .hero-bridge__card:hover {
+    transform: none;
+  }
+}

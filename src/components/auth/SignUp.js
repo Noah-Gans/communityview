@@ -1,44 +1,113 @@
 import React, { useState, useEffect, useRef } from "react";
 import {
   createUserWithEmailAndPassword,
+  signInWithCustomToken,
+  signInWithEmailAndPassword,
 } from "firebase/auth";
 import { auth, db } from "../../firebase/firebaseConfig";
-import { doc, setDoc } from "firebase/firestore";
+import { doc, setDoc, getDoc } from "firebase/firestore";
 import { getFunctions, httpsCallable } from "firebase/functions";
 import "./SignUp.css";
-import { useNavigate, useLocation } from "react-router-dom";
+import { useNavigate, useLocation, Link } from "react-router-dom";
 import { loadStripe } from "@stripe/stripe-js";
 import { Elements, PaymentElement, useStripe, useElements } from "@stripe/react-stripe-js";
 import { useUser } from "../../contexts/UserContext";
 import { isNativeApp } from "../../utils/platformDetection";
+import { hasActiveSubscription } from "../../utils/subscriptionAccess";
+import { navigateToMarketingHome } from "../../utils/marketingNavigation";
 
 // Initialize Stripe - Always use live keys
 const STRIPE_PUBLISHABLE_KEY = "pk_live_51QjmlpLhg9Kp46ld9puEgtqaxreaPxS1RmLw5Y9XR2hdgrhorL19mJJl3oV6FNeu8Wn23O8SNS0H0FnoqAlg9l4D00RfBRkhf2"; // LIVE key
 
 const stripePromise = loadStripe(STRIPE_PUBLISHABLE_KEY);
 
+const TRIAL_DAYS = 14;
+
+function readReactivationTokenFromUrl() {
+  if (typeof window === "undefined") return "";
+  return new URLSearchParams(window.location.search).get("token")?.trim() || "";
+}
+
+function formatAuthError(err) {
+  switch (err?.code) {
+    case "auth/email-already-in-use":
+      return "An account with this email already exists. Please sign in to continue.";
+    case "auth/invalid-email":
+      return "Please enter a valid email address.";
+    case "auth/weak-password":
+      return "Password must be at least 6 characters.";
+    case "auth/operation-not-allowed":
+      return "Email sign-up is not enabled. Please contact support.";
+    default:
+      return err?.message || "Something went wrong. Please try again.";
+  }
+}
+
+function formatTrialEndDate(isoDate) {
+  if (!isoDate) return null;
+  return new Date(isoDate).toLocaleDateString(undefined, {
+    month: "long",
+    day: "numeric",
+    year: "numeric",
+  });
+}
+
+function getTrialChargeLabel(selectedPlan, billingCycle, getPricing) {
+  const pricing = getPricing(selectedPlan);
+  if (billingCycle === "annual") {
+    return `${pricing.annualTotal} after your trial`;
+  }
+  return `${pricing.monthly}/month after your trial`;
+}
+
+function getPlanTrialDisplay(planType, billingCycle, getPricing) {
+  const pricing = getPricing(planType);
+  return {
+    afterTrialLabel:
+      billingCycle === "annual"
+        ? `${pricing.annualTotal} billed annually`
+        : `${pricing.monthly}/month`,
+    equivalentNote:
+      billingCycle === "annual" ? `(${pricing.annual}/mo equivalent)` : null,
+  };
+}
+
+const PlanTrialPrice = ({ planType, billingCycle, getPricing }) => {
+  const { afterTrialLabel, equivalentNote } = getPlanTrialDisplay(
+    planType,
+    billingCycle,
+    getPricing
+  );
+  return (
+    <div className="plan-trial-price">
+      <div className="plan-trial-price__today">
+        <span className="plan-trial-price__amount">$0</span>
+        <span className="plan-trial-price__period">today</span>
+      </div>
+      <p className="plan-trial-price__duration">{TRIAL_DAYS} days free, full access</p>
+      <p className="plan-trial-price__then">
+        Then {afterTrialLabel}
+        {equivalentNote && <span className="plan-trial-price__equiv"> {equivalentNote}</span>}
+      </p>
+    </div>
+  );
+};
+
 // Payment Form Component
-const PaymentForm = ({ clientSecret, selectedPlan, billingCycle, getPricing, onSuccess, onError }) => {
+const PaymentForm = ({
+  intentType,
+  trialEnd,
+  selectedPlan,
+  billingCycle,
+  getPricing,
+  onSuccess,
+  onError,
+}) => {
   const stripe = useStripe();
   const elements = useElements();
   const [isProcessing, setIsProcessing] = useState(false);
   const [isElementReady, setIsElementReady] = useState(false);
   const [loadingError, setLoadingError] = useState(null);
-
-  // Debug: Log stripe and elements state
-  useEffect(() => {
-    console.log("PaymentForm - Stripe:", stripe ? "loaded" : "not loaded");
-    console.log("PaymentForm - Elements:", elements ? "loaded" : "not loaded");
-    console.log("PaymentForm - ClientSecret:", clientSecret ? `present (${clientSecret.substring(0, 20)}...)` : "missing");
-    
-    // Check if Stripe loaded successfully
-    if (!stripe) {
-      console.warn("⚠️ Stripe is not loaded. This might be due to:");
-      console.warn("  1. Ad blocker blocking Stripe domains");
-      console.warn("  2. Network connectivity issues");
-      console.warn("  3. Invalid Stripe publishable key");
-    }
-  }, [stripe, elements, clientSecret]);
 
   // Set ready when PaymentElement calls onReady
   const handleElementReady = () => {
@@ -85,13 +154,18 @@ const PaymentForm = ({ clientSecret, selectedPlan, billingCycle, getPricing, onS
     setIsProcessing(true);
 
     try {
-      const { error } = await stripe.confirmPayment({
+      const confirmOptions = {
         elements,
         confirmParams: {
           return_url: `${window.location.origin}/signup-success`,
         },
-        redirect: 'if_required',
-      });
+        redirect: "if_required",
+      };
+
+      const { error } =
+        intentType === "setup"
+          ? await stripe.confirmSetup(confirmOptions)
+          : await stripe.confirmPayment(confirmOptions);
 
       if (error) {
         console.error("Payment failed:", error);
@@ -139,12 +213,17 @@ const PaymentForm = ({ clientSecret, selectedPlan, billingCycle, getPricing, onS
           layout: 'tabs'
         }}
       />
+      <p className="form-hint" style={{ marginTop: "12px", textAlign: "center" }}>
+        {formatTrialEndDate(trialEnd)
+          ? `You won't be charged until ${formatTrialEndDate(trialEnd)}. Then ${getTrialChargeLabel(selectedPlan, billingCycle, getPricing)}.`
+          : `${TRIAL_DAYS}-day free trial — card required. Cancel anytime before you're charged.`}
+      </p>
       <button 
         type="submit" 
         disabled={!stripe || !isElementReady || isProcessing}
         className="signup-primary-btn"
       >
-        {isProcessing ? "Processing..." : `Pay ${getPricing(selectedPlan)[billingCycle]}/month`}
+        {isProcessing ? "Processing..." : `Start ${TRIAL_DAYS}-day free trial`}
         <span className="btn-arrow">→</span>
       </button>
       {!isElementReady && !loadingError && (
@@ -166,25 +245,102 @@ const Signup = () => {
   const [selectedPlan, setSelectedPlan] = useState("");
   const [billingCycle, setBillingCycle] = useState("annual"); // 'monthly' or 'annual'
   const [error, setError] = useState("");
+  const [showSignInPrompt, setShowSignInPrompt] = useState(false);
   const [clientSecret, setClientSecret] = useState("");
+  const [intentType, setIntentType] = useState("setup");
+  const [trialEnd, setTrialEnd] = useState("");
+  const [setupIntentId, setSetupIntentId] = useState("");
   const [loading, setLoading] = useState(false);
+  const initialReactivationTokenRef = useRef(readReactivationTokenFromUrl());
+  const [reactivationToken, setReactivationToken] = useState(
+    () => initialReactivationTokenRef.current
+  );
+  const [reactivationMode, setReactivationMode] = useState(false);
+  const [reactivationValidating, setReactivationValidating] = useState(
+    () => !!initialReactivationTokenRef.current
+  );
+  const reactivationValidatedRef = useRef(false);
   const [currentPlanIndex, setCurrentPlanIndex] = useState(1); // Start on Plus (index 1)
   const plansContainerRef = useRef(null);
   const touchStartX = useRef(0);
   const touchEndX = useRef(0);
+  const checkoutLoadKeyRef = useRef("");
   const navigate = useNavigate();
   const functions = getFunctions();
-  const createCheckoutSession = httpsCallable(functions, "createCheckoutSession");
-  const { user } = useUser(); // Check if user is already logged in
+  const createTrialSetup = httpsCallable(functions, "createTrialSetup");
+  const startTrialSubscription = httpsCallable(functions, "startTrialSubscription");
+  const validateReactivationToken = httpsCallable(functions, "validateReactivationToken");
+  const reactivateAccount = httpsCallable(functions, "reactivateAccount");
+  const { user, subscriptionStatus } = useUser();
 
-  // Check if user is already logged in
+  // Win-back link: /signup?token=... (validate once; keep token in URL until success)
   useEffect(() => {
-    if (user) {
-      // User is logged in, skip to step 2 and set their email
-      setEmail(user.email || "");
-      setStep(2);
+    const token = initialReactivationTokenRef.current;
+    if (!token || reactivationValidatedRef.current) return;
+
+    let cancelled = false;
+    setReactivationToken(token);
+    setReactivationValidating(true);
+    setError("");
+
+    const validateToken = async () => {
+      try {
+        const result = await validateReactivationToken({ token });
+        if (cancelled) return;
+
+        const { email: tokenEmail, firstName: savedFirst, lastName: savedLast } =
+          result.data || {};
+
+        reactivationValidatedRef.current = true;
+        setReactivationMode(true);
+        setEmail(tokenEmail || "");
+        if (savedFirst) setFirstName(savedFirst);
+        if (savedLast) setLastName(savedLast);
+        setStep(1);
+
+        if (typeof window !== "undefined" && window.history.replaceState) {
+          window.history.replaceState({}, "", "/signup");
+        }
+      } catch (err) {
+        if (!cancelled) {
+          console.error("Reactivation token validation failed:", err);
+          setError(
+            err.message ||
+              "This reactivation link is invalid, expired, or already used. Generate a new link and try again."
+          );
+          setReactivationMode(false);
+        }
+      } finally {
+        if (!cancelled) setReactivationValidating(false);
+      }
+    };
+
+    validateToken();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  // Logged-in users: subscribed → map; otherwise → plan (never skip win-back step 1)
+  useEffect(() => {
+    if (!user) return;
+    if (reactivationToken || reactivationValidating || reactivationMode) return;
+
+    if (hasActiveSubscription(subscriptionStatus)) {
+      navigate("/map", { replace: true });
+      return;
     }
-  }, [user]);
+
+    setEmail(user.email || "");
+    setStep(2);
+  }, [
+    user,
+    subscriptionStatus,
+    navigate,
+    reactivationToken,
+    reactivationValidating,
+    reactivationMode,
+  ]);
 
   // Check if a plan was pre-selected from the Pricing page
   useEffect(() => {
@@ -196,9 +352,61 @@ const Signup = () => {
     }
   }, [location.state]);
 
-  // Step 1: Create account with user info
+  // Step 1: Create account (or reactivate via marketing link)
+  const handleReactivateAccount = async () => {
+    setError("");
+
+    if (!reactivationToken) {
+      setError("Missing reactivation link. Please use the link from your email.");
+      return;
+    }
+    if (!password || password.length < 6) {
+      setError("Password must be at least 6 characters");
+      return;
+    }
+
+    try {
+      const result = await reactivateAccount({
+        token: reactivationToken,
+        password,
+        firstName,
+        lastName,
+      });
+
+      const { customToken } = result.data || {};
+      if (!customToken) {
+        throw new Error("Could not restore your account. Please try again.");
+      }
+
+      await signInWithCustomToken(auth, customToken);
+      setReactivationToken("");
+      setReactivationMode(false);
+      setStep(2);
+    } catch (err) {
+      console.error(err);
+      setError(err.message || "Could not reactivate your account. Please try again.");
+    }
+  };
+
   const handleCreateAccount = async () => {
     setError("");
+    setShowSignInPrompt(false);
+
+    if (reactivationToken && !reactivationMode) {
+      if (reactivationValidating) {
+        setError("Still verifying your reactivation link. Please wait a moment.");
+        return;
+      }
+      setError(
+        "This reactivation link could not be verified. Open the full link from your email (it should include ?token=...) or generate a new one."
+      );
+      return;
+    }
+
+    if (reactivationMode) {
+      await handleReactivateAccount();
+      return;
+    }
 
     // Validate required fields
     if (!email || !password) {
@@ -214,93 +422,155 @@ const Signup = () => {
       return;
     }
 
+    const normalizedEmail = email.trim();
+
     try {
-      // Create Firebase Auth account
-      const userCredential = await createUserWithEmailAndPassword(auth, email, password);
-      const user = userCredential.user;
-      console.log("Account created:", user.email);
-      
-      // Create initial Firestore user document
-      await setDoc(doc(db, "users", user.uid), {
-        email: email,
+      const userCredential = await createUserWithEmailAndPassword(
+        auth,
+        normalizedEmail,
+        password
+      );
+      const newUser = userCredential.user;
+      console.log("Account created:", newUser.email);
+
+      await setDoc(doc(db, "users", newUser.uid), {
+        email: normalizedEmail,
         firstName: firstName || "",
         lastName: lastName || "",
         subscriptionStatus: "none",
         createdAt: new Date(),
         updatedAt: new Date(),
       });
-      
+
       console.log("Firestore user document created");
-      
-      // Move to Step 2 (plan selection)
       setStep(2);
     } catch (err) {
+      if (err?.code === "auth/email-already-in-use") {
+        try {
+          const userCredential = await signInWithEmailAndPassword(
+            auth,
+            normalizedEmail,
+            password
+          );
+          const existingUser = userCredential.user;
+          const userDoc = await getDoc(doc(db, "users", existingUser.uid));
+          const status = userDoc.exists() ? userDoc.data()?.subscriptionStatus : null;
+
+          if (hasActiveSubscription(status)) {
+            navigate("/map", { replace: true });
+            return;
+          }
+
+          await setDoc(
+            doc(db, "users", existingUser.uid),
+            {
+              email: normalizedEmail,
+              firstName: firstName || "",
+              lastName: lastName || "",
+              updatedAt: new Date(),
+            },
+            { merge: true }
+          );
+
+          setStep(2);
+          return;
+        } catch (signInErr) {
+          console.error(signInErr);
+          setError(
+            "An account with this email already exists. Use the link in our email to set a new password, or sign in if you remember it."
+          );
+          setShowSignInPrompt(true);
+          return;
+        }
+      }
+
       console.error(err);
-      setError(err.message);
+      setError(formatAuthError(err));
     }
   };
 
-  // Step 2: Select plan and go to step 3 (payment)
-  const handleSelectPlan = async (planType) => {
+  // Step 2: Select plan (Stripe setup loads on step 3)
+  const handleSelectPlan = (planType) => {
     setError("");
-    
-    // Ensure user is authenticated before proceeding
+
     if (!auth.currentUser) {
       setError("Please create your account first");
       setStep(1);
-      setLoading(false);
       return;
     }
 
     setSelectedPlan(planType);
-    setLoading(true);
-    
-    // Construct the full plan name with billing cycle
-    const fullPlanName = `${planType}-${billingCycle}`;
-    
-            try {
-              const result = await createCheckoutSession({
-                email: email,
-                userId: auth.currentUser.uid, // Always send the actual Firebase User ID
-                plan: fullPlanName,
-                firstName: firstName,
-                lastName: lastName,
-              });
-              
-              const { clientSecret } = result.data;
-              console.log("Client secret from Firebase:", clientSecret);
-              console.log("Client secret type:", typeof clientSecret);
-              
-              // Validate clientSecret format
-              if (!clientSecret || typeof clientSecret !== 'string') {
-                console.error("Invalid clientSecret format:", clientSecret);
-                setError("Invalid payment session received. Please try selecting your plan again.");
-                setLoading(false);
-                return;
-              }
-              
-              // Check if it's a valid PaymentIntent client secret
-              if (!clientSecret.startsWith('pi_') && !clientSecret.includes('_secret_')) {
-                console.error("Invalid clientSecret format - should start with 'pi_' and contain '_secret_':", clientSecret);
-                setError("Invalid payment session format. Please try selecting your plan again.");
-                setLoading(false);
-                return;
-              }
-              
-              // Extract PaymentIntent ID to verify it matches the publishable key
-              const paymentIntentId = clientSecret.split('_secret_')[0];
-              console.log("PaymentIntent ID:", paymentIntentId);
-              console.log("Using publishable key:", STRIPE_PUBLISHABLE_KEY.substring(0, 20) + "...");
-              
-              setClientSecret(clientSecret);
-              setStep(3); // Move to payment step
-              setLoading(false);
-            } catch (err) {
-              console.error("Checkout session error:", err);
-              setError(err.message || "Failed to create checkout session");
-              setLoading(false);
-            }
+    setClientSecret("");
+    setSetupIntentId("");
+    setTrialEnd("");
+    checkoutLoadKeyRef.current = "";
+    setStep(3);
   };
+
+  // Step 3: SetupIntent only — subscription is created after card submit
+  useEffect(() => {
+    if (step !== 3 || !selectedPlan || !auth.currentUser) return;
+
+    const fullPlanName = `${selectedPlan}-${billingCycle}`;
+    const loadKey = `${fullPlanName}`;
+
+    if (checkoutLoadKeyRef.current === loadKey) return;
+
+    let cancelled = false;
+
+    const loadCheckout = async () => {
+      setLoading(true);
+      setError("");
+      setClientSecret("");
+      setSetupIntentId("");
+
+      try {
+        const result = await createTrialSetup({
+          email: email || auth.currentUser.email || "",
+          plan: fullPlanName,
+          firstName,
+          lastName,
+        });
+
+        if (cancelled) return;
+
+        const {
+          clientSecret: secret,
+          setupIntentId: intentId,
+          trialEnd: trialEndIso,
+        } = result.data;
+
+        if (!secret || typeof secret !== "string" || !secret.includes("_secret_")) {
+          setError("Invalid payment session received. Please try again.");
+          return;
+        }
+
+        checkoutLoadKeyRef.current = loadKey;
+        setClientSecret(secret);
+        setSetupIntentId(intentId || "");
+        setIntentType("setup");
+        setTrialEnd(trialEndIso || "");
+      } catch (err) {
+        if (!cancelled) {
+          console.error("Trial setup error:", err);
+          const message =
+            err?.message ||
+            err?.details ||
+            (err?.code === "functions/not-found"
+              ? "Checkout service is not available. Please try again later."
+              : "Failed to prepare checkout");
+          setError(message);
+        }
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    };
+
+    loadCheckout();
+    return () => {
+      cancelled = true;
+    };
+  }, [step, selectedPlan, billingCycle, email, firstName, lastName]);
 
   // Get pricing based on billing cycle
   const getPricing = (planType) => {
@@ -366,7 +636,7 @@ const Signup = () => {
     <div className={`signup-page ${step === 1 || (step === 2 && isNative) ? 'no-scroll' : ''}`}>
       {/* Close Button - Hidden on native apps for step 1 and 2 (moved inside card) */}
       {!(isNative && (step === 1 || step === 2)) && (
-        <button className={`signup-close-btn ${isNative ? 'native-app' : ''}`} onClick={() => navigate('/')}>
+        <button className={`signup-close-btn ${isNative ? 'native-app' : ''}`} onClick={() => navigateToMarketingHome(navigate)}>
           ✕
         </button>
       )}
@@ -377,7 +647,7 @@ const Signup = () => {
           <div className="signup-card">
             {/* Close Button - Inside card for native apps */}
             {isNative && (
-              <button className="signup-close-btn-in-card" onClick={() => navigate('/')}>
+              <button className="signup-close-btn-in-card" onClick={() => navigateToMarketingHome(navigate)}>
                 ✕
               </button>
             )}
@@ -396,13 +666,39 @@ const Signup = () => {
               <div className="progress-line"></div>
               <div className={`progress-step ${step >= 3 ? 'active' : ''}`}>
                 <div className="step-number">3</div>
-                <span>Payment</span>
+                <span>Card</span>
               </div>
             </div>
-            <h2 className="card-title">Get Started</h2>
-            <p className="card-subtitle">Create your account to get started</p>
+            <h2 className="card-title">
+              {reactivationMode ? "Welcome back" : "Get Started"}
+            </h2>
+            <p className="card-subtitle">
+              {reactivationValidating
+                ? "Verifying your link…"
+                : reactivationMode
+                  ? "Set a new password, then pick a plan and restart your free trial"
+                  : "Create your account, then pick a plan and start your free trial"}
+            </p>
 
-            {error && <div className="signup-error-message">{error}</div>}
+            {reactivationMode && !reactivationValidating && (
+              <p className="signup-reactivation-notice">
+                You&apos;re reactivating <strong>{email}</strong>. Your saved maps and settings
+                will stay on this account.
+              </p>
+            )}
+
+            {error && (
+              <div className="signup-error-message">
+                {error}
+                {showSignInPrompt && (
+                  <p className="signup-error-action">
+                    <Link to="/login" state={{ email: email.trim() }}>
+                      Sign in with this email
+                    </Link>
+                  </p>
+                )}
+              </div>
+            )}
 
             <div className="form-group">
               <label className="form-label">Email Address *</label>
@@ -411,10 +707,20 @@ const Signup = () => {
                 className="form-input"
                 placeholder="Enter your email"
                 value={email}
-                onChange={(e) => setEmail(e.target.value)}
+                onChange={(e) => {
+                  if (reactivationMode) return;
+                  setEmail(e.target.value);
+                  setError("");
+                  setShowSignInPrompt(false);
+                }}
+                readOnly={reactivationMode}
                 required
               />
-              <p className="form-hint">Required for payment and subscription management</p>
+              <p className="form-hint">
+                {reactivationMode
+                  ? "This email is verified from your reactivation link"
+                  : "Required for payment and subscription management"}
+              </p>
             </div>
 
             <div className="form-row">
@@ -446,22 +752,37 @@ const Signup = () => {
               <input
                 type="password"
                 className="form-input"
-                placeholder="Create a password (min. 6 characters)"
+                placeholder={
+                  reactivationMode
+                    ? "Choose a new password (min. 6 characters)"
+                    : "Create a password (min. 6 characters)"
+                }
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
                 required
+                disabled={reactivationValidating}
               />
-              <p className="form-hint">Required for account creation</p>
+              <p className="form-hint">
+                {reactivationMode
+                  ? "This replaces your previous password on your existing account"
+                  : "Required for account creation"}
+              </p>
             </div>
 
-            <button className="signup-primary-btn" onClick={handleCreateAccount}>
-              Create Account & Continue
+            <button
+              className="signup-primary-btn"
+              onClick={handleCreateAccount}
+              disabled={reactivationValidating}
+            >
+              {reactivationMode ? "Continue — choose your plan" : "Create Account & Choose Plan"}
               <span className="btn-arrow">→</span>
             </button>
 
-            <div className="signup-footer-text">
-              Already have an account? <a href="/login">Sign In</a>
-            </div>
+            {!reactivationMode && (
+              <div className="signup-footer-text">
+                Already have an account? <a href="/login">Sign In</a>
+              </div>
+            )}
           </div>
         )}
 
@@ -470,7 +791,7 @@ const Signup = () => {
           <div className="signup-card plan-selection">
             {/* Close Button - Inside card for native apps */}
             {isNative && (
-              <button className="signup-close-btn-in-card" onClick={() => navigate('/')}>
+              <button className="signup-close-btn-in-card" onClick={() => navigateToMarketingHome(navigate)}>
                 ✕
               </button>
             )}
@@ -489,11 +810,13 @@ const Signup = () => {
               <div className="progress-line"></div>
               <div className={`progress-step ${step >= 3 ? 'active' : ''}`}>
                 <div className="step-number">3</div>
-                <span>Payment</span>
+                <span>Card</span>
               </div>
             </div>
-            <h2 className="card-title">Choose Your Plan</h2>
-            <p className="card-subtitle">Select the plan that works best for you</p>
+            <h2 className="card-title">Start Your {TRIAL_DAYS}-Day Free Trial</h2>
+            <p className="card-subtitle">
+              Pick a plan below. Try it free — you won't be charged today.
+            </p>
 
             {error && <div className="signup-error-message">{error}</div>}
 
@@ -525,13 +848,11 @@ const Signup = () => {
               <div className="plan-card">
                 <div className="plan-header">
                   <h3 className="plan-name">Regular</h3>
-                  <div className="plan-price">
-                    <span className="price-amount">{getPricing('regular')[billingCycle]}</span>
-                    <span className="price-period">/month</span>
-                  </div>
-                  {billingCycle === 'annual' && (
-                    <p className="billing-note-small">Billed annually at {getPricing('regular').annualTotal}</p>
-                  )}
+                  <PlanTrialPrice
+                    planType="regular"
+                    billingCycle={billingCycle}
+                    getPricing={getPricing}
+                  />
                 </div>
                 <ul className="plan-features">
                   <li>✓ Complete ownership data</li>
@@ -546,9 +867,9 @@ const Signup = () => {
                 <button 
                   className="plan-select-btn"
                   onClick={() => handleSelectPlan('regular')}
-                  disabled={loading}
+                  disabled={loading && step === 2}
                 >
-                  {loading && selectedPlan === 'regular' ? 'Loading...' : 'Select Regular'}
+                  {loading && selectedPlan === 'regular' ? 'Loading...' : `Start ${TRIAL_DAYS}-day trial`}
                 </button>
               </div>
 
@@ -557,13 +878,11 @@ const Signup = () => {
                 <div className="featured-badge">MOST POPULAR</div>
                 <div className="plan-header">
                   <h3 className="plan-name">Plus</h3>
-                  <div className="plan-price">
-                    <span className="price-amount">{getPricing('plus')[billingCycle]}</span>
-                    <span className="price-period">/month</span>
-                  </div>
-                  {billingCycle === 'annual' && (
-                    <p className="billing-note-small">Billed annually at {getPricing('plus').annualTotal}</p>
-                  )}
+                  <PlanTrialPrice
+                    planType="plus"
+                    billingCycle={billingCycle}
+                    getPricing={getPricing}
+                  />
                 </div>
                 <ul className="plan-features">
                   <li>✓ All Regular features</li>
@@ -578,32 +897,72 @@ const Signup = () => {
                 <button 
                   className="plan-select-btn featured"
                   onClick={() => handleSelectPlan('plus')}
-                  disabled={loading}
+                  disabled={loading && step === 2}
                 >
-                  {loading && selectedPlan === 'plus' ? 'Loading...' : 'Select Plus'}
+                  {loading && selectedPlan === 'plus' ? 'Loading...' : `Start ${TRIAL_DAYS}-day trial`}
                 </button>
               </div>
             </div>
 
-            <button className="back-btn" onClick={() => setStep(1)}>
-              ← Back to Account Info
-            </button>
+            {!user && (
+              <button className="back-btn" onClick={() => setStep(1)}>
+                ← Back to Account Info
+              </button>
+            )}
+
+            <p className="signup-trial-footnote">
+              Card required to start your trial. Cancel anytime before day {TRIAL_DAYS + 1} — no charge.
+            </p>
           </div>
         )}
 
         {/* Step 3: Embedded Stripe Checkout */}
-        {step === 3 && clientSecret && (
+        {step === 3 && (
           <div className="signup-card payment-step">
-            <h2 className="card-title">Complete Your Payment</h2>
+            <h2 className="card-title">Almost There — $0 Today</h2>
             <p className="card-subtitle">
-              {selectedPlan === 'regular' ? 'Regular' : 'Plus'} Plan - {getPricing(selectedPlan)[billingCycle]}/month
-              {billingCycle === 'annual' && ` (${getPricing(selectedPlan).annualTotal})`}
+              Add a card to start your {TRIAL_DAYS}-day free trial. You won't be charged now.
             </p>
+
+            <div className="trial-summary-card">
+              <div className="trial-summary-card__row">
+                <span>Plan</span>
+                <strong>{selectedPlan === "regular" ? "Regular" : "Plus"}</strong>
+              </div>
+              <div className="trial-summary-card__row">
+                <span>Due today</span>
+                <strong className="trial-summary-card__free">$0.00</strong>
+              </div>
+              <div className="trial-summary-card__row">
+                <span>After {TRIAL_DAYS}-day trial</span>
+                <strong>{getTrialChargeLabel(selectedPlan, billingCycle, getPricing)}</strong>
+              </div>
+              {trialEnd && (
+                <div className="trial-summary-card__row trial-summary-card__row--muted">
+                  <span>First charge date</span>
+                  <strong>{formatTrialEndDate(trialEnd)}</strong>
+                </div>
+              )}
+            </div>
 
             {error && <div className="signup-error-message">{error}</div>}
 
+            {typeof window !== "undefined" && !window.isSecureContext && (
+              <div className="checkout-insecure-notice">
+                Card autofill needs a secure connection (HTTPS). Locally, run with{" "}
+                <code>HTTPS=true</code> and open <code>https://localhost:3000</code>, or test on{" "}
+                <code>communityview.ai</code>. You can still type your card manually.
+              </div>
+            )}
+
             <div className="checkout-container">
-              {clientSecret ? (
+              {loading ? (
+                <div className="checkout-preparing">
+                  <div className="checkout-preparing__spinner" aria-hidden="true" />
+                  <p className="checkout-preparing__title">Setting up secure checkout…</p>
+                  <p className="checkout-preparing__hint">This usually takes a few seconds.</p>
+                </div>
+              ) : clientSecret ? (
                 <Elements 
                   stripe={stripePromise} 
                   options={{ 
@@ -624,22 +983,49 @@ const Signup = () => {
                   }}
                 >
                   <PaymentForm 
-                    clientSecret={clientSecret}
+                    intentType={intentType}
+                    trialEnd={trialEnd}
                     selectedPlan={selectedPlan}
                     billingCycle={billingCycle}
                     getPricing={getPricing}
-                    onSuccess={() => navigate('/signup-success')}
+                    onSuccess={async () => {
+                      const fullPlanName = `${selectedPlan}-${billingCycle}`;
+                      try {
+                        await startTrialSubscription({
+                          email,
+                          plan: fullPlanName,
+                          firstName,
+                          lastName,
+                          setupIntentId,
+                        });
+                        navigate("/signup-success");
+                      } catch (err) {
+                        console.error("Start trial error:", err);
+                        setError(err.message || "Failed to start your trial. Please try again.");
+                      }
+                    }}
                     onError={setError}
                   />
                 </Elements>
               ) : (
-                <div style={{ color: 'rgba(255, 255, 255, 0.6)', fontSize: '0.9rem', textAlign: 'center', padding: '20px' }}>
-                  Loading payment form...
+                <div className="checkout-preparing">
+                  <p className="checkout-preparing__hint">Unable to load checkout. Go back and try again.</p>
                 </div>
               )}
             </div>
 
-            <button className="back-btn" onClick={() => setStep(2)}>
+            <button
+              className="back-btn"
+              disabled={loading}
+              onClick={() => {
+                checkoutLoadKeyRef.current = "";
+                setClientSecret("");
+                setSetupIntentId("");
+                setTrialEnd("");
+                setLoading(false);
+                setStep(2);
+              }}
+            >
               ← Change Plan
             </button>
           </div>

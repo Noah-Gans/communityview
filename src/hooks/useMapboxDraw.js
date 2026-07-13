@@ -14,8 +14,7 @@ import { useMapContext } from "../pages/MapContext";
 export default function useMapboxDraw({ onPolygonCreated, onLineCreated, onPolygonFinalized }) {
   const { mapRef, drawRef, isDrawingRef, setIsDrawing, suppressNextFeatureClickRef } = useMapContext();
   const [storedFeatures, setStoredFeatures] = useState(null);
-  const holdBlock = useRef(false); // ✅ Now it's mutable
-  const selectingParcelPolyMode = useRef(false); // ✅ Now it's mutable
+  const selectingParcelPolyMode = useRef(false);
   const tempPolygonRef = useRef(null);
   const isFinalizingSelectionRef = useRef(false);
 
@@ -40,8 +39,8 @@ export default function useMapboxDraw({ onPolygonCreated, onLineCreated, onPolyg
     
     // Also hide the DOM element immediately
     if (mapRef.current) {
-      mapRef.current.off("draw.create", handlePolygonComplete);
-      mapRef.current.off("draw.update", handlePolygonComplete);
+      mapRef.current.off("draw.create", handleDrawCreate);
+      mapRef.current.off("draw.update", handleDrawUpdate);
       mapRef.current.off("draw.render", handleDrawRender);
     }
   };
@@ -231,46 +230,64 @@ const handleDrawRender = () => {
     });
   };
 
-  function handlePolygonComplete(e) {
-    const drawnFeature = e.features[0];
+  function finalizeDrawnFeature(drawnFeature) {
+    if (!drawnFeature) return;
 
-    if (drawnFeature.geometry.type === "Polygon") {
-        console.log("✅ Polygon Drawn/Updated:", drawnFeature.geometry);
-        tempPolygonRef.current = drawnFeature.geometry; // ✅ Update immediately
-        if (typeof onPolygonCreated === "function") {
-          onPolygonCreated(drawnFeature);
-        }
-        // Finalize immediately when polygon drawing completes (double-click).
-        if (selectingParcelPolyMode.current && typeof onPolygonFinalized === "function") {
-          if (isFinalizingSelectionRef.current) {
-            return;
-          }
-          isFinalizingSelectionRef.current = true;
-          if (suppressNextFeatureClickRef) {
-            suppressNextFeatureClickRef.current = true;
-          }
-          // Defer finalization to the next tick to avoid re-entrant draw mode recursion.
-          setTimeout(() => {
-            try {
-              console.log("🚀 Finalizing parcel selection on draw completion.");
-              onPolygonFinalized(drawnFeature.geometry);
-              selectingParcelPolyMode.current = false;
-              holdBlock.current = false;
-              isDrawingRef.current = false;
-              setIsDrawing(false);
-              finalizePolygonVisualState(drawnFeature);
-            } finally {
-              isFinalizingSelectionRef.current = false;
-            }
-          }, 0);
-        }
-        
-        // 🆕 Show final instruction after polygon completion
-        if (isDrawingRef.current) {
-          // No more instructions to show here
-        }
+    if (suppressNextFeatureClickRef) {
+      suppressNextFeatureClickRef.current = true;
     }
-}
+    isDrawingRef.current = false;
+    setIsDrawing(false);
+    finalizePolygonVisualState(drawnFeature);
+  }
+
+  function handleDrawUpdate(e) {
+    const drawnFeature = e.features[0];
+    if (!drawnFeature || drawnFeature.geometry.type !== "Polygon") return;
+
+    tempPolygonRef.current = drawnFeature.geometry;
+    if (typeof onPolygonCreated === "function") {
+      onPolygonCreated(drawnFeature);
+    }
+  }
+
+  function handleDrawCreate(e) {
+    const drawnFeature = e.features[0];
+    if (!drawnFeature) return;
+
+    const geomType = drawnFeature.geometry.type;
+    if (geomType === "Polygon") {
+      tempPolygonRef.current = drawnFeature.geometry;
+      if (typeof onPolygonCreated === "function") {
+        onPolygonCreated(drawnFeature);
+      }
+    } else if (geomType === "LineString") {
+      if (typeof onLineCreated === "function") {
+        onLineCreated(drawnFeature);
+      }
+    } else {
+      return;
+    }
+
+    if (selectingParcelPolyMode.current && geomType === "Polygon") {
+      if (isFinalizingSelectionRef.current) return;
+      isFinalizingSelectionRef.current = true;
+      setTimeout(() => {
+        try {
+          if (typeof onPolygonFinalized === "function") {
+            onPolygonFinalized(drawnFeature.geometry);
+          }
+          selectingParcelPolyMode.current = false;
+          finalizeDrawnFeature(drawnFeature);
+        } finally {
+          isFinalizingSelectionRef.current = false;
+        }
+      }, 0);
+      return;
+    }
+
+    finalizeDrawnFeature(drawnFeature);
+  }
 
 
 
@@ -293,58 +310,21 @@ useEffect(() => {
     mapClickRef.current = (e) => {
       console.log("🖱️ Map click at:", e.lngLat);
       if (!drawRef.current) return;
-      if(holdBlock.current == true){
-        console.log("Hold Block True setting click block now to false 🛑")
-        isDrawingRef.current = false;
-        holdBlock.current = false;
-      }
-      
-      const currentMode = drawRef.current.getMode();
-      console.log("🔄 Draw Mode:", currentMode);
-      console.log("📌 All Drawn Features:", drawRef.current.getAll());
-  
-      if (isDrawingRef.current) {
 
-        if (
-          drawRef.current.getMode() === "simple_select" &&
-          drawRef.current.getSelected().features.length === 0
-        ) {
-            if(holdBlock.current == true){
-                console.log("Hold Block True setting click block now to false 🛑🛑🛑🛑🛑🛑")
-                isDrawingRef.current = false;
-                holdBlock.current = false;
-            }else{
-                console.log("🟡🟡 🟡 🟡 🟡 🟡 🟡 🟡 🟡 🟡  Setting next click with hold block");
-                holdBlock.current = true;
-                
-                console.log(selectingParcelPolyMode.current)
-                console.log(tempPolygonRef.current)
-            }
-          
-          // 🛑 Temporarily block next click
-          // Adjust delay if needed
-        }
-      } else {
-        // If user wasn't drawing, check if they've started editing or selected something
-        if (drawRef.current.getSelected().features.length > 0) {
-          console.log("🟢 Setting isDrawing to true (user selected a drawn shape).");
-          isDrawingRef.current = true;
-          holdBlock.current = false;
-        }
+      if (
+        !isDrawingRef.current &&
+        drawRef.current.getSelected().features.length > 0
+      ) {
+        console.log("🟢 Setting isDrawing to true (user selected a drawn shape).");
+        isDrawingRef.current = true;
       }
-      
-      // 🆕 Hide instructions when clicking outside polygon during finalization
+
       if (isDrawingRef.current && drawRef.current.getMode() === "simple_select") {
         const selectedFeatures = drawRef.current.getSelected().features;
         if (selectedFeatures.length === 0) {
-          // User clicked outside the polygon, hide instructions
           hideInstructions();
         }
       }
-      
-      console.log("🟡 🟢 isDrawingRef.current:", isDrawingRef.current);
-      console.log("Hold Block = ", holdBlock.current)
-
     };
   
     map.on("click", mapClickRef.current);
@@ -385,8 +365,8 @@ useEffect(() => {
     map.on("style.load", restoreStoredFeatures);
 
     // ✅ Keep Drawn Features Updated
-    map.on("draw.create", handlePolygonComplete); // Capture the completed polygon
-    map.on("draw.update", handlePolygonComplete);
+    map.on("draw.create", handleDrawCreate);
+    map.on("draw.update", handleDrawUpdate);
     map.on("draw.create", updateStoredFeatures);
     map.on("draw.update", updateStoredFeatures);
     map.on("draw.delete", updateStoredFeatures);
@@ -395,8 +375,8 @@ useEffect(() => {
 
 
     return () => {
-        map.off("draw.create", handlePolygonComplete); // Capture the completed polygon
-        map.off("draw.update", handlePolygonComplete);
+        map.off("draw.create", handleDrawCreate);
+        map.off("draw.update", handleDrawUpdate);
       map.off("style.load", restoreStoredFeatures);
       map.off("draw.create", updateStoredFeatures);
       map.off("draw.update", updateStoredFeatures);
@@ -413,7 +393,6 @@ useEffect(() => {
   function drawPolygon() {
     if (!drawRef.current) return;
     drawRef.current.changeMode("simple_select");
-    holdBlock.current = false
     setTimeout(() => {
       drawRef.current.changeMode("draw_polygon");
       // 🆕 Show initial instruction for polygon drawing
@@ -423,7 +402,6 @@ useEffect(() => {
 
   function drawLine() {
     if (!drawRef.current) return;
-    holdBlock.current = false
     drawRef.current.changeMode("simple_select");
     setTimeout(() => drawRef.current.changeMode("draw_line_string"), 10);
     isDrawingRef.current = true;
@@ -464,10 +442,7 @@ useEffect(() => {
     } else {
       console.warn("⚠️ No feature selected for deletion.");
     }
-    holdBlock.current = false;
     isDrawingRef.current = false;
-    
-    // 🆕 Hide all instructions after deletion
     hideInstructions();
 
   }

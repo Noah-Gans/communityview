@@ -1,6 +1,7 @@
 import React from 'react';
 import { useUser } from '../../contexts/UserContext';
 import { useNavigate } from 'react-router-dom';
+import MapLoadingOverlay from '../loading/MapLoadingOverlay';
 import './FeatureGate.css';
 
 /**
@@ -12,7 +13,7 @@ const TierGate = ({ children, requiredTier = 'plus' }) => {
   const navigate = useNavigate();
 
   if (loading) {
-    return <div>Loading...</div>;
+    return <MapLoadingOverlay phraseSet="site" className="map-loading-overlay--app-boot" />;
   }
 
   // Check if user has required tier

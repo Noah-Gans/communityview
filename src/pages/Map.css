@@ -76,11 +76,32 @@
 }
 
 
-.location-zoom-button-container {
+.map-floating-controls-stack {
+  --map-control-gap: 12px;
   position: absolute;
-  bottom: 100px; /* Position above the layer selector */
   right: 20px;
+  bottom: 20px;
   z-index: 9;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: var(--map-control-gap);
+  pointer-events: none;
+}
+
+.map-floating-controls-stack > .location-zoom-button-container,
+.map-floating-controls-stack > .layer-selector-container,
+.map-floating-controls-stack > .map-floating-control-container {
+  position: relative;
+  bottom: auto;
+  right: auto;
+  left: auto;
+  top: auto;
+  z-index: auto;
+  pointer-events: auto;
+}
+
+.location-zoom-button-container {
   pointer-events: auto;
 }
 
@@ -105,6 +126,37 @@
   box-shadow: 0 4px 10px rgba(20, 222, 155, 0.45);
 }
 
+.location-zoom-button.is-locating,
+.location-zoom-button:disabled {
+  cursor: wait;
+  transform: none;
+}
+
+.location-zoom-spinner {
+  display: inline-block;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  border: 2px solid rgba(29, 120, 79, 0.25);
+  border-top-color: #1d784f;
+  animation: location-zoom-spin 0.8s linear infinite;
+}
+
+@keyframes location-zoom-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.user-location-dot {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: #1d784f;
+  border: 2px solid #fff;
+  box-shadow: 0 0 0 1px rgba(29, 120, 79, 0.35);
+}
+
 .location-icon {
   width: 24px;
   height: 24px;
@@ -112,26 +164,11 @@
 }
 
 .layer-selector-container {
-  position: absolute;
-  bottom: 20px;
-  right: 20px; /* Ensure it's well inside the map container */
-  z-index: 20; /* Keep selector stack above floating controls */
   pointer-events: auto;
 }
 
 .map-floating-control-container {
-  position: absolute;
-  right: 20px;
-  z-index: 9;
   pointer-events: auto;
-}
-
-.map-floating-control-3d-container {
-  bottom: 180px;
-}
-
-.map-floating-control-contours-container {
-  bottom: 260px;
 }
 
 .map-floating-control-button {
@@ -191,9 +228,14 @@
 
 }
 
-.layer-selector-button:hover {
+.layer-selector-button:hover,
+.layer-selector-button.active {
   background-color: var(--cv-green-bright);
   box-shadow: 0 4px 10px rgba(20, 222, 155, 0.45);
+}
+
+.basemap-sheet-header {
+  display: none;
 }
 
 .layer-icon {
@@ -327,6 +369,16 @@
   border: none;
   border-radius: 5px;
   cursor: pointer;
+  margin: 0 6px 8px;
+}
+
+.overlay-button--secondary {
+  background-color: transparent;
+  border: 1px solid rgba(255, 255, 255, 0.35);
+}
+
+.overlay-button--secondary:hover {
+  background-color: rgba(255, 255, 255, 0.08);
 }
 
 .overlay-button:hover {
@@ -361,6 +413,14 @@
 }
 
 @media (max-width: 768px) {
+  .map-geo-print-stack {
+    height: 100dvh;
+  }
+
+  #map {
+    height: 100dvh;
+  }
+
   .map-container {
     position: relative;
     height: 100dvh;
@@ -380,10 +440,7 @@
     margin-bottom: 0;
   }
 
-  body.sheet-hidden .location-zoom-button-container,
-  body.sheet-hidden .layer-selector-container,
-  body.sheet-hidden .map-floating-control-3d-container,
-  body.sheet-hidden .map-floating-control-contours-container {
+  body.sheet-hidden .map-floating-controls-stack {
     bottom: 130px;
     z-index: 10;
   }
@@ -393,10 +450,7 @@
     z-index: 10;
   }
 
-  body.sheet-peek .location-zoom-button-container,
-  body.sheet-peek .layer-selector-container,
-  body.sheet-peek .map-floating-control-3d-container,
-  body.sheet-peek .map-floating-control-contours-container {
+  body.sheet-peek .map-floating-controls-stack {
     bottom: calc(35vh + 16px);
     z-index: 10; /* Keep buttons above side panel in peek mode */
   }
@@ -406,10 +460,7 @@
     z-index: 10;
   }
 
-  body.sheet-full .location-zoom-button-container,
-  body.sheet-full .layer-selector-container,
-  body.sheet-full .map-floating-control-3d-container,
-  body.sheet-full .map-floating-control-contours-container {
+  body.sheet-full .map-floating-controls-stack {
     bottom: calc(75vh + 16px);
     z-index: 5; /* Lower z-index so side panel covers them in full mode */
   }
@@ -419,98 +470,146 @@
     z-index: 5;
   }
   
-  .location-zoom-button-container {
-    position: absolute;
-    bottom: 50px; /* Same height as basemap button */
-    left: 10px; /* Move it to the left */
-    right: auto; /* Override right positioning */
-    z-index: 10;
-    transition: bottom 0.3s ease, z-index 0.3s ease;
-  }
-  
-  .layer-selector-container {
-    position: absolute;
-    bottom: 50px;
-    right: 10px; /* Move it to the right */
-    left: auto; /* Override left positioning */
-    z-index: 20; /* Keep selector stack above floating controls */
-    transition: bottom 0.3s ease, z-index 0.3s ease;
-  }
-
-  .map-floating-control-container {
+  .map-floating-controls-stack {
     right: 10px;
-    z-index: 10;
+    bottom: 50px;
     transition: bottom 0.3s ease, z-index 0.3s ease;
   }
 
-  .map-floating-control-3d-container {
-    bottom: 110px;
+  .layer-selector-container:hover .layer-selector-popup {
+    display: none;
   }
 
-  .map-floating-control-contours-container {
-    bottom: 170px;
+  .layer-selector-container.is-open .layer-selector-popup,
+  .layer-selector-container.tutorial-force-open .layer-selector-popup {
+    display: flex;
   }
 
-  body.sheet-hidden .map-floating-control-3d-container {
-    bottom: 210px;
-  }
-
-  body.sheet-hidden .map-floating-control-contours-container {
-    bottom: 290px;
-  }
-
-  body.sheet-peek .map-floating-control-3d-container {
-    bottom: calc(35vh + 96px);
-  }
-
-  body.sheet-peek .map-floating-control-contours-container {
-    bottom: calc(35vh + 176px);
-  }
-
-  body.sheet-full .map-floating-control-3d-container {
-    bottom: calc(75vh + 96px);
-  }
-
-  body.sheet-full .map-floating-control-contours-container {
-    bottom: calc(75vh + 176px);
+  @keyframes basemap-sheet-up {
+    from {
+      opacity: 0;
+      transform: translateY(16px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
   }
 
   .layer-selector-popup {
     position: fixed;
-    bottom: 70px; /* Move it above the button */
-    right: 10px; /* Align it with the right side */
-    left: 10px; /* Full width with margins */
-    background-color: white;
-    border-radius: 12px;
-    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
-    padding: 12px;
-    width: auto; /* Auto width with left/right constraints */
-    max-width: calc(100vw - 20px);
+    left: 0;
+    right: 0;
+    bottom: 0;
+    top: auto;
+    display: none;
+    flex-direction: column;
+    background-color: #ffffff;
+    border-radius: 20px 20px 0 0;
+    box-shadow: 0 -12px 40px rgba(15, 23, 42, 0.2);
+    padding: 0 16px calc(20px + env(safe-area-inset-bottom, 0px));
+    width: 100%;
+    max-width: none;
     pointer-events: auto;
-    z-index: 30; /* Keep popup above 3D/topo controls on mobile */
-    max-height: 45vh; /* Take up bottom half, leaving map visible */
-    overflow-y: auto;
+    z-index: 35;
+    min-height: min(62vh, 420px);
+    max-height: min(68vh, calc(100dvh - env(safe-area-inset-top, 0px) - 72px));
+    overflow: hidden;
+    animation: basemap-sheet-up 0.28s cubic-bezier(0.22, 1, 0.36, 1);
+  }
+
+  .basemap-sheet-header {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    flex-shrink: 0;
+    padding: 10px 0 12px;
+    border-bottom: 1px solid #e5e7eb;
+    margin-bottom: 14px;
+    position: relative;
+  }
+
+  .basemap-sheet-grabber {
+    width: 40px;
+    height: 4px;
+    border-radius: 999px;
+    background: #d1d5db;
+    margin-bottom: 10px;
+  }
+
+  .basemap-sheet-title {
+    margin: 0;
+    font-size: 16px;
+    font-weight: 700;
+    color: #111827;
+    letter-spacing: -0.02em;
+  }
+
+  .basemap-sheet-close {
+    position: absolute;
+    top: 8px;
+    right: 0;
+    width: 36px;
+    height: 36px;
+    border: none;
+    border-radius: 10px;
+    background: #f3f4f6;
+    color: #374151;
+    font-size: 22px;
+    line-height: 1;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0;
+  }
+
+  .basemap-sheet-close:active {
+    background: #e5e7eb;
   }
 
   .basemap-grid {
-    grid-template-columns: repeat(3, 1fr); /* 3 columns on mobile for smaller size */
-    gap: 8px;
+    flex: 1;
+    min-height: 0;
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 12px;
+    align-content: start;
+    padding-bottom: 4px;
   }
 
   .basemap-option {
-    padding: 8px;
-    min-height: 70px;
+    padding: 10px;
+    min-height: 0;
+    border-radius: 14px;
+    background: #f9fafb;
+    border: 2px solid transparent;
+  }
+
+  .basemap-option.active {
+    background: #f0fdf4;
+    border-color: #006b45;
+    box-shadow: 0 0 0 1px rgba(0, 107, 69, 0.12);
+  }
+
+  .basemap-option:active {
+    transform: scale(0.98);
   }
 
   .basemap-thumbnail {
     width: 100%;
-    height: 40px;
-    margin-bottom: 6px;
+    height: 88px;
+    margin-bottom: 8px;
+    border-radius: 10px;
+    border: 1px solid #e5e7eb;
   }
 
   .basemap-label {
-    font-size: 10px;
-    line-height: 1.2;
+    font-size: 13px;
+    font-weight: 600;
+    line-height: 1.25;
+    color: #111827;
   }
 
   .basemap-switcher {

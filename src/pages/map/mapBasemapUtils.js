@@ -67,8 +67,11 @@ export function verifyBasemapAppliedOnMap(map, basemapId) {
   if (!id) return false;
 
   if (id === 'imagery' || id === 'imagery-3d' || id === 'esri-world-imagery') {
-    // Esri raster visible is enough — underlay check false-negatives during zoom/layer churn.
-    return isRasterLayerVisible(map, ESRI_WORLD_IMAGERY_LAYER_ID);
+    return (
+      isRasterLayerVisible(map, ESRI_WORLD_IMAGERY_LAYER_ID) &&
+      !isRasterLayerVisible(map, SATELLITE_STREETS_OVERLAY_LAYER_ID) &&
+      !isRasterLayerVisible(map, STREETS_OVERLAY_LAYER_ID)
+    );
   }
   if (id === 'satellite-streets-v12') {
     return isRasterLayerVisible(map, SATELLITE_STREETS_OVERLAY_LAYER_ID);
@@ -86,6 +89,58 @@ export function verifyBasemapAppliedOnMap(map, basemapId) {
   return true;
 }
 
+/** Tour requires Esri imagery plus Mapbox terrain (DEM). */
+export function isTourImagery3DActive(map) {
+  if (!map?.isStyleLoaded?.()) return false;
+  let terrainOk = false;
+  try {
+    terrainOk = Boolean(map.getTerrain?.()?.source);
+  } catch (_) {
+    /* ignore */
+  }
+  return verifyBasemapAppliedOnMap(map, 'imagery') && terrainOk;
+}
+
+/**
+ * Poll until tour 3D imagery is active or timeout.
+ * @param {import('mapbox-gl').Map} map
+ * @param {{ timeoutMs?: number, pollMs?: number }} [options]
+ */
+export async function waitUntilTourImagery3DActive(map, options = {}) {
+  const timeoutMs = options.timeoutMs ?? 22000;
+  const pollMs = options.pollMs ?? 200;
+  const start = Date.now();
+  while (Date.now() - start < timeoutMs) {
+    if (isTourImagery3DActive(map)) return true;
+    await new Promise((resolve) => {
+      window.setTimeout(resolve, pollMs);
+    });
+  }
+  return isTourImagery3DActive(map);
+}
+
+/**
+ * Tour cold-open: proceed once Esri imagery is visible (fast), without blocking on full 3D terrain.
+ * @param {import('mapbox-gl').Map} map
+ * @param {{ timeoutMs?: number, pollMs?: number }} [options]
+ * @returns {Promise<'3d'|'imagery'|null>}
+ */
+export async function waitUntilTourBasemapReady(map, options = {}) {
+  const timeoutMs = options.timeoutMs ?? 10000;
+  const pollMs = options.pollMs ?? 120;
+  const start = Date.now();
+  while (Date.now() - start < timeoutMs) {
+    if (isTourImagery3DActive(map)) return '3d';
+    if (verifyBasemapAppliedOnMap(map, 'imagery')) return 'imagery';
+    await new Promise((resolve) => {
+      window.setTimeout(resolve, pollMs);
+    });
+  }
+  if (isTourImagery3DActive(map)) return '3d';
+  if (verifyBasemapAppliedOnMap(map, 'imagery')) return 'imagery';
+  return null;
+}
+
 /**
  * True when overlay rasters or outdoors underlay no longer match the selected basemap
  * (e.g. Discover landcover visible on top of Imagery after zoom / ownership restack).
@@ -98,6 +153,8 @@ export function needsBasemapOverlayMaintenance(map, basemapId) {
   if (id === 'imagery' || id === 'imagery-3d' || id === 'esri-world-imagery') {
     return (
       !isRasterLayerVisible(map, ESRI_WORLD_IMAGERY_LAYER_ID) ||
+      isRasterLayerVisible(map, SATELLITE_STREETS_OVERLAY_LAYER_ID) ||
+      isRasterLayerVisible(map, STREETS_OVERLAY_LAYER_ID) ||
       hasVisibleMapboxStyleUnderlay(map)
     );
   }
@@ -165,6 +222,17 @@ export function applyCompositeLabelStyleForBasemap(map, basemapId) {
   });
 }
 
+/** First composite/style symbol layer — data + parcel vectors sit directly below labels. */
+export function getFirstSymbolLayerId(map) {
+  if (!map?.getStyle) return undefined;
+  try {
+    const firstSym = (map.getStyle().layers || []).find((layer) => layer.type === 'symbol');
+    return firstSym ? firstSym.id : undefined;
+  } catch (_) {
+    return undefined;
+  }
+}
+
 /**
  * Match `updateLayers` MVT placement: Mapbox GL v3 composite/slot styles can leave vector tiles
  * stale until a zoom change if layers are only appended with no `beforeId`. Public land uses this.
@@ -188,7 +256,8 @@ export function getVectorLayerInsertBeforeId(map) {
 
 /** Raise hosted MVT / draw layers above basemap raster overlays (Esri, Satellite, Streets, etc.). */
 export function restackDataLayersAboveBasemapOverlays(map) {
-  if (!map?.getStyle || !hasVisibleManagedBasemapRaster(map)) return;
+  if (!map?.getStyle) return;
+  const beforeId = getFirstSymbolLayerId(map);
   const ids = (map.getStyle().layers || [])
     .map((layer) => layer.id)
     .filter((id) => {
@@ -199,7 +268,7 @@ export function restackDataLayersAboveBasemapOverlays(map) {
     });
   ids.forEach((id) => {
     try {
-      map.moveLayer(id);
+      map.moveLayer(id, beforeId);
     } catch (_) {
       /* ignore */
     }

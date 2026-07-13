@@ -9,7 +9,6 @@ const MobileBottomNav = () => {
   const navItems = [
     { path: '/pricing', label: 'Pricing', icon: '💰' },
     { path: '/faq', label: 'FAQ', icon: '❓' },
-    { path: '/updates', label: 'Updates', icon: '📰' },
     { path: '/features', label: 'Features', icon: '⭐' },
   ];
 

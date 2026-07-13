@@ -1,4 +1,6 @@
 // svgMap.js
+import { POINT_ICON_KEYS, POINT_ICON_REGISTRY } from '../../../pages/print/pointIconRegistry';
+
 export const svgMap = {
     pin: ({ fill, stroke, strokeWidth, fillOpacity, strokeOpacity }) => (
       <svg viewBox="0 0 24 24" width="100%" height="100%" preserveAspectRatio="none">
@@ -600,22 +602,6 @@ export const printCatalogToolIcons = {
   shape_trailSign: catalogImageIcon('hiking.svg', 'Trail sign'),
   shape_forest: catalogImageIcon('farm.svg', 'Forest'),
   shape_forest2: catalogImageIcon('cabin.svg', 'Forest 2'),
-  // New shape_* keys used by the current print catalog
-  shape_bridgeWater: catalogImageIcon('bridge-water.svg', 'Bridge'),
-  shape_cabin: catalogImageIcon('cabin.svg', 'Cabin'),
-  shape_camera: catalogImageIcon('camera.svg', 'Photo Point'),
-  shape_farm: catalogImageIcon('farm.svg', 'Barn/Shed'),
-  shape_garageCar: catalogImageIcon('garage-car.svg', 'Garage'),
-  shape_hiking: catalogImageIcon('hiking.svg', 'Trail Head'),
-  shape_horseSaddle: catalogImageIcon('horse-saddle.svg', 'Horse Saddle'),
-  shape_houseChimney: catalogImageIcon('house-chimney.svg', 'Main Home'),
-  shape_locationPinParking: catalogImageIcon('location-pin-parking.svg', 'Parking'),
-  shape_planeAlt: catalogImageIcon('plane-alt.svg', 'Airport'),
-  shape_school: catalogImageIcon('school.svg', 'School'),
-  shape_skiing: catalogImageIcon('skiing.svg', 'Skiing'),
-  shape_skiingNordic: catalogImageIcon('skiing-nordic.svg', 'Skiing Nordic'),
-  shape_swimmer: catalogImageIcon('swimmer.svg', 'Pool'),
-  shape_tablePicnic: catalogImageIcon('table-picnic.svg', 'Park'),
 };
 
 const pointIconRenderer = (file) => ({
@@ -705,21 +691,11 @@ Object.assign(svgMap, {
   trailSign: pointIconRenderer('hiking.svg'),
   forest: pointIconRenderer('farm.svg'),
   forest2: pointIconRenderer('cabin.svg'),
-  // New icon-key set mapped 1:1 to /public/logos_for_print
-  bridgeWater: pointIconRenderer('bridge-water.svg'),
-  cabin: pointIconRenderer('cabin.svg'),
-  camera: pointIconRenderer('camera.svg'),
-  farm: pointIconRenderer('farm.svg'),
-  garageCar: pointIconRenderer('garage-car.svg'),
-  hiking: pointIconRenderer('hiking.svg'),
-  horseSaddle: pointIconRenderer('horse-saddle.svg'),
-  houseChimney: pointIconRenderer('house-chimney.svg'),
-  locationPinParking: pointIconRenderer('location-pin-parking.svg'),
-  planeAlt: pointIconRenderer('plane-alt.svg'),
-  skiing: pointIconRenderer('skiing.svg'),
-  skiingNordic: pointIconRenderer('skiing-nordic.svg'),
-  swimmer: pointIconRenderer('swimmer.svg'),
-  tablePicnic: pointIconRenderer('table-picnic.svg'),
 });
 
+POINT_ICON_KEYS.forEach((key) => {
+  const { file, label } = POINT_ICON_REGISTRY[key];
+  svgMap[key] = pointIconRenderer(file);
+  printCatalogToolIcons[`shape_${key}`] = catalogImageIcon(file, label);
+});
   

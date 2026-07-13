@@ -1,6 +1,7 @@
 import React from 'react';
 import { useUser } from '../../contexts/UserContext';
 import { Navigate } from 'react-router-dom';
+import MapLoadingOverlay from '../loading/MapLoadingOverlay';
 
 /**
  * Component that redirects authenticated users to /map
@@ -9,9 +10,8 @@ import { Navigate } from 'react-router-dom';
 function AuthRedirectRoute({ children }) {
   const { user, loading } = useUser();
 
-  // Show loading state while checking auth
   if (loading) {
-    return <div>Loading...</div>;
+    return <MapLoadingOverlay phraseSet="site" className="map-loading-overlay--app-boot" />;
   }
 
   // If user is logged in, redirect to map

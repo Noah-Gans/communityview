@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback, useRef, memo, useMemo } from 'react';
 import './SidePanel.css';
-import { legends } from '../../assets/legends';
+import { legends, LEGEND_CLICK_FOR_DETAILS_LAYERS, LEGEND_AUTO_EXPAND_MAX_ITEMS } from '../../assets/legends';
 import { layerNameMappings } from './layerMappings'; // Import layer mappings
 import {
   getFeatureSelectionId,
@@ -54,7 +54,14 @@ const SidePanel = memo(({
 }) => {
   console.log("SideTab is: ", activeSidePanelTab)
   // States to manage expanded/collapsed sections
-  const { activeTab, setActiveTab } = useMapContext();
+  const {
+    activeTab,
+    setActiveTab,
+    pendingCreateMapFromFeatureRef,
+    pendingCreateMapBasemapIdRef,
+    activeBasemapIdRef,
+    currentBasemapId: contextCurrentBasemapId,
+  } = useMapContext();
 
   const getIsMobile = () => (typeof window !== 'undefined' ? window.innerWidth <= 768 : false);
   const [isMobile, setIsMobile] = useState(getIsMobile);
@@ -80,7 +87,6 @@ const SidePanel = memo(({
   const layersContentRef = useRef(null);
   const sidePanelRef = useRef(null);
   const activeScrollContainerRef = useRef(null);
-  const autoAdvancedPanelOpenRef = useRef(false);
   const autoAdvancedLayersTabRef = useRef(false);
   const autoAdvancedPublicLandRef = useRef(false);
   const navigate = useNavigate();
@@ -180,19 +186,9 @@ const SidePanel = memo(({
 
   useEffect(() => {
     if (!tutorialActive || !tutorialStep) {
-      autoAdvancedPanelOpenRef.current = false;
       autoAdvancedLayersTabRef.current = false;
       autoAdvancedPublicLandRef.current = false;
       return;
-    }
-
-    if (tutorialStep.id !== 'open-side-panel') {
-      autoAdvancedPanelOpenRef.current = false;
-    } else if (isOpen && !autoAdvancedPanelOpenRef.current) {
-      autoAdvancedPanelOpenRef.current = true;
-      window.setTimeout(() => {
-        goToNextTutorialStep();
-      }, 260);
     }
 
     if (tutorialStep.id !== 'side-layers') {
@@ -219,7 +215,6 @@ const SidePanel = memo(({
   }, [
     tutorialActive,
     tutorialStep,
-    isOpen,
     activeSidePanelTab,
     isOwnershipOpen,
     isEnvironmentOpen,
@@ -232,8 +227,6 @@ const SidePanel = memo(({
   const [isLegendOpen, setIsLegendOpen] = useState({});
   
   // State for property details data (mobile only)
-  const [propertyDetailsData, setPropertyDetailsData] = useState(null);
-  const [propertyDetailsLoading, setPropertyDetailsLoading] = useState(false);
 
   // Fetch detailed Regrid parcel data from API
   const fetchRegridParcelDetails = useCallback(async (parcelId, parcelSeed = {}) => {
@@ -309,27 +302,6 @@ const SidePanel = memo(({
     }
 };
 
-  const formatCurrency = (value) => {
-    if (value === null || value === undefined || value === '') return 'N/A';
-    const num = parseFloat(value);
-    if (isNaN(num)) return 'N/A';
-    return new Intl.NumberFormat('en-US', {
-      style: 'currency',
-      currency: 'USD',
-      minimumFractionDigits: 0,
-      maximumFractionDigits: 0
-    }).format(num);
-  };
-
-  const formatDate = (dateString) => {
-    if (!dateString) return 'N/A';
-    try {
-      return new Date(dateString).toLocaleDateString();
-    } catch {
-      return dateString;
-    }
-};
-
   const handleLayerSelection = (layerName) => {
     // Toggle the layer visibility using setLayerStatus
     setLayerStatus(layerName);
@@ -402,7 +374,7 @@ const SidePanel = memo(({
           </label>
         )}
       </div>
-      {renderLegend(layerName, getLayerType(layerName))}
+      {layerStatus[layerName] && renderLegend(layerName, getLayerType(layerName))}
     </li>
   );
   const parseDescription = (htmlString) => {
@@ -505,6 +477,43 @@ const SidePanel = memo(({
         });
     });
   }, [uniqueSelectedFeatures]);
+
+  /** URL restore / geometry-only API features lack MVT fields — prefetch detail for the header. */
+  useEffect(() => {
+    uniqueSelectedFeatures.forEach((feature) => {
+      const llUuid = feature.properties?.ll_uuid;
+      if (!llUuid) return;
+
+      const hasTileSummary =
+        feature.properties?.owner ||
+        feature.properties?.owner_name ||
+        feature.properties?.address ||
+        feature.properties?.physical;
+      if (hasTileSummary) return;
+
+      const cacheKey =
+        llUuid ||
+        feature.properties?.path ||
+        feature.properties?.global_parcel_uid ||
+        feature.properties?.parcelnumb;
+      if (
+        !cacheKey ||
+        regridDetailedData[cacheKey] ||
+        regridLoadingStates[cacheKey] ||
+        regridDetailFailed[cacheKey]
+      ) {
+        return;
+      }
+
+      fetchRegridParcelDetails(llUuid, feature.properties || {});
+    });
+  }, [
+    uniqueSelectedFeatures,
+    regridDetailedData,
+    regridLoadingStates,
+    regridDetailFailed,
+    fetchRegridParcelDetails,
+  ]);
   
   const renderFeatureDetails = (feature, index) => {
     // Parse the description HTML if it exists to extract the attributes
@@ -708,7 +717,7 @@ const SidePanel = memo(({
             onZoomToFeature={onZoomToFeature}
             handleCreateMap={handleCreateMap}
             isMobile={isMobile}
-            isMapAppView={isMapAppView}
+            mobileSheetState={mobileSheetState}
           />
             );
           })()
@@ -831,126 +840,164 @@ const SidePanel = memo(({
   };
 
   const handleCreateMap = useCallback((featureForMap) => {
-    if (onZoomToFeature && featureForMap) {
+    if (!featureForMap) return;
+    if (pendingCreateMapFromFeatureRef) {
+      pendingCreateMapFromFeatureRef.current = featureForMap;
+    }
+    if (pendingCreateMapBasemapIdRef) {
+      const basemapSnapshot = String(activeBasemapIdRef?.current || contextCurrentBasemapId || '').trim();
+      pendingCreateMapBasemapIdRef.current = basemapSnapshot || null;
+    }
+    if (onZoomToFeature) {
       onZoomToFeature(featureForMap);
     }
     setActiveTab('print');
     navigate('/print');
-  }, [navigate, onZoomToFeature, setActiveTab]);
+  }, [
+    navigate,
+    onZoomToFeature,
+    setActiveTab,
+    pendingCreateMapFromFeatureRef,
+    pendingCreateMapBasemapIdRef,
+    activeBasemapIdRef,
+    contextCurrentBasemapId,
+  ]);
   
   const toggleLegend = (layerName) => {
-    setIsLegendOpen((prev) => ({
-      ...prev,
-      [layerName]: !prev[layerName],
-    }));
+    setIsLegendOpen((prev) => {
+      const legendItems = legends[layerName];
+      const defaultExpanded =
+        Array.isArray(legendItems) && legendItems.length <= LEGEND_AUTO_EXPAND_MAX_ITEMS;
+      const currentlyExpanded = prev[layerName] ?? defaultExpanded;
+      return {
+        ...prev,
+        [layerName]: !currentlyExpanded,
+      };
+    });
   };
 
   const getLayerType = (layerName) => {
-    if (layerName === 'surface_water') return 'fill';
+    if (layerName === 'transmission_lines') return 'line';
     return 'fill';
   };
   
 
-  const renderLegend = (layerName, layerType) => {
-    const legendItems = legends[layerName];
-    const legendStyle = {
-      display: 'inline-block',
-      marginLeft: '8px',
-      border: '1px solid #000', // Black outline for visibility
+  const getLegendSwatchStyle = (item, layerType) => {
+    const opacity = item.opacity !== undefined ? item.opacity : 1;
+    if (layerType === 'line') {
+      return {
+        width: '24px',
+        height: '3px',
+        backgroundColor: item.color,
+        opacity,
+      };
+    }
+    if (layerType === 'point') {
+      return {
+        width: '10px',
+        height: '10px',
+        backgroundColor: item.color,
+        borderRadius: '50%',
+        opacity,
+      };
+    }
+    return {
+      width: '14px',
+      height: '14px',
+      backgroundColor: item.color,
+      opacity,
     };
-    
-    if (layerType === 'symbol') {
-      // **Symbol Layer (Ownership Address) → Pin Icon**
+  };
+
+  const renderLegendSwatch = (item, layerType, className = 'legend-swatch') => (
+    <span
+      className={className}
+      style={getLegendSwatchStyle(item, layerType)}
+      aria-hidden="true"
+    />
+  );
+
+  const renderLegend = (layerName, layerType) => {
+    if (LEGEND_CLICK_FOR_DETAILS_LAYERS.has(layerName)) {
       return (
-        <img
-          src="/pin_better.png"  // Path to your custom pin icon
-          alt="Pin Symbol"
-          style={{
-            width: '16px',  // Adjust for small size
-            height: '16px',
-          }}
-        />
+        <div className="legend-hint" role="note">
+          <span className="legend-hint-icon" aria-hidden="true">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <circle cx="12" cy="12" r="9" />
+              <circle cx="12" cy="12" r="2.5" fill="currentColor" stroke="none" />
+            </svg>
+          </span>
+          <span className="legend-hint-text">Click a feature on the map for details</span>
+        </div>
       );
     }
-    if ((!legendItems || legendItems.length === 0)) {
-      console.warn(`No legend found for layer: ${layerName}`);
-      return null; // Don't render anything if there's no legend
+
+    const legendItems = legends[layerName];
+
+    if (layerType === 'symbol') {
+      return (
+        <div className="legend-inline">
+          <img
+            src="/pin_better.png"
+            alt=""
+            className="legend-symbol-icon"
+            aria-hidden="true"
+          />
+          <span className="legend-inline-label">Address pin</span>
+        </div>
+      );
     }
-    
+
+    if (!legendItems || legendItems.length === 0) {
+      return null;
+    }
+
     if (legendItems.length === 1) {
       const item = legendItems[0];
-  
-      if (layerType === 'fill') {
-        const stripeLegend =
-          item.pattern === 'lavender-stripes'
-            ? {
-                backgroundColor: 'transparent',
-                backgroundImage: `repeating-linear-gradient(-45deg, ${item.color} 0, ${item.color} 2px, transparent 2px, transparent 6px)`,
-              }
-            : item.pattern === 'white-lavender-stripes' || item.pattern === 'white-green-stripes'
-              ? {
-                  backgroundColor: '#ffffff',
-                  backgroundImage: `repeating-linear-gradient(-45deg, ${item.color} 0, ${item.color} 2px, #ffffff 2px, #ffffff 6px)`,
-                }
-              : { backgroundColor: item.color };
+      if (!item.label) {
         return (
-          <span
-            style={{
-              ...legendStyle,
-              width: '14px',
-              height: '14px',
-              ...stripeLegend,
-              opacity: item.opacity !== undefined ? item.opacity : 1,
-            }}
-          />
+          <div className="legend-inline">
+            {renderLegendSwatch(item, layerType)}
+            <span className="legend-inline-label">Parcel fill</span>
+          </div>
         );
-      } else if (layerType === 'line') {
-        // **Line Layer → Horizontal Line**
-        return (
-          <span
-            style={{
-              ...legendStyle,
-              width: '24px',
-              height: '3px',
-              backgroundColor: item.color,
-              display: 'inline-block',
-            }}
-          />
-        );
-      } else if (layerType === 'point') {
-        // **Point Layer → Circle (or Icon if available)**
-        return (
-          <span
-            style={{
-              ...legendStyle,
-              width: '10px',
-              height: '10px',
-              backgroundColor: item.color,
-              borderRadius: '50%',
-              display: 'inline-block',
-            }}
-          />
-        );
-      } 
+      }
+      return (
+        <div className="legend-inline">
+          {renderLegendSwatch(item, layerType)}
+          <span className="legend-inline-label">{item.label}</span>
+        </div>
+      );
     }
-  
+
+    const defaultExpanded = legendItems.length <= LEGEND_AUTO_EXPAND_MAX_ITEMS;
+    const isExpanded = isLegendOpen[layerName] ?? defaultExpanded;
+    const toggleId = `legend-toggle-${layerName}`;
+
     return (
-      <div className="legend-container">
-        <button onClick={() => toggleLegend(layerName)} className="legend-toggle">
-          {isLegendOpen[layerName] ? '-' : '+'} Legend
+      <div className="legend-panel">
+        <button
+          type="button"
+          id={toggleId}
+          onClick={() => toggleLegend(layerName)}
+          className="legend-toggle"
+          aria-expanded={isExpanded}
+          aria-controls={`legend-list-${layerName}`}
+        >
+          <span className="legend-toggle-chevron" aria-hidden="true">
+            {isExpanded ? '▾' : '▸'}
+          </span>
+          <span className="legend-toggle-label">
+            Legend
+            <span className="legend-toggle-count">{legendItems.length}</span>
+          </span>
         </button>
-        {isLegendOpen[layerName] && (
-          <ul className="legend">
+        {isExpanded && (
+          <ul className="legend" id={`legend-list-${layerName}`} aria-labelledby={toggleId}>
             {legendItems.map((item, index) => (
-              <li key={index} className="legend-item">
-                <span
-                  className="legend-color"
-                  style={{
-                    backgroundColor: item.color,
-                    opacity: item.opacity !== undefined ? item.opacity : 1,
-                  }}
-                />
-                {item.label}
+              <li key={`${layerName}-${index}`} className="legend-item">
+                {renderLegendSwatch(item, layerType, 'legend-color')}
+                <span className="legend-item-label">{item.label}</span>
               </li>
             ))}
           </ul>
@@ -1043,6 +1090,9 @@ const SidePanel = memo(({
   useEffect(() => {
     if (uniqueSelectedFeatures.length === 0) {
       lastSelectedFeatureRef.current = null;
+      if (isMobile) {
+        setMobileSheetState(MOBILE_SHEET.HIDDEN);
+      }
       return;
     }
 
@@ -1065,8 +1115,8 @@ const SidePanel = memo(({
 
     if (isMobile) {
       setActiveSidePanelTab('info');
-      setSheetState(MOBILE_SHEET.PEEK);
       collapsedByInteractionRef.current = false;
+      setMobileSheetState(MOBILE_SHEET.PEEK);
     }
   }, [
     isMobile,
@@ -1074,7 +1124,6 @@ const SidePanel = memo(({
     uniqueSelectedFeatures,
     togglePanel,
     setActiveSidePanelTab,
-    setSheetState,
   ]);
 
   // Reset scroll position when entering peek mode
@@ -1109,24 +1158,45 @@ const SidePanel = memo(({
   useEffect(() => {
     if (!isMobile) {
       if (typeof window !== 'undefined') {
+        delete window.__shrinkSidePanel;
         delete window.__collapseSidePanel;
+        delete window.__openMobileInfoPeek;
       }
       return;
     }
 
     if (typeof window !== 'undefined') {
+      window.__shrinkSidePanel = () => {
+        collapsedByInteractionRef.current = true;
+        setMobileSheetState((current) => {
+          if (current === MOBILE_SHEET.FULL) {
+            return MOBILE_SHEET.PEEK;
+          }
+          return MOBILE_SHEET.HIDDEN;
+        });
+      };
       window.__collapseSidePanel = () => {
         collapsedByInteractionRef.current = true;
         setSheetState(MOBILE_SHEET.HIDDEN, { suppressToggle: true });
+      };
+      window.__openMobileInfoPeek = () => {
+        collapsedByInteractionRef.current = false;
+        setActiveSidePanelTab('info');
+        if (!isOpen) {
+          togglePanel();
+        }
+        setMobileSheetState(MOBILE_SHEET.PEEK);
       };
     }
 
     return () => {
       if (typeof window !== 'undefined') {
+        delete window.__shrinkSidePanel;
         delete window.__collapseSidePanel;
+        delete window.__openMobileInfoPeek;
       }
     };
-  }, [isMobile, setSheetState]);
+  }, [isMobile, isOpen, setSheetState, setActiveSidePanelTab, togglePanel]);
 
   // Panel-wide swipe detection for state changes
   useEffect(() => {
@@ -1312,102 +1382,6 @@ const SidePanel = memo(({
     };
   }, [isMobile, mobileSheetState, setSheetState]);
 
-  // Fetch property details for mobile when feature is selected
-  useEffect(() => {
-    if (!isMobile || uniqueSelectedFeatures.length === 0) {
-      setPropertyDetailsData(null);
-      return;
-    }
-
-    const primaryFeature = uniqueSelectedFeatures[0];
-    const isOwnershipFeature = primaryFeature?.properties?.GFI && 
-      (primaryFeature.properties.owner || primaryFeature.properties.owner_name);
-    
-    if (!isOwnershipFeature) {
-      setPropertyDetailsData(null);
-      return;
-    }
-
-    setPropertyDetailsLoading(true);
-    setPropertyDetailsData(null);
-
-    const countyCode = getCountyCodeFromFeature(primaryFeature);
-    const parcelId = getCountyParcelIdFromFeature(primaryFeature);
-    
-    let taxField = primaryFeature.properties.tax_details_key || '';
-    if (countyCode === 'lincoln_county_wy' && taxField && !taxField.startsWith('00')) {
-      taxField = '00' + taxField;
-    }
-    
-    const requestBody = {
-      county: countyCode,
-      county_parcel_id: parcelId,
-      fields: {
-        tax_field: taxField,
-        property_details_field: primaryFeature.properties.property_details_key || '',
-        clerk_field: primaryFeature.properties.clerk_records_key || ''
-      }
-    };
-
-    fetch('https://34.10.19.103.nip.io/property/scrape-stream', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify(requestBody)
-    })
-    .then(response => {
-      if (!response.ok) {
-        throw new Error(`HTTP error! status: ${response.status}`);
-      }
-
-      const reader = response.body.getReader();
-      const decoder = new TextDecoder();
-      let buffer = '';
-
-      const processStream = ({ done, value }) => {
-        if (done) {
-          setPropertyDetailsLoading(false);
-          return;
-        }
-
-        buffer += decoder.decode(value, { stream: true });
-        const lines = buffer.split('\n');
-        buffer = lines.pop() || '';
-
-        for (const line of lines) {
-          if (line.startsWith('data: ')) {
-            const jsonStr = line.slice(6);
-            
-            try {
-              const jsonData = JSON.parse(jsonStr);
-              
-              if (jsonData.status === 'cached' || jsonData.status === 'fresh') {
-                setPropertyDetailsData(jsonData);
-                if (jsonData.status === 'fresh') {
-                  setPropertyDetailsLoading(false);
-                }
-              } else if (jsonData.status === 'complete') {
-                setPropertyDetailsLoading(false);
-                return;
-              }
-            } catch (err) {
-              console.error('❌ Error parsing SSE event:', err);
-            }
-          }
-        }
-
-        return reader.read().then(processStream);
-      };
-
-      return reader.read().then(processStream);
-    })
-    .catch(err => {
-      console.error('❌ Error fetching property details:', err);
-      setPropertyDetailsLoading(false);
-    });
-  }, [isMobile, uniqueSelectedFeatures]);
-
   const sidePanelClassNames = ['side-panel'];
   if (isPrinting) {
     sidePanelClassNames.push('map-maker');
@@ -1429,7 +1403,6 @@ const SidePanel = memo(({
     ? {
         height: sheetHeights[mobileSheetState],
         maxHeight: '85vh',
-        paddingBottom: 'calc(env(safe-area-inset-bottom) + 16px)',
       }
     : undefined;
 
@@ -1457,20 +1430,7 @@ const SidePanel = memo(({
               tabIndex={0}
             >
               <span className="mobile-sheet-grabber-bar" />
-            </div>
-            <div className="mobile-owner-name-preview">
-              {(() => {
-                if (uniqueSelectedFeatures.length > 0) {
-                  const primaryFeature = uniqueSelectedFeatures[0];
-                  const isOwnershipFeature = primaryFeature?.properties?.GFI && 
-                    (primaryFeature.properties.owner || primaryFeature.properties.owner_name);
-                  if (isOwnershipFeature) {
-                    const ownerName = primaryFeature.properties.owner || primaryFeature.properties.owner_name;
-                    return ownerName || 'Select Parcel';
-                  }
-                }
-                return 'Select Parcel';
-              })()}
+              <span className="mobile-sheet-grabber-label">Parcel details</span>
             </div>
           </div>
         )}
@@ -1605,7 +1565,6 @@ const SidePanel = memo(({
                       {renderLayerCheckbox('opportunity_zones')}
                       {renderLayerCheckbox('principal_aquifers')}
                       {renderLayerCheckbox('transmission_lines')}
-                      {renderLayerCheckbox('wildfire_hazard')}
                     </ul>
                   )}
                 </div>
@@ -1649,233 +1608,6 @@ const SidePanel = memo(({
                 {uniqueSelectedFeatures.length > 0 ? (
                   <>
                     {uniqueSelectedFeatures.map(renderFeatureDetails)}
-                    {/* Property Details - only show in full mode on mobile */}
-                    {isMobile && mobileSheetState === MOBILE_SHEET.FULL && (
-                      <div className="mobile-property-details">
-                        <div className="mobile-property-details-header">
-                          <h3>Property Details</h3>
-                        </div>
-                        
-                        {propertyDetailsLoading && (
-                          <div className="mobile-property-details-loading">
-                            <div className="loading-spinner"></div>
-                            <p>Loading additional property details...</p>
-                          </div>
-                        )}
-                        
-                        {propertyDetailsData?.data && (
-                          <>
-                            {/* Property Details Tab Content */}
-                            {propertyDetailsData.data.property_details && propertyDetailsData.data.property_details.status !== 'error' && (
-                              <div className="mobile-property-details-content">
-                                {/* Value Breakdown */}
-                                {(propertyDetailsData.data.property_details.data?.total_property_value || 
-                                  propertyDetailsData.data.property_details.data?.land_value || 
-                                  propertyDetailsData.data.property_details.data?.developments_value) && (
-                                  <div className="mobile-value-breakdown">
-                                    <h4>📊 Property Values</h4>
-                                    <div className="mobile-value-grid">
-                                      {propertyDetailsData.data.property_details.data?.total_property_value && (
-                                        <div className="mobile-value-item">
-                                          <strong>Total Property Value</strong>
-                                          <span>{formatCurrency(propertyDetailsData.data.property_details.data.total_property_value)}</span>
-                                        </div>
-                                      )}
-                                      {propertyDetailsData.data.property_details.data?.land_value && (
-                                        <div className="mobile-value-item">
-                                          <strong>Land Value</strong>
-                                          <span>{formatCurrency(propertyDetailsData.data.property_details.data.land_value)}</span>
-                                        </div>
-                                      )}
-                                      {propertyDetailsData.data.property_details.data?.developments_value && (
-                                        <div className="mobile-value-item">
-                                          <strong>Developments Value</strong>
-                                          <span>{formatCurrency(propertyDetailsData.data.property_details.data.developments_value)}</span>
-                                        </div>
-                                      )}
-                                    </div>
-                                  </div>
-                                )}
-
-                                {/* Acreage Breakdown */}
-                                {(propertyDetailsData.data.property_details.data?.total_acreage || 
-                                  propertyDetailsData.data.property_details.data?.acreage_breakdown) && (
-                                  <div className="mobile-acreage-breakdown">
-                                    <h4>📏 Acreage Information</h4>
-                                    <div className="mobile-acreage-grid">
-                                      {propertyDetailsData.data.property_details.data?.total_acreage && (
-                                        <div className="mobile-acreage-item">
-                                          <strong>Total Acreage</strong>
-                                          <span>{propertyDetailsData.data.property_details.data.total_acreage} acres</span>
-                                        </div>
-                                      )}
-                                      {propertyDetailsData.data.property_details.data?.acreage_breakdown && (
-                                        <>
-                                          {propertyDetailsData.data.property_details.data.acreage_breakdown.residential && 
-                                           parseFloat(propertyDetailsData.data.property_details.data.acreage_breakdown.residential) > 0 && (
-                                            <div className="mobile-acreage-item">
-                                              <strong>Residential</strong>
-                                              <span>{propertyDetailsData.data.property_details.data.acreage_breakdown.residential} acres</span>
-                                            </div>
-                                          )}
-                                          {propertyDetailsData.data.property_details.data.acreage_breakdown.agricultural && 
-                                           parseFloat(propertyDetailsData.data.property_details.data.acreage_breakdown.agricultural) > 0 && (
-                                            <div className="mobile-acreage-item">
-                                              <strong>Agricultural</strong>
-                                              <span>{propertyDetailsData.data.property_details.data.acreage_breakdown.agricultural} acres</span>
-                                            </div>
-                                          )}
-                                          {propertyDetailsData.data.property_details.data.acreage_breakdown.commercial && 
-                                           parseFloat(propertyDetailsData.data.property_details.data.acreage_breakdown.commercial) > 0 && (
-                                            <div className="mobile-acreage-item">
-                                              <strong>Commercial</strong>
-                                              <span>{propertyDetailsData.data.property_details.data.acreage_breakdown.commercial} acres</span>
-                                            </div>
-                                          )}
-                                          {propertyDetailsData.data.property_details.data.acreage_breakdown.industrial && 
-                                           parseFloat(propertyDetailsData.data.property_details.data.acreage_breakdown.industrial) > 0 && (
-                                            <div className="mobile-acreage-item">
-                                              <strong>Industrial</strong>
-                                              <span>{propertyDetailsData.data.property_details.data.acreage_breakdown.industrial} acres</span>
-                                            </div>
-                                          )}
-                                          {propertyDetailsData.data.property_details.data.acreage_breakdown.other && 
-                                           parseFloat(propertyDetailsData.data.property_details.data.acreage_breakdown.other) > 0 && (
-                                            <div className="mobile-acreage-item">
-                                              <strong>Other</strong>
-                                              <span>{propertyDetailsData.data.property_details.data.acreage_breakdown.other} acres</span>
-                                            </div>
-                                          )}
-                                        </>
-                                      )}
-                                    </div>
-                                  </div>
-                                )}
-
-                                {/* Legal Description */}
-                                {propertyDetailsData.data.property_details.data?.legal_description && (
-                                  <div className="mobile-property-info-section">
-                                    <h4>Property Information</h4>
-                                    <div className="mobile-property-info-item">
-                                      <strong>Legal Description:</strong>
-                                      <p>{propertyDetailsData.data.property_details.data.legal_description}</p>
-                                    </div>
-                                  </div>
-                                )}
-                            
-                                {/* Developments */}
-                                {propertyDetailsData.data.property_details.data?.developments && propertyDetailsData.data.property_details.data.developments.length > 0 && (
-                                  <div className="mobile-developments-section">
-                                    <h4>🏗️ Buildings & Developments ({propertyDetailsData.data.property_details.data.num_developments || propertyDetailsData.data.property_details.data.developments.length})</h4>
-                                    {propertyDetailsData.data.property_details.data.developments.map((dev, idx) => (
-                                      <div key={idx} className="mobile-development-card">
-                                        <div className="mobile-development-header">
-                                          <strong>Development {dev.id || idx + 1}</strong>
-                                        </div>
-                                        <div className="mobile-development-details">
-                                          {dev.description && <div><strong>Description:</strong> {dev.description}</div>}
-                                          {dev.stories && <div><strong>Stories:</strong> {dev.stories}</div>}
-                                          {dev.sq_ft && <div><strong>Square Feet:</strong> {dev.sq_ft.toLocaleString()}</div>}
-                                          {dev.exterior && <div><strong>Exterior:</strong> {dev.exterior}</div>}
-                                          {dev.year_built && <div><strong>Year Built:</strong> {dev.year_built}</div>}
-                                          {dev.bedrooms && <div><strong>Bedrooms:</strong> {dev.bedrooms}</div>}
-                                        </div>
-                                      </div>
-                                    ))}
-                                  </div>
-                                )}
-                              </div>
-                            )}
-                        
-                        {/* Tax Details Tab Content */}
-                        {propertyDetailsData?.data?.tax && propertyDetailsData.data.tax.status !== 'error' && propertyDetailsData.data.tax.data && (
-                          <div className="mobile-tax-section">
-                            <h4>💰 Tax Information</h4>
-                            <div className="mobile-tax-grid">
-                              {propertyDetailsData.data.tax.data.tax_district && (
-                                <div className="mobile-tax-item">
-                                  <strong>Tax District:</strong>
-                                  <span>{propertyDetailsData.data.tax.data.tax_district}</span>
-                                </div>
-                              )}
-                              {propertyDetailsData.data.tax.data.mill_levy && (
-                                <div className="mobile-tax-item">
-                                  <strong>Mill Levy:</strong>
-                                  <span>{propertyDetailsData.data.tax.data.mill_levy}</span>
-                                </div>
-                              )}
-                              {propertyDetailsData.data.tax.data.status && (
-                                <div className="mobile-tax-item">
-                                  <strong>Status:</strong>
-                                  <span className={`mobile-tax-status ${propertyDetailsData.data.tax.data.status.toLowerCase() === 'paid' ? 'paid' : 'unpaid'}`}>
-                                    {propertyDetailsData.data.tax.data.status.toUpperCase()}
-                                  </span>
-                                </div>
-                              )}
-                              {propertyDetailsData.data.tax.data.amount_due && (
-                                <div className="mobile-tax-item">
-                                  <strong>Amount Due:</strong>
-                                  <span>{formatCurrency(propertyDetailsData.data.tax.data.amount_due)}</span>
-                                </div>
-                              )}
-                              {propertyDetailsData.data.tax.data.total_tax_levied && (
-                                <div className="mobile-tax-item">
-                                  <strong>Total Tax Levied:</strong>
-                                  <span>{formatCurrency(propertyDetailsData.data.tax.data.total_tax_levied)}</span>
-                                </div>
-                              )}
-                              {propertyDetailsData.data.tax.data.tax_received && (
-                                <div className="mobile-tax-item">
-                                  <strong>Tax Received:</strong>
-                                  <span>{formatCurrency(propertyDetailsData.data.tax.data.tax_received)}</span>
-                                </div>
-                              )}
-                            </div>
-                            
-                            {/* Tax Breakdown */}
-                            {propertyDetailsData.data.tax.data.first_half && propertyDetailsData.data.tax.data.second_half && (
-                              <div className="mobile-tax-breakdown">
-                                <h5>Current Year Breakdown</h5>
-                                <div className="mobile-tax-breakdown-grid">
-                                  <div className="mobile-tax-half">
-                                    <strong>First Half</strong>
-                                    {propertyDetailsData.data.tax.data.first_half_due_date && (
-                                      <div><strong>Due Date:</strong> {formatDate(propertyDetailsData.data.tax.data.first_half_due_date)}</div>
-                                    )}
-                                    {propertyDetailsData.data.tax.data.first_half?.levied && (
-                                      <div><strong>Levied:</strong> {formatCurrency(propertyDetailsData.data.tax.data.first_half.levied)}</div>
-                                    )}
-                                    {propertyDetailsData.data.tax.data.first_half?.paid && (
-                                      <div><strong>Paid:</strong> {formatCurrency(propertyDetailsData.data.tax.data.first_half.paid)}</div>
-                                    )}
-                                    {propertyDetailsData.data.tax.data.first_half?.balance && (
-                                      <div><strong>Balance:</strong> {formatCurrency(propertyDetailsData.data.tax.data.first_half.balance)}</div>
-                                    )}
-                                  </div>
-                                  <div className="mobile-tax-half">
-                                    <strong>Second Half</strong>
-                                    {propertyDetailsData.data.tax.data.second_half_due_date && (
-                                      <div><strong>Due Date:</strong> {formatDate(propertyDetailsData.data.tax.data.second_half_due_date)}</div>
-                                    )}
-                                    {propertyDetailsData.data.tax.data.second_half?.levied && (
-                                      <div><strong>Levied:</strong> {formatCurrency(propertyDetailsData.data.tax.data.second_half.levied)}</div>
-                                    )}
-                                    {propertyDetailsData.data.tax.data.second_half?.paid && (
-                                      <div><strong>Paid:</strong> {formatCurrency(propertyDetailsData.data.tax.data.second_half.paid)}</div>
-                                    )}
-                                    {propertyDetailsData.data.tax.data.second_half?.balance && (
-                                      <div><strong>Balance:</strong> {formatCurrency(propertyDetailsData.data.tax.data.second_half.balance)}</div>
-                                    )}
-                                  </div>
-                                </div>
-                              </div>
-                            )}
-                          </div>
-                        )}
-                          </>
-                        )}
-                      </div>
-                    )}
                   </>
                 ) : (
                   <p>No features selected. Click on features to see their details.</p>

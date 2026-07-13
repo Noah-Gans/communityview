@@ -75,9 +75,9 @@
 @media (max-width: 768px) {
   .pricing-page,
   .faq-page,
-  .updates-page,
-  .features-page {
-    padding-bottom: 70px !important;
+  .features-page,
+  .marketing-page {
+    padding-bottom: calc(70px + env(safe-area-inset-bottom, 0px)) !important;
   }
 }
 

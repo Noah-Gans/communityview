@@ -1,47 +1,49 @@
 import * as turf from '@turf/turf';
 import { getPointIconDefaultStyle } from '../pages/print/pointIconDefaultStyles';
 import { getPhotoSrcListFromElement } from './mapPhotoStorage';
+import { ensureTourEditRadiusLayersOnTop } from './tourBuilderMapLayers';
+import { isTourImagery3DActive } from '../pages/map/mapBasemapUtils';
 
 /**
  * Property tour: each slide is a distinct map state (camera + optional layer patch).
  * Layer patches merge onto a frozen baseline captured when the tour loads.
  */
 
+/** Intro + photo slides: keep every GIS layer from the saved shared map; parcels stay off. */
+export const TOUR_PRESERVE_SAVED_GIS_LAYER_PATCH = { ownership: false };
+
 export const PROPERTY_TOUR_SLIDES = [
   {
     id: 'welcome',
     title: 'Welcome',
     subtitle: 'Saved map view — start here before moving through the story.',
-    /** Keep saved GIS layers but parcels stay off for the whole tour. */
-    layerPatch: { ownership: false },
+    layerPatch: TOUR_PRESERVE_SAVED_GIS_LAYER_PATCH,
   },
   {
     id: 'context',
     title: 'Around the property',
-    subtitle:
-      'Esri Imagery in 3D — a slow orbit around the property boundary (other map labels hidden).',
-    /** Applied in `applyPropertyTourSlide` via {@link buildTourOrbitLayerPatch} (all GIS layers off). */
-    layerPatch: null,
+    subtitle: 'Esri Imagery in 3D — a slow orbit around the property boundary.',
+    layerPatch: TOUR_PRESERVE_SAVED_GIS_LAYER_PATCH,
   },
   {
     id: 'bird',
     title: 'Property from above',
     subtitle: 'Top-down framing of the listing area.',
-    layerPatch: { ownership: false },
+    layerPatch: TOUR_PRESERVE_SAVED_GIS_LAYER_PATCH,
   },
   {
     id: 'perspective',
     title: 'Places & photos',
     subtitle:
       "Bird's-eye: where photos exist we pan from feature to feature and open each picture — main home first, then outbuildings and other spots. You can pan and zoom the map at any time.",
-    layerPatch: { ownership: false },
+    layerPatch: TOUR_PRESERVE_SAVED_GIS_LAYER_PATCH,
   },
   {
     id: 'vicinity',
     title: "What's nearby",
     subtitle:
       'Each category shows the closest named places (typically within ~8 mi). Markers use the print icon set on a white disc. Click a row in the panel (or Zoom to) to focus the map on a place.',
-    /** Applied in `applyPropertyTourSlide` via {@link buildTourOrbitLayerPatch} (boundary + nearby markers only). */
+    /** Amenity slides turn GIS layers off via {@link buildTourOrbitLayerPatch} in `applyPropertyTourSlide`. */
     layerPatch: null,
   },
 ];
@@ -50,7 +52,258 @@ export const PROPERTY_TOUR_SLIDES = [
 export const TOUR_BOUNDARY_ONLY_SLIDE_IDS = new Set(['context', 'vicinity']);
 
 /** Map fit padding (px) — large left value keeps markers clear of the fixed-left amenity panel. */
-export const TOUR_VICINITY_LEFT_PANEL_MAP_PAD = 520;
+export const TOUR_VICINITY_LEFT_PANEL_MAP_PAD = 420;
+
+/** Minimum bottom inset so amenity markers stay above the tour playback strip (desktop). */
+export const TOUR_VICINITY_BOTTOM_PANEL_MAP_PAD = 168;
+
+export const TOUR_MOBILE_MAX_WIDTH = 768;
+
+export function isTourMobileViewport() {
+  return typeof window !== 'undefined' && window.innerWidth <= TOUR_MOBILE_MAX_WIDTH;
+}
+
+/** Measured view-mode footer height + bottom gutter for map.setPadding / fitBounds. */
+export function measureTourViewFooterHeightPx() {
+  const gutter = 12;
+  if (typeof document === 'undefined') return 76 + gutter;
+  const root = document.documentElement;
+  const cssH = parseFloat(getComputedStyle(root).getPropertyValue('--shared-tour-view-footer-h'));
+  if (Number.isFinite(cssH) && cssH > 0) return cssH + gutter;
+  const footer = document.querySelector('.shared-tour-view-footer');
+  if (footer) {
+    try {
+      return Math.ceil(footer.getBoundingClientRect().height) + gutter;
+    } catch (_) {
+      /* fall through */
+    }
+  }
+  const shell = document.querySelector('.shared-tour-shell');
+  const raw = shell
+    ? parseFloat(getComputedStyle(shell).getPropertyValue('--shared-tour-view-footer-h'))
+    : NaN;
+  return (Number.isFinite(raw) ? raw : 76) + gutter;
+}
+
+/**
+ * fitBounds padding for vicinity slides.
+ * Mobile: map.setPadding already reserves the agent card + footer — only inset for the bottom panel.
+ * Desktop: large left inset keeps markers clear of the fixed-left amenity card.
+ */
+/** Skip redundant setPadding calls — Mapbox still shifts the camera when padding is re-applied. */
+export function setMapPaddingIfChanged(map, padding) {
+  if (!map || !padding) return;
+  try {
+    const cur = map.getPadding?.() || {};
+    if (
+      Number(cur.top) === Number(padding.top) &&
+      Number(cur.bottom) === Number(padding.bottom) &&
+      Number(cur.left) === Number(padding.left) &&
+      Number(cur.right) === Number(padding.right)
+    ) {
+      return;
+    }
+    map.setPadding(padding);
+  } catch {
+    /* ignore */
+  }
+}
+
+/**
+ * Measured mobile tour chrome (agent top bar, footer deck, amenity peek panel).
+ * Used for map.setPadding and fitBounds so markers stay in the visible map area.
+ * @param {{ expandedLayout?: boolean, vicinityPeek?: boolean }} [options]
+ */
+export function measureTourMobileMapChromeInsets(options = {}) {
+  const gutter = 12;
+  const footerGutter = 10;
+  const root = typeof document !== 'undefined' ? document.documentElement : null;
+  const footerH =
+    root
+      ? parseFloat(getComputedStyle(root).getPropertyValue('--shared-tour-footer-h')) || 80
+      : 80;
+
+  let top = gutter;
+  if (typeof document !== 'undefined') {
+    const topEl = document.querySelector('.shared-tour-mobile-agent-top');
+    if (topEl) {
+      try {
+        top = Math.max(gutter, Math.ceil(topEl.getBoundingClientRect().height) + gutter);
+      } catch (_) {
+        top = options.expandedLayout === true ? 220 : 120;
+      }
+    } else {
+      top = options.expandedLayout === true ? 220 : 120;
+    }
+  }
+
+  let bottom = footerH + footerGutter;
+  if (options.vicinityPeek === true) {
+    let peekH = 0;
+    const peekEl = document.querySelector('.shared-tour-mobile-nearby-peek');
+    if (peekEl) {
+      try {
+        peekH = Math.ceil(peekEl.getBoundingClientRect().height);
+      } catch (_) {
+        peekH = 0;
+      }
+    }
+    if (!peekH) {
+      peekH = options.vicinityPeekMinimized === true ? 52 : 300;
+    }
+    bottom = footerH + peekH + footerGutter;
+  }
+
+  return { top, bottom, left: 36, right: 36 };
+}
+
+/** Inset map canvas on mobile tour for the agent strip + footer (call before camera moves). */
+export function applyTourMobileMapPadding(map, options = {}) {
+  if (!map) return;
+  if (!isTourMobileViewport()) {
+    const editMode =
+      typeof document !== 'undefined' &&
+      document.documentElement.classList.contains('shared-tour-edit-mode');
+    if (editMode) {
+      const root = document.documentElement;
+      const footerH =
+        parseFloat(getComputedStyle(root).getPropertyValue('--shared-tour-edit-footer-h')) || 164;
+      setMapPaddingIfChanged(map, { top: 0, bottom: footerH, left: 0, right: 0 });
+      return;
+    }
+    setMapPaddingIfChanged(map, {
+      top: 0,
+      bottom: measureTourViewFooterHeightPx(),
+      left: 0,
+      right: 0,
+    });
+    return;
+  }
+  const insets = measureTourMobileMapChromeInsets({
+    expandedLayout: options.expandedLayout === true,
+    vicinityPeek: options.vicinityPeek === true,
+    vicinityPeekMinimized: options.vicinityPeekMinimized === true,
+  });
+  setMapPaddingIfChanged(map, insets);
+}
+
+/** fitBounds padding for the welcome slide (stacks with {@link applyTourMobileMapPadding}). */
+export function resolveTourWelcomeFitPadding() {
+  if (isTourMobileViewport()) {
+    return { top: 16, bottom: 20, left: 40, right: 40 };
+  }
+  return { top: 80, bottom: measureTourViewFooterHeightPx() + 24, left: 80, right: 80 };
+}
+
+/**
+ * Left inset for map fitBounds so markers stay clear of the desktop amenity side panel.
+ */
+export function measureTourNearbyPanelLeftPaddingPx() {
+  if (typeof document === 'undefined') return TOUR_VICINITY_LEFT_PANEL_MAP_PAD;
+  const panel = document.querySelector('.shared-tour-desktop-only .cv-tour-nearby-panel');
+  if (!panel) return TOUR_VICINITY_LEFT_PANEL_MAP_PAD;
+  try {
+    const r = panel.getBoundingClientRect();
+    const gutter = 24;
+    return Math.max(TOUR_VICINITY_LEFT_PANEL_MAP_PAD, Math.ceil(r.right + gutter));
+  } catch (_) {
+    return TOUR_VICINITY_LEFT_PANEL_MAP_PAD;
+  }
+}
+
+/**
+ * Bottom inset for map fitBounds during the amenity phase.
+ * Mobile: measured peek panel height (map.setPadding already reserves footer).
+ * Desktop: playback strip height with a minimum baseline.
+ */
+export function measureTourNearbyPanelBottomPaddingPx(options = {}) {
+  const gutter = 16;
+  if (typeof document === 'undefined') {
+    return isTourMobileViewport() ? 300 + gutter : TOUR_VICINITY_BOTTOM_PANEL_MAP_PAD;
+  }
+
+  if (isTourMobileViewport()) {
+    return measureTourMobileMapChromeInsets({
+      vicinityPeek: options.vicinityPeek !== false,
+      expandedLayout: options.expandedLayout === true,
+      vicinityPeekMinimized: options.vicinityPeekMinimized === true,
+    }).bottom;
+  }
+
+  let bottom = TOUR_VICINITY_BOTTOM_PANEL_MAP_PAD;
+  const footer = document.querySelector('.shared-tour-view-footer');
+  if (footer) {
+    try {
+      bottom = Math.max(bottom, Math.ceil(footer.getBoundingClientRect().height) + 24);
+    } catch (_) {
+      /* default */
+    }
+  } else {
+    const playback = document.querySelector('.shared-tour-playback');
+    if (playback) {
+      try {
+        bottom = Math.max(bottom, Math.ceil(playback.getBoundingClientRect().height) + 24);
+      } catch (_) {
+        /* default */
+      }
+    }
+  }
+  return bottom;
+}
+
+/** Measured fitBounds padding for vicinity slides (panel-aware). */
+export function resolveTourVicinityCameraPaddingOptions(options = {}) {
+  const vicinityPeek = options.vicinityPeek !== false;
+  if (isTourMobileViewport()) {
+    return {
+      ...measureTourMobileMapChromeInsets({
+        vicinityPeek,
+        expandedLayout: options.expandedLayout === true,
+        vicinityPeekMinimized: options.vicinityPeekMinimized === true,
+      }),
+      vicinityPeek,
+      expandedLayout: options.expandedLayout === true,
+      vicinityPeekMinimized: options.vicinityPeekMinimized === true,
+    };
+  }
+  return {
+    panelLeftPad: measureTourNearbyPanelLeftPaddingPx(),
+    panelBottomPad: measureTourNearbyPanelBottomPaddingPx({ vicinityPeek }),
+    vicinityPeek,
+  };
+}
+
+export function resolveTourVicinityFitPadding(options = {}) {
+  const mode = options.mode === 'wide' ? 'wide' : 'points';
+
+  if (isTourMobileViewport()) {
+    return measureTourMobileMapChromeInsets({
+      vicinityPeek: options.vicinityPeek !== false,
+      expandedLayout: options.expandedLayout === true,
+      vicinityPeekMinimized: options.vicinityPeekMinimized === true,
+    });
+  }
+
+  let bottom = Number(options.panelBottomPad);
+  if (!Number.isFinite(bottom) || bottom <= 0) {
+    bottom = measureTourNearbyPanelBottomPaddingPx({
+      vicinityPeek: options.vicinityPeek !== false,
+    });
+  }
+
+  let left = Number(options.panelLeftPad);
+  if (!Number.isFinite(left) || left <= 0) {
+    left = measureTourNearbyPanelLeftPaddingPx();
+  }
+
+  const minBottom = mode === 'wide' ? 120 : TOUR_VICINITY_BOTTOM_PANEL_MAP_PAD;
+  bottom = Math.max(bottom, minBottom);
+
+  if (mode === 'wide') {
+    return { top: 52, bottom, left, right: 52 };
+  }
+  return { top: 88, bottom, left, right: 64 };
+}
 
 /**
  * Google Places search radius for tour nearby slides (meters).
@@ -61,6 +314,9 @@ export const TOUR_NEARBY_SEARCH_RADIUS_METERS = 25000;
 /** `document.documentElement` attribute while the orbit slide is active (Map.js print overlay). */
 export const TOUR_ORBIT_PRINT_FILTER_ATTR = 'data-property-tour-print-filter';
 export const TOUR_ORBIT_PRINT_FILTER_VALUE = 'boundary-only';
+/** Synced on `<html>` while the amenities block is active (see SharedMapViewPage). */
+export const TOUR_VICINITY_ACTIVE_SLIDE_ATTR = 'data-property-tour-active-slide';
+export const TOUR_VICINITY_ACTIVE_SLIDE_VALUE = 'vicinity';
 
 /** Saved-map polygon with `mapStyleVariant: 'boundary'` or label “Property Boundary”. */
 export function isPropertyBoundaryPrintElement(el) {
@@ -71,7 +327,7 @@ export function isPropertyBoundaryPrintElement(el) {
 }
 
 /**
- * Orbit / nearby slides: turn off parcel/GIS layers so only imagery + the drawn boundary show.
+ * Amenity slides: turn off parcel/GIS layers so nearby markers read clearly on imagery.
  * @param {Record<string, boolean>} layerBaseline
  */
 export function buildTourOrbitLayerPatch(layerBaseline) {
@@ -153,15 +409,15 @@ export function getTourNearbySearchCenter(printElements, tourBounds, savedViewpo
 }
 
 export const TOUR_NEARBY_AMENITY_ORDER = [
-  { key: 'parks_rec', label: 'Parks & recreation', icon: '🌲' },
-  { key: 'grocery', label: 'Grocery stores', icon: '🛒' },
-  { key: 'schools', label: 'Schools', icon: '🎓' },
-  { key: 'fitness', label: 'Fitness & gyms', icon: '💪' },
-  { key: 'trailheads', label: 'Trailheads', icon: '🥾' },
-  { key: 'essentials', label: 'Essentials', icon: '🧰' },
-  { key: 'coffee', label: 'Coffee', icon: '☕' },
-  { key: 'transit', label: 'Transit', icon: '🚉' },
-  { key: 'airport', label: 'Airports', icon: '✈️' },
+  { key: 'parks_rec', label: 'Parks & recreation' },
+  { key: 'grocery', label: 'Grocery stores' },
+  { key: 'schools', label: 'Schools' },
+  { key: 'fitness', label: 'Fitness & gyms' },
+  { key: 'trailheads', label: 'Trailheads' },
+  { key: 'essentials', label: 'Essentials' },
+  { key: 'coffee', label: 'Coffee' },
+  { key: 'transit', label: 'Transit' },
+  { key: 'airport', label: 'Airports' },
 ];
 
 /** Pre-composited PNG markers (whole disc + stroke + glyph) under `/public/tour_nearby_badges/`. */
@@ -614,6 +870,33 @@ const TOUR_VICINITY_NEARBY_LABEL_LAYER_ID = 'tour-vicinity-nearby-label';
 /** Panel hover key — merged into GeoJSON on `setData` (feature-state was unreliable here). */
 let tourVicinityLastHoverPanelKey = null;
 
+/** Pending `moveend` handler for context-slide orbit kickoff (cleared on slide change). */
+let tourOrbitPendingMoveEnd = null;
+
+function clearTourOrbitSchedule(map, orbitKickRef, orbitRafRef) {
+  if (orbitKickRef?.current != null) {
+    clearTimeout(orbitKickRef.current);
+    orbitKickRef.current = null;
+  }
+  if (tourOrbitPendingMoveEnd && map) {
+    try {
+      map.off('moveend', tourOrbitPendingMoveEnd);
+    } catch (_) {
+      /* ignore */
+    }
+    tourOrbitPendingMoveEnd = null;
+  }
+  if (orbitRafRef?.current != null) {
+    cancelAnimationFrame(orbitRafRef.current);
+    orbitRafRef.current = null;
+  }
+}
+
+/** Clears pending orbit timeout / moveend listener (call on slide change). */
+export function clearPropertyTourOrbitSchedule(map, orbitKickRef, orbitRafRef) {
+  clearTourOrbitSchedule(map, orbitKickRef, orbitRafRef);
+}
+
 function removeTourVicinityListingOverlay(map) {
   if (!map) return;
   try {
@@ -734,21 +1017,143 @@ function expandBoundsNeighborhood(bounds, factor = 3.25) {
   ];
 }
 
-/** Parcel/vector layers may sync after `setLayerStatus`; keep tour grocery markers above fills. */
+const TOUR_VICINITY_NEARBY_LAYER_IDS = [
+  TOUR_VICINITY_NEARBY_POINT_LAYER_ID,
+  TOUR_VICINITY_NEARBY_ICON_LAYER_ID,
+  TOUR_VICINITY_NEARBY_LABEL_LAYER_ID,
+];
+
+/** Parcel/vector/fill restacks may run after camera idle — keep markers at the absolute top. */
 function moveTourVicinityNearbyLayersToTop(map) {
   if (!map) return;
-  const ids = [
-    TOUR_VICINITY_NEARBY_POINT_LAYER_ID,
-    TOUR_VICINITY_NEARBY_ICON_LAYER_ID,
-    TOUR_VICINITY_NEARBY_LABEL_LAYER_ID,
-  ];
-  ids.forEach((id) => {
+  const ids = TOUR_VICINITY_NEARBY_LAYER_IDS;
+  for (let pass = 0; pass < 5; pass += 1) {
+    ids.forEach((id) => {
+      try {
+        if (map.getLayer(id)) map.moveLayer(id);
+      } catch (_) {
+        /* ignore */
+      }
+    });
+  }
+  try {
+    const styleLayers = map.getStyle()?.layers || [];
+    const tourSet = new Set(ids);
+    let lastTourIndex = -1;
+    styleLayers.forEach((layer, index) => {
+      if (tourSet.has(layer.id)) lastTourIndex = index;
+    });
+    if (lastTourIndex >= 0 && lastTourIndex < styleLayers.length - 1) {
+      ids.forEach((id) => {
+        try {
+          if (map.getLayer(id)) map.moveLayer(id);
+        } catch (_) {
+          /* ignore */
+        }
+      });
+    }
+  } catch (_) {
+    /* ignore */
+  }
+  ensureTourEditRadiusLayersOnTop(map);
+}
+
+/** Call after basemap restack / label promotion so amenity badges stay visible. */
+export function ensureTourVicinityNearbyLayersOnTop(map) {
+  moveTourVicinityNearbyLayersToTop(map);
+}
+
+const TOUR_VICINITY_MAP_LAYER_PREFIX = 'tour-vicinity-';
+
+/** True for tour-owned nearby marker layers (handled separately in {@link bringLabelsToTop}). */
+export function isTourVicinityMapLayerId(layerId) {
+  return String(layerId || '').startsWith(TOUR_VICINITY_MAP_LAYER_PREFIX);
+}
+
+/** Synchronous check — avoids React ref lag during label restack after camera animations. */
+export function isPropertyTourVicinitySlideActive() {
+  if (typeof document === 'undefined') return false;
+  return (
+    document.documentElement.getAttribute(TOUR_VICINITY_ACTIVE_SLIDE_ATTR) ===
+    TOUR_VICINITY_ACTIVE_SLIDE_VALUE
+  );
+}
+
+let tourVicinityLayerMaintainerStop = null;
+
+/** Keeps amenity badge layers above delayed GIS/basemap restacks for the whole vicinity slide. */
+export function installTourVicinityLayerMaintainer(map) {
+  if (tourVicinityLayerMaintainerStop) {
     try {
-      if (map.getLayer(id)) map.moveLayer(id);
+      tourVicinityLayerMaintainerStop();
     } catch (_) {
       /* ignore */
     }
-  });
+    tourVicinityLayerMaintainerStop = null;
+  }
+  if (!map) return;
+
+  const bump = () => {
+    if (!isPropertyTourVicinitySlideActive()) return;
+    if (!map.getLayer?.(TOUR_VICINITY_NEARBY_ICON_LAYER_ID)) return;
+    ensureTourVicinityNearbyLayersOnTop(map);
+  };
+
+  bump();
+  map.on('moveend', bump);
+  map.on('idle', bump);
+  map.on('sourcedata', bump);
+  map.on('styledata', bump);
+  map.on('cv:regrid-restack', bump);
+
+  const intervalId = window.setInterval(bump, 300);
+
+  tourVicinityLayerMaintainerStop = () => {
+    window.clearInterval(intervalId);
+    try {
+      map.off('moveend', bump);
+      map.off('idle', bump);
+      map.off('sourcedata', bump);
+      map.off('styledata', bump);
+      map.off('cv:regrid-restack', bump);
+    } catch (_) {
+      /* ignore */
+    }
+  };
+}
+
+export function uninstallTourVicinityLayerMaintainer() {
+  if (tourVicinityLayerMaintainerStop) {
+    try {
+      tourVicinityLayerMaintainerStop();
+    } catch (_) {
+      /* ignore */
+    }
+    tourVicinityLayerMaintainerStop = null;
+  }
+}
+
+/** @deprecated Use {@link installTourVicinityLayerMaintainer} — kept for call sites that schedule after camera moves. */
+export function activateTourVicinityLayerStackGuard(map) {
+  installTourVicinityLayerMaintainer(map);
+}
+
+export function deactivateTourVicinityLayerStackGuard() {
+  uninstallTourVicinityLayerMaintainer();
+}
+
+/**
+ * Re-promote amenity markers after camera animations — wins races with delayed label restack.
+ * @param {import('mapbox-gl').Map|null|undefined} map
+ * @param {number} [animationMs]
+ */
+export function scheduleTourVicinityLayersOnTop(map, animationMs = 1400) {
+  if (!map) return;
+  activateTourVicinityLayerStackGuard(map, animationMs);
+}
+
+function attachTourVicinityLayerKeepAlive(map, animationMs = 1400) {
+  scheduleTourVicinityLayersOnTop(map, animationMs);
 }
 
 /** Stable key for matching a list row to a GeoJSON feature (panel hover ring). */
@@ -767,9 +1172,23 @@ export function getNearbyPlaceHoverKey(feature) {
   return nm || 'place';
 }
 
+/** Places the user hid from the tour — excluded from map markers and side-panel lists. */
+function tourMapVisibleNearbyFeatures(features) {
+  if (!Array.isArray(features)) return [];
+  return features.filter((f) => f?.properties?.tourHidden !== true);
+}
+
+/** @param {{ features?: unknown[] }|null|undefined} nearbyGeoJson */
+function tourMapVisibleNearbyCollection(nearbyGeoJson) {
+  return {
+    type: 'FeatureCollection',
+    features: tourMapVisibleNearbyFeatures(nearbyGeoJson?.features),
+  };
+}
+
 /** Adds draw order + hover scale (`iconScale` / `circleBoost` swell disc + glyph together). */
 export function augmentTourVicinityNearbyGeoJson(nearbyGeoJson) {
-  const feats = Array.isArray(nearbyGeoJson?.features) ? nearbyGeoJson.features : [];
+  const feats = tourMapVisibleNearbyFeatures(nearbyGeoJson?.features);
   const features = feats.map((f, i) => ({
     ...f,
     properties: {
@@ -819,11 +1238,12 @@ export function setTourVicinityNearbyHoverHighlight(map, hoverPanelKey, nearbyFe
 
   const augmented = augmentTourVicinityNearbyGeoJson({
     type: 'FeatureCollection',
-    features: Array.isArray(nearbyFeatures) ? nearbyFeatures : [],
+    features: tourMapVisibleNearbyFeatures(nearbyFeatures),
   });
   try {
     src.setData(mergeTourVicinityDataWithHover(augmented, tourVicinityLastHoverPanelKey));
     moveTourVicinityNearbyLayersToTop(map);
+    ensureTourVicinityNearbyLayersOnTop(map);
   } catch (_) {
     /* ignore */
   }
@@ -865,6 +1285,7 @@ async function showTourVicinityNearbyOverlay(map, nearbyGeoJson, cancel) {
       filter: tourVicinityNearbyCircleLayerFilter(),
       paint: {
         'circle-radius': circleRadiusZoom,
+        'circle-pitch-alignment': 'viewport',
         'circle-sort-key': ['to-number', ['get', 'tourStackOrder']],
         'circle-color': '#ffffff',
         'circle-opacity': 1,
@@ -888,6 +1309,8 @@ async function showTourVicinityNearbyOverlay(map, nearbyGeoJson, cancel) {
         'icon-ignore-placement': true,
         'icon-padding': 0,
         'icon-pitch-alignment': 'viewport',
+        'icon-rotation-alignment': 'viewport',
+        'symbol-z-order': 'viewport-y',
       },
       paint: {
         'icon-opacity': 1,
@@ -921,6 +1344,7 @@ async function showTourVicinityNearbyOverlay(map, nearbyGeoJson, cancel) {
     });
     const bumpZ = () => moveTourVicinityNearbyLayersToTop(map);
     bumpZ();
+    attachTourVicinityLayerKeepAlive(map);
     map.once('idle', bumpZ);
     window.setTimeout(bumpZ, 400);
   } catch (_) {
@@ -935,8 +1359,8 @@ async function showTourVicinityNearbyOverlay(map, nearbyGeoJson, cancel) {
  */
 export async function applyTourVicinityNearbyGeoJson(map, nearbyGeoJson, cancel) {
   if (!map) return;
-  const features = Array.isArray(nearbyGeoJson?.features) ? nearbyGeoJson.features : [];
-  const data = { type: 'FeatureCollection', features };
+  const data = tourMapVisibleNearbyCollection(nearbyGeoJson);
+  const features = data.features;
   const augmented = augmentTourVicinityNearbyGeoJson(data);
   try {
     const src = map.getSource(TOUR_VICINITY_NEARBY_SOURCE_ID);
@@ -952,6 +1376,7 @@ export async function applyTourVicinityNearbyGeoJson(map, nearbyGeoJson, cancel)
       if (!tourVicinitySlideApplyStillCurrent(cancel)) return;
       src.setData(mergeTourVicinityDataWithHover(augmented, tourVicinityLastHoverPanelKey));
       moveTourVicinityNearbyLayersToTop(map);
+      attachTourVicinityLayerKeepAlive(map);
       window.setTimeout(() => moveTourVicinityNearbyLayersToTop(map), 120);
       return;
     }
@@ -971,11 +1396,10 @@ export async function applyTourVicinityNearbyGeoJson(map, nearbyGeoJson, cancel)
  * @param {{ features?: unknown[] }|null|undefined} nearbyGeoJson
  * @param {[[number,number],[number,number]]|null} bounds listing bounds
  * @param {{ center?: { lng: number, lat: number }, zoom?: number }|null|undefined} savedViewport
- * @param {{ animationDuration?: number, panelLeftPad?: number }} [options]
+ * @param {{ animationDuration?: number, panelLeftPad?: number, panelBottomPad?: number, vicinityPeek?: boolean }} [options]
  */
 export function fitTourVicinityCamera(map, nearbyGeoJson, bounds, savedViewport, options = {}) {
   if (!map) return;
-  const panelLeftPad = Number(options.panelLeftPad) || TOUR_VICINITY_LEFT_PANEL_MAP_PAD;
   const duration =
     Number.isFinite(Number(options.animationDuration)) && Number(options.animationDuration) >= 0
       ? Number(options.animationDuration)
@@ -994,9 +1418,9 @@ export function fitTourVicinityCamera(map, nearbyGeoJson, bounds, savedViewport,
     }
   };
 
-  const pts = Array.isArray(nearbyGeoJson?.features)
-    ? nearbyGeoJson.features.filter((f) => f?.geometry?.type === 'Point')
-    : [];
+  const pts = tourMapVisibleNearbyFeatures(nearbyGeoJson?.features).filter(
+    (f) => f?.geometry?.type === 'Point'
+  );
   if (pts.length >= 1) {
     let minLng = Infinity;
     let maxLng = -Infinity;
@@ -1033,6 +1457,7 @@ export function fitTourVicinityCamera(map, nearbyGeoJson, bounds, savedViewport,
       maxLat += bufLat;
     }
     if ([minLng, maxLng, minLat, maxLat].every(Number.isFinite)) {
+      const vicinityPadding = resolveTourVicinityFitPadding(options);
       try {
         map.fitBounds(
           [
@@ -1040,7 +1465,7 @@ export function fitTourVicinityCamera(map, nearbyGeoJson, bounds, savedViewport,
             [maxLng, maxLat],
           ],
           {
-            padding: { top: 88, bottom: 168, left: panelLeftPad, right: 64 },
+            padding: vicinityPadding,
             duration,
             maxZoom: 16.4,
             pitch: 0,
@@ -1048,6 +1473,7 @@ export function fitTourVicinityCamera(map, nearbyGeoJson, bounds, savedViewport,
             essential: true,
           }
         );
+        attachTourVicinityLayerKeepAlive(map, duration);
         return;
       } catch (_) {
         /* ignore */
@@ -1058,7 +1484,7 @@ export function fitTourVicinityCamera(map, nearbyGeoJson, bounds, savedViewport,
   if (bounds) {
     const wide = getNeighborhoodContextBounds(bounds);
     if (wide) {
-      const vicinityPadding = { top: 52, bottom: 120, left: panelLeftPad, right: 52 };
+      const vicinityPadding = resolveTourVicinityFitPadding({ ...options, mode: 'wide' });
       const vicinityZoomLoosen = 0.35;
       const viewport = {
         width: Number(map?.getContainer?.()?.clientWidth || 0),
@@ -1080,6 +1506,7 @@ export function fitTourVicinityCamera(map, nearbyGeoJson, bounds, savedViewport,
           duration,
           essential: true,
         });
+        attachTourVicinityLayerKeepAlive(map, duration);
         return;
       }
       try {
@@ -1091,6 +1518,7 @@ export function fitTourVicinityCamera(map, nearbyGeoJson, bounds, savedViewport,
           bearing: 0,
           essential: true,
         });
+        attachTourVicinityLayerKeepAlive(map, duration);
         return;
       } catch (_) {
         /* ignore */
@@ -1108,6 +1536,7 @@ export function fitTourVicinityCamera(map, nearbyGeoJson, bounds, savedViewport,
       duration,
       essential: true,
     });
+    attachTourVicinityLayerKeepAlive(map, duration);
   }
 }
 
@@ -1305,6 +1734,7 @@ export function startPropertyTourOrbit(map, rafRef, options = {}) {
   const pitchEnd = useEndBlend ? pitchEndOption : pitchTo;
 
   const step = (now) => {
+    if (rafRef.current == null) return;
     const t = typeof now === 'number' ? now : typeof performance !== 'undefined' ? performance.now() : Date.now();
     const dt = Math.min(0.064, Math.max(0, (t - last) / 1000));
     last = t;
@@ -1365,6 +1795,7 @@ export function startPropertyTourOrbit(map, rafRef, options = {}) {
       rafRef.current = null;
       return;
     }
+    if (rafRef.current == null) return;
     rafRef.current = requestAnimationFrame(step);
   };
   rafRef.current = requestAnimationFrame(step);
@@ -1525,11 +1956,70 @@ export function focusPrintElementBirdEye(map, element) {
  * Steps 0–2: welcome, context, bird. Then one step per ranked photo (none if there are no print photos).
  * Last segment is one slide per nearby amenity category.
  * @param {unknown[]} printElements
+ * @param {string[]} [nearbyAmenityOrder] Enabled amenity keys (defaults to full catalog order).
  */
-export function getTourStepCount(printElements) {
+export function getTourStepCount(printElements, nearbyAmenityOrder) {
   const n = rankPrintElementsWithPhotos(printElements).slice(0, 8).length;
   const photoBlockLen = n > 0 ? n : 0;
-  return 3 + photoBlockLen + TOUR_NEARBY_AMENITY_ORDER.length;
+  const order =
+    Array.isArray(nearbyAmenityOrder) && nearbyAmenityOrder.length
+      ? nearbyAmenityOrder
+      : TOUR_NEARBY_AMENITY_ORDER.map((x) => x.key);
+  return 3 + photoBlockLen + order.length;
+}
+
+/**
+ * Resolve which slide content to apply — prefers explicit slide-plan ids over legacy step index.
+ * @param {number} tourStepIndex
+ * @param {{
+ *   tourSlideParsed?: { kind: string, introId?: string, elementId?: string, amenityKey?: string } | null,
+ *   previousTourSlideParsed?: { kind: string } | null,
+ *   printElements?: unknown[],
+ *   nearbyAmenityOrder?: string[],
+ *   previousTourStepIndex?: number,
+ * }} tourPlayback
+ */
+function resolveTourSlideApplyContext(tourStepIndex, tourPlayback) {
+  const ranked = rankPrintElementsWithPhotos(tourPlayback?.printElements).slice(0, 8);
+  const photoBlockLen = ranked.length > 0 ? ranked.length : 0;
+  const nearbyOrder =
+    Array.isArray(tourPlayback?.nearbyAmenityOrder) && tourPlayback.nearbyAmenityOrder.length
+      ? tourPlayback.nearbyAmenityOrder
+      : TOUR_NEARBY_AMENITY_ORDER.map((x) => x.key);
+  const vicinityIndex = 3 + photoBlockLen;
+  const nearbyEndIndex = vicinityIndex + nearbyOrder.length - 1;
+  const parsed = tourPlayback?.tourSlideParsed;
+  const prevParsed = tourPlayback?.previousTourSlideParsed;
+  const prevIndex = Number(tourPlayback?.previousTourStepIndex);
+
+  if (parsed?.kind) {
+    const isVicinitySlide = parsed.kind === 'amenity';
+    const wasVicinitySlide = prevParsed?.kind === 'amenity';
+    return {
+      ranked,
+      isVicinitySlide,
+      wasVicinitySlide,
+      amenityKey: parsed.kind === 'amenity' ? parsed.amenityKey : null,
+      introSlide:
+        parsed.kind === 'intro'
+          ? PROPERTY_TOUR_SLIDES[{ welcome: 0, context: 1, bird: 2 }[parsed.introId] ?? 0]
+          : null,
+      photoElementId: parsed.kind === 'photo' ? parsed.elementId : null,
+    };
+  }
+
+  const isVicinitySlide = tourStepIndex >= vicinityIndex && tourStepIndex <= nearbyEndIndex;
+  const wasVicinitySlide =
+    Number.isFinite(prevIndex) && prevIndex >= vicinityIndex && prevIndex <= nearbyEndIndex;
+  const amenityIdx = isVicinitySlide ? tourStepIndex - vicinityIndex : -1;
+  return {
+    ranked,
+    isVicinitySlide,
+    wasVicinitySlide,
+    amenityKey: amenityIdx >= 0 ? nearbyOrder[amenityIdx] : null,
+    introSlide: tourStepIndex < 3 ? PROPERTY_TOUR_SLIDES[tourStepIndex] : null,
+    photoElementId: tourStepIndex >= 3 && !isVicinitySlide ? ranked[tourStepIndex - 3]?.element?.id : null,
+  };
 }
 
 /**
@@ -1562,6 +2052,19 @@ export async function applyPropertyTourSlide(
 ) {
   if (!map) return;
 
+  const expandedLayout =
+    tourPlayback?.expandedLayout != null
+      ? tourPlayback.expandedLayout === true
+      : tourStepIndex < 3;
+  const skipEditAmenityPadding =
+    tourPlayback?.tourEditMode === true && tourPlayback?.tourSlideParsed?.kind === 'amenity';
+  if (!skipEditAmenityPadding) {
+    applyTourMobileMapPadding(map, {
+      expandedLayout,
+      vicinityPeek: tourPlayback?.vicinityPeek === true,
+    });
+  }
+
   const orbitRafRef = tourPlayback?.orbitRafRef;
   const orbitKickRef = tourPlayback?.orbitKickRef;
   const applyTourPropertyBasemapRef = tourPlayback?.applyTourPropertyBasemapRef;
@@ -1569,20 +2072,57 @@ export async function applyPropertyTourSlide(
   const setLayerOrder = tourPlayback?.setLayerOrder;
 
   const clearOrbitKick = () => {
-    if (orbitKickRef?.current != null) {
-      clearTimeout(orbitKickRef.current);
-      orbitKickRef.current = null;
-    }
+    clearTourOrbitSchedule(map, orbitKickRef, orbitRafRef);
   };
 
   const scheduleOrbitAfterZoom = (zoomMs, orbitOptions) => {
     clearOrbitKick();
     if (!orbitRafRef || !orbitKickRef) return;
-    const delay = Math.max(0, zoomMs) + 180;
-    orbitKickRef.current = setTimeout(() => {
-      orbitKickRef.current = null;
+
+    const startedAt = typeof performance !== 'undefined' ? performance.now() : Date.now();
+    /** Ignore spurious moveend from layer sync / map.stop before the fly-in finishes. */
+    const minElapsedMs = Math.max(900, Math.floor(zoomMs * 0.72));
+    const hardDeadlineMs = Math.max(0, zoomMs) + 2800;
+
+    let started = false;
+
+    const scheduleRetry = (delayMs) => {
+      if (orbitKickRef.current != null) {
+        clearTimeout(orbitKickRef.current);
+        orbitKickRef.current = null;
+      }
+      orbitKickRef.current = setTimeout(startOrbit, Math.max(40, delayMs));
+    };
+
+    const startOrbit = () => {
+      if (started) return;
+      const now = typeof performance !== 'undefined' ? performance.now() : Date.now();
+      const elapsed = now - startedAt;
+      if (elapsed < minElapsedMs) {
+        scheduleRetry(minElapsedMs - elapsed + 40);
+        return;
+      }
+      try {
+        if (typeof map.isMoving === 'function' && map.isMoving() && elapsed < hardDeadlineMs) {
+          scheduleRetry(120);
+          return;
+        }
+      } catch (_) {
+        /* ignore */
+      }
+      started = true;
+      clearTourOrbitSchedule(map, orbitKickRef, orbitRafRef);
       startPropertyTourOrbit(map, orbitRafRef, orbitOptions);
-    }, delay);
+    };
+
+    tourOrbitPendingMoveEnd = startOrbit;
+    try {
+      map.on('moveend', tourOrbitPendingMoveEnd);
+    } catch (_) {
+      tourOrbitPendingMoveEnd = null;
+    }
+
+    scheduleRetry(Math.max(0, zoomMs) + 320);
   };
 
   const centerFromViewport = () => {
@@ -1615,75 +2155,128 @@ export async function applyPropertyTourSlide(
     }
   };
 
-  map.stop?.();
+  const enteringBirdFromContext =
+    tourPlayback?.tourSlideParsed?.kind === 'intro' &&
+    tourPlayback.tourSlideParsed.introId === 'bird' &&
+    tourPlayback?.previousTourSlideParsed?.kind === 'intro' &&
+    tourPlayback.previousTourSlideParsed.introId === 'context';
+
+  const returningToWelcomeFromContext =
+    tourPlayback?.tourSlideParsed?.kind === 'intro' &&
+    tourPlayback.tourSlideParsed.introId === 'welcome' &&
+    tourPlayback?.previousTourSlideParsed?.kind === 'intro' &&
+    tourPlayback.previousTourSlideParsed.introId === 'context';
+
+  if (!tourPlayback?.tourEditMode && !enteringBirdFromContext) {
+    map.stop?.();
+  }
   clearOrbitKick();
   removeTourVicinityListingOverlay(map);
-  removeTourVicinityNearbyOverlay(map);
-  if (orbitRafRef?.current != null) {
-    cancelAnimationFrame(orbitRafRef.current);
-    orbitRafRef.current = null;
+
+  const slideCtx = resolveTourSlideApplyContext(tourStepIndex, tourPlayback);
+  const { ranked, isVicinitySlide, wasVicinitySlide, amenityKey, introSlide, photoElementId } =
+    slideCtx;
+  if (!isVicinitySlide || !wasVicinitySlide) {
+    removeTourVicinityNearbyOverlay(map);
   }
 
-  const ranked = rankPrintElementsWithPhotos(tourPlayback?.printElements).slice(0, 8);
-  const photoBlockLen = ranked.length > 0 ? ranked.length : 0;
-  const vicinityIndex = 3 + photoBlockLen;
-  const nearbyOrder = Array.isArray(tourPlayback?.nearbyAmenityOrder) && tourPlayback.nearbyAmenityOrder.length
-    ? tourPlayback.nearbyAmenityOrder
-    : TOUR_NEARBY_AMENITY_ORDER.map((x) => x.key);
-  const nearbyEndIndex = vicinityIndex + nearbyOrder.length - 1;
-
-  if (tourStepIndex >= vicinityIndex && tourStepIndex <= nearbyEndIndex) {
+  if (isVicinitySlide && amenityKey) {
     window.dispatchEvent(new CustomEvent('shared-photo-close'));
-    const vicinitySlide = PROPERTY_TOUR_SLIDES[4];
-    const amenityIdx = tourStepIndex - vicinityIndex;
-    const amenityKey = nearbyOrder[amenityIdx];
     const nearbyByAmenity = tourPlayback?.nearbyContextByAmenity || {};
-    const nearbyGeoJson = nearbyByAmenity?.[amenityKey] || tourPlayback?.nearbyContextGeoJson || null;
-    applyLayers(buildTourOrbitLayerPatch(layerBaseline));
+    const amenityFeatures = nearbyByAmenity?.[amenityKey]?.features;
+    const vicinityGeoJson = {
+      type: 'FeatureCollection',
+      features: Array.isArray(amenityFeatures)
+        ? amenityFeatures.filter((f) => !f?.properties?.tourHidden)
+        : [],
+    };
     const vicinityApplySeq = tourPlayback?.tourApplySeq;
     const vicinitySeqRef = tourPlayback?.tourApplySeqRef;
     const vicinityCancel =
       vicinitySeqRef && vicinityApplySeq != null
         ? { tourApplySeq: vicinityApplySeq, tourApplySeqRef: vicinitySeqRef }
         : undefined;
-    await applyTourVicinityNearbyGeoJson(
-      map,
-      nearbyGeoJson && Array.isArray(nearbyGeoJson.features)
-        ? nearbyGeoJson
-        : { type: 'FeatureCollection', features: [] },
-      vicinityCancel
-    );
+    const enteringVicinityFromPhoto = isVicinitySlide && !wasVicinitySlide;
+    const skipVicinityCamera = tourPlayback?.tourEditMode === true;
+
+    if (!wasVicinitySlide) {
+      applyLayers(buildTourOrbitLayerPatch(layerBaseline));
+      // Let GIS restack start before markers so the maintainer can keep badges on top.
+      await new Promise((resolve) => {
+        requestAnimationFrame(() => requestAnimationFrame(resolve));
+      });
+      if (vicinitySeqRef && vicinityApplySeq != null && vicinitySeqRef.current !== vicinityApplySeq) {
+        return;
+      }
+    }
+
+    // First amenity entry and amenity→amenity share the same await+fit path.
+    // The old fire-and-forget first-entry path raced layer restacks + React refresh
+    // cleanup, so icons/zoom often never landed on first load.
+    if (!tourPlayback?.tourEditMode) {
+      applyTourMobileMapPadding(map, {
+        expandedLayout,
+        vicinityPeek: tourPlayback?.vicinityPeek === true,
+      });
+    }
+    await applyTourVicinityNearbyGeoJson(map, vicinityGeoJson, vicinityCancel);
     if (vicinitySeqRef && vicinityApplySeq != null && vicinitySeqRef.current !== vicinityApplySeq) {
       return;
     }
-    fitTourVicinityCamera(
-      map,
-      nearbyGeoJson && Array.isArray(nearbyGeoJson.features)
-        ? nearbyGeoJson
-        : { type: 'FeatureCollection', features: [] },
-      bounds,
-      savedViewport,
-      { animationDuration: 1400 }
-    );
+    ensureTourVicinityNearbyLayersOnTop(map);
+    scheduleTourVicinityLayersOnTop(map);
+    await new Promise((resolve) => {
+      requestAnimationFrame(() => requestAnimationFrame(resolve));
+    });
+    if (vicinitySeqRef && vicinityApplySeq != null && vicinitySeqRef.current !== vicinityApplySeq) {
+      return;
+    }
+    if (!skipVicinityCamera) {
+      const hasVicinityPoints = tourMapVisibleNearbyFeatures(vicinityGeoJson?.features).some(
+        (f) => f?.geometry?.type === 'Point'
+      );
+      if (hasVicinityPoints) {
+        fitTourVicinityCamera(map, vicinityGeoJson, bounds, savedViewport, {
+          animationDuration: enteringVicinityFromPhoto ? 1500 : 1400,
+          ...resolveTourVicinityCameraPaddingOptions({
+            vicinityPeek: tourPlayback?.vicinityPeek === true,
+            expandedLayout,
+            vicinityPeekMinimized: tourPlayback?.vicinityPeekMinimized === true,
+          }),
+        });
+      }
+    }
+    if (
+      tourPlayback?.tourEditMode &&
+      amenityKey &&
+      (!vicinitySeqRef || vicinityApplySeq == null || vicinitySeqRef.current === vicinityApplySeq)
+    ) {
+      const onFit = tourPlayback.onEditAmenityRadiusFit;
+      if (typeof onFit === 'function') onFit(map, amenityKey);
+    }
     return;
   }
 
-  if (tourStepIndex >= 3) {
+  if (
+    photoElementId ||
+    (!tourPlayback?.tourSlideParsed?.kind &&
+      tourStepIndex >= 3 &&
+      ranked.length > 0 &&
+      !isVicinitySlide)
+  ) {
     const perspectiveSlide = PROPERTY_TOUR_SLIDES[3];
-    applyLayers(perspectiveSlide?.layerPatch ?? { ownership: false });
+    applyLayers(perspectiveSlide?.layerPatch ?? TOUR_PRESERVE_SAVED_GIS_LAYER_PATCH);
 
-    if (ranked.length > 0) {
-      const k = tourStepIndex - 3;
-      const safeK = Math.max(0, Math.min(k, ranked.length - 1));
-      const el = ranked[safeK]?.element;
-      if (el?.id) {
-        focusPrintElementBirdEye(map, el);
-        window.dispatchEvent(
-          new CustomEvent('shared-photo-open', {
-            detail: { elementId: el.id, index: 0 },
-          })
-        );
-      }
+    const el =
+      (photoElementId && ranked.find((r) => r.element?.id === photoElementId)?.element) ||
+      ranked[Math.max(0, Math.min(tourStepIndex - 3, ranked.length - 1))]?.element;
+    if (el?.id) {
+      focusPrintElementBirdEye(map, el);
+      window.dispatchEvent(
+        new CustomEvent('shared-photo-open', {
+          detail: { elementId: el.id, index: 0 },
+        })
+      );
       return;
     }
 
@@ -1709,16 +2302,25 @@ export async function applyPropertyTourSlide(
     return;
   }
 
-  const slide = PROPERTY_TOUR_SLIDES[tourStepIndex];
+  const slide = introSlide || PROPERTY_TOUR_SLIDES[tourStepIndex];
   if (!slide) return;
 
   switch (slide.id) {
     case 'welcome': {
-      applyLayers(slide.layerPatch ?? { ownership: false });
+      applyLayers(slide.layerPatch ?? TOUR_PRESERVE_SAVED_GIS_LAYER_PATCH);
+      const welcomeDuration = tourPlayback?.instantCamera === true ? 0 : 1400;
+      const welcomePadding = resolveTourWelcomeFitPadding();
+      if (returningToWelcomeFromContext || tourPlayback?.instantCamera === true) {
+        try {
+          map.stop();
+        } catch (_) {
+          /* ignore */
+        }
+      }
       if (bounds) {
         map.fitBounds(bounds, {
-          duration: 1400,
-          padding: { top: 80, bottom: 140, left: 80, right: 80 },
+          duration: welcomeDuration,
+          padding: welcomePadding,
           maxZoom: 8,
           pitch: 0,
           bearing: 0,
@@ -1731,22 +2333,21 @@ export async function applyPropertyTourSlide(
           zoom: Math.min(savedViewport?.zoom ?? 12, 12),
           pitch: 0,
           bearing: 0,
-          duration: 1400,
+          duration: welcomeDuration,
           essential: true,
         });
       }
       break;
     }
     case 'context': {
-      applyLayers(buildTourOrbitLayerPatch(layerBaseline));
+      applyLayers(slide.layerPatch ?? TOUR_PRESERVE_SAVED_GIS_LAYER_PATCH);
       const orbitBounds =
         getPropertyBoundaryBoundsFromPrintElements(tourPlayback?.printElements, bounds) || bounds;
       const zoomMs = 2400;
       /**
-       * Fly-in: same framing as before, but pitch eases from overhead into a lower (more oblique) orbit
-       * so terrain reads during the zoom. Mapbox pitch above 60 needs `maxPitch` on the map (85 in Map.js).
+       * Fly-in: pitch eases into an oblique orbit so terrain reads during the zoom.
+       * Mapbox pitch above 60 needs `maxPitch` on the map (85 in Map.js).
        */
-      const pitchZoomStart = 36;
       const pitchOrbitHigh = 62;
       /** Degrees of bearing change baked into the fly-in (Mapbox interpolates start → end over zoomMs). */
       const zoomOrbitBearingDelta = 28;
@@ -1767,31 +2368,52 @@ export async function applyPropertyTourSlide(
           /* keep default */
         }
         const bearingAfterZoom = bearingStart + zoomOrbitBearingDelta;
-        try {
-          map.setPitch(pitchZoomStart);
-        } catch (_) {
-          /* ignore */
-        }
         const orbitPitchWave = {
           pitchWaveMin: 54,
           pitchWaveMax: 70,
           pitchWaveCycles: 2,
           pitchWaveInitial: pitchOrbitHigh,
         };
+        const orbitPadding = { top: 62, bottom: 172, left: 62, right: 62 };
+        const orbitAnimOpts = {
+          speedDegPerSec: speedFull360,
+          maxRotationDeg: 360,
+          ...orbitPitchWave,
+        };
         if (orbitBounds) {
-          map.fitBounds(orbitBounds, {
-            duration: zoomMs,
-            padding: { top: 62, bottom: 172, left: 62, right: 62 },
-            maxZoom: 15.9,
-            pitch: pitchOrbitHigh,
-            bearing: bearingAfterZoom,
-            essential: true,
-          });
-          scheduleOrbitAfterZoom(zoomMs, {
-            speedDegPerSec: speedFull360,
-            maxRotationDeg: 360,
-            ...orbitPitchWave,
-          });
+          let flew = false;
+          try {
+            const cam = map.cameraForBounds(orbitBounds, {
+              padding: orbitPadding,
+              maxZoom: 15.9,
+              pitch: pitchOrbitHigh,
+              bearing: bearingAfterZoom,
+            });
+            if (cam?.center && Number.isFinite(cam.zoom)) {
+              map.flyTo({
+                center: cam.center,
+                zoom: Math.min(15.9, cam.zoom),
+                pitch: pitchOrbitHigh,
+                bearing: bearingAfterZoom,
+                duration: zoomMs,
+                essential: true,
+              });
+              flew = true;
+            }
+          } catch (_) {
+            flew = false;
+          }
+          if (!flew) {
+            map.fitBounds(orbitBounds, {
+              duration: zoomMs,
+              padding: orbitPadding,
+              maxZoom: 15.9,
+              pitch: pitchOrbitHigh,
+              bearing: bearingAfterZoom,
+              essential: true,
+            });
+          }
+          scheduleOrbitAfterZoom(zoomMs, orbitAnimOpts);
         } else {
           const [lng, lat] = centerFromViewport();
           map.flyTo({
@@ -1810,7 +2432,6 @@ export async function applyPropertyTourSlide(
         }
       };
 
-      const basemapFn = applyTourPropertyBasemapRef?.current;
       const contextApplySeq = tourPlayback?.tourApplySeq;
       const contextSeqRef = tourPlayback?.tourApplySeqRef;
       const runIfCurrentSlide = () => {
@@ -1819,25 +2440,33 @@ export async function applyPropertyTourSlide(
         }
         runCamera();
       };
-      if (typeof basemapFn === 'function') {
-        void Promise.resolve(basemapFn())
-          .then(runIfCurrentSlide)
-          .catch(runIfCurrentSlide);
-      } else {
+
+      const startContextOrbit = async () => {
+        // Never block the context fly/orbit on basemap - awaiting here races idle 3D
+        // reconcile and often cancels the first-pass camera. Kick 3D in the background.
+        const basemapFn = applyTourPropertyBasemapRef?.current;
+        if (typeof basemapFn === 'function' && !isTourImagery3DActive(map)) {
+          void Promise.resolve(basemapFn()).catch(() => {});
+        }
         runIfCurrentSlide();
-      }
+      };
+
+      window.requestAnimationFrame(() => {
+        window.requestAnimationFrame(() => {
+          void startContextOrbit();
+        });
+      });
       break;
     }
     case 'bird': {
       applyLayers(slide.layerPatch);
-      try {
-        map.setPitch(0);
-        map.setBearing(0);
-      } catch (_) {
-        /* ignore */
+      if (!tourPlayback?.tourEditMode && isTourMobileViewport()) {
+        applyTourMobileMapPadding(map, { expandedLayout: false, vicinityPeek: false });
       }
       if (bounds) {
-        const birdPadding = { top: 16, bottom: 16, left: 16, right: 16 };
+        const birdPadding = isTourMobileViewport()
+          ? measureTourMobileMapChromeInsets({ expandedLayout: false, vicinityPeek: false })
+          : { top: 16, bottom: 16, left: 16, right: 16 };
         const birdZoomOutOffset = 0.75;
         const viewport = {
           width: Number(map?.getContainer?.()?.clientWidth || 0),

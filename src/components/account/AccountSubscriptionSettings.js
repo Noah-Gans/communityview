@@ -34,7 +34,25 @@ const statusLabel = (status) => {
 const stripeReturnUrl = () =>
   `${window.location.origin}/map?accountSection=subscription`;
 
-const PaymentMethodForm = ({ onSuccess, onError, onCancel }) => {
+const PLAN_PRICING = {
+  regular: {
+    monthly: { label: '$18/mo', planKey: 'regular-monthly' },
+    annual: { label: '$180/yr', sublabel: '$15/mo equivalent', planKey: 'regular-annual' },
+  },
+  plus: {
+    monthly: { label: '$24/mo', planKey: 'plus-monthly' },
+    annual: { label: '$240/yr', sublabel: '$20/mo equivalent', planKey: 'plus-annual' },
+  },
+};
+
+function planKeyFromTierInterval(tier, interval) {
+  if (!tier || !interval) return null;
+  const tierRaw = String(tier).toLowerCase() === 'plus' ? 'plus' : 'regular';
+  const intervalRaw = String(interval).toLowerCase() === 'annual' ? 'annual' : 'monthly';
+  return `${tierRaw}-${intervalRaw}`;
+}
+
+const PaymentMethodForm = ({ setupIntentId, onSuccess, onError, onCancel }) => {
   const stripe = useStripe();
   const elements = useElements();
   const [processing, setProcessing] = useState(false);
@@ -55,9 +73,16 @@ const PaymentMethodForm = ({ onSuccess, onError, onCancel }) => {
       });
       if (error) {
         onError(error.message);
-      } else {
-        onSuccess();
+        return;
       }
+
+      const functions = getFunctions();
+      const confirmPaymentMethodUpdate = httpsCallable(
+        functions,
+        'confirmPaymentMethodUpdate'
+      );
+      await confirmPaymentMethodUpdate({ setupIntentId });
+      onSuccess();
     } catch (err) {
       onError(err.message || 'Could not update payment method.');
     } finally {
@@ -101,10 +126,15 @@ const AccountSubscriptionSettings = ({
   const [cancelLoading, setCancelLoading] = useState(false);
   const [showPaymentForm, setShowPaymentForm] = useState(false);
   const [setupClientSecret, setSetupClientSecret] = useState('');
+  const [setupIntentId, setSetupIntentId] = useState('');
   const [paymentLoading, setPaymentLoading] = useState(false);
   const [paymentError, setPaymentError] = useState('');
   const [paymentSuccess, setPaymentSuccess] = useState('');
   const [actionMessage, setActionMessage] = useState('');
+  const [showPlanPicker, setShowPlanPicker] = useState(false);
+  const [billingCycle, setBillingCycle] = useState('annual');
+  const [selectedPlanKey, setSelectedPlanKey] = useState('');
+  const [planChangeLoading, setPlanChangeLoading] = useState(false);
 
   const hasActiveSubscription =
     subscriptionStatus === 'active' ||
@@ -133,7 +163,59 @@ const AccountSubscriptionSettings = ({
         ? ' / month'
         : '';
 
-  const handleChangePlan = () => navigate('/signup');
+  const currentPlanKey =
+    details?.firestorePlan?.planKey ||
+    planKeyFromTierInterval(tier, interval);
+
+  const openPlanPicker = () => {
+    setActionMessage('');
+    setPaymentError('');
+    if (currentPlanKey) {
+      const [planTier, planInterval] = currentPlanKey.split('-');
+      setBillingCycle(planInterval === 'monthly' ? 'monthly' : 'annual');
+      setSelectedPlanKey(currentPlanKey);
+    } else {
+      setBillingCycle('annual');
+      setSelectedPlanKey('plus-annual');
+    }
+    setShowPlanPicker(true);
+  };
+
+  const handleChangePlan = () => {
+    if (hasActiveSubscription) {
+      openPlanPicker();
+      return;
+    }
+    navigate('/signup');
+  };
+
+  const handleConfirmPlanChange = async () => {
+    if (!selectedPlanKey) {
+      setActionMessage('Please select a plan.');
+      return;
+    }
+
+    setPlanChangeLoading(true);
+    setActionMessage('');
+    try {
+      const functions = getFunctions();
+      const changeSubscriptionPlan = httpsCallable(functions, 'changeSubscriptionPlan');
+      const result = await changeSubscriptionPlan({ plan: selectedPlanKey });
+
+      setShowPlanPicker(false);
+      setActionMessage(
+        result.data?.unchanged
+          ? 'You are already on this plan.'
+          : 'Plan updated successfully. Prorated charges or credits may appear on your next invoice.'
+      );
+      onReload();
+    } catch (error) {
+      console.error('Failed to change plan:', error);
+      setActionMessage(error.message || 'Unable to change plan. Please try again.');
+    } finally {
+      setPlanChangeLoading(false);
+    }
+  };
 
   const handleCancelSubscription = async () => {
     setCancelLoading(true);
@@ -177,11 +259,12 @@ const AccountSubscriptionSettings = ({
       const functions = getFunctions();
       const createSetupIntent = httpsCallable(functions, 'createSetupIntent');
       const result = await createSetupIntent({});
-      const { clientSecret } = result.data;
+      const { clientSecret, setupIntentId: intentId } = result.data;
       if (!clientSecret) {
         throw new Error('Invalid payment session received.');
       }
       setSetupClientSecret(clientSecret);
+      setSetupIntentId(intentId || '');
       setShowPaymentForm(true);
     } catch (error) {
       console.error('Failed to start payment update:', error);
@@ -198,8 +281,103 @@ const AccountSubscriptionSettings = ({
   const handlePaymentSuccess = () => {
     setShowPaymentForm(false);
     setSetupClientSecret('');
+    setSetupIntentId('');
     setPaymentSuccess('Payment method updated successfully.');
     onReload();
+  };
+
+  const renderPlanPicker = () => {
+    if (!showPlanPicker) return null;
+
+    return (
+      <div className="account-settings-plan-picker">
+        <h3 className="account-settings-payment-title">Change plan</h3>
+        <p className="account-settings-muted account-settings-muted--tight">
+          Switch between Regular and Plus, or change your billing cycle. Changes
+          take effect immediately; Stripe may prorate your next invoice.
+        </p>
+
+        <div className="account-settings-billing-toggle" role="group" aria-label="Billing cycle">
+          <button
+            type="button"
+            className={`account-settings-billing-toggle__btn${
+              billingCycle === 'monthly' ? ' active' : ''
+            }`}
+            onClick={() => {
+              setBillingCycle('monthly');
+              setSelectedPlanKey((prev) => {
+                const tier = prev.startsWith('plus') ? 'plus' : 'regular';
+                return PLAN_PRICING[tier].monthly.planKey;
+              });
+            }}
+          >
+            Monthly
+          </button>
+          <button
+            type="button"
+            className={`account-settings-billing-toggle__btn${
+              billingCycle === 'annual' ? ' active' : ''
+            }`}
+            onClick={() => {
+              setBillingCycle('annual');
+              setSelectedPlanKey((prev) => {
+                const tier = prev.startsWith('plus') ? 'plus' : 'regular';
+                return PLAN_PRICING[tier].annual.planKey;
+              });
+            }}
+          >
+            Annual
+          </button>
+        </div>
+
+        <div className="account-settings-plan-options">
+          {['regular', 'plus'].map((planType) => {
+            const pricing = PLAN_PRICING[planType][billingCycle];
+            const isCurrent = pricing.planKey === currentPlanKey;
+            const isSelected = selectedPlanKey === pricing.planKey;
+            return (
+              <button
+                key={pricing.planKey}
+                type="button"
+                className={`account-settings-plan-option${
+                  isSelected ? ' account-settings-plan-option--selected' : ''
+                }`}
+                onClick={() => setSelectedPlanKey(pricing.planKey)}
+                aria-pressed={isSelected}
+              >
+                <span className="account-settings-plan-option__name">
+                  {planType === 'plus' ? 'Plus' : 'Regular'}
+                  {isCurrent ? ' (current)' : ''}
+                </span>
+                <span className="account-settings-plan-option__price">{pricing.label}</span>
+                {pricing.sublabel ? (
+                  <span className="account-settings-plan-option__sub">{pricing.sublabel}</span>
+                ) : null}
+              </button>
+            );
+          })}
+        </div>
+
+        <div className="account-settings-actions-stack account-settings-actions-stack--compact">
+          <button
+            type="button"
+            className="account-settings-btn account-settings-btn--primary account-settings-btn--inline"
+            onClick={handleConfirmPlanChange}
+            disabled={planChangeLoading || selectedPlanKey === currentPlanKey}
+          >
+            {planChangeLoading ? 'Updating…' : 'Confirm plan change'}
+          </button>
+          <button
+            type="button"
+            className="account-settings-btn account-settings-btn--secondary account-settings-btn--inline"
+            onClick={() => setShowPlanPicker(false)}
+            disabled={planChangeLoading}
+          >
+            Cancel
+          </button>
+        </div>
+      </div>
+    );
   };
 
   const renderDetailsGrid = () => {
@@ -326,12 +504,6 @@ const AccountSubscriptionSettings = ({
 
   return (
     <div className="account-settings-subscription-panel">
-      <span className="account-settings-badge active">Active subscription</span>
-      <p className="account-settings-lead account-settings-lead--tight">
-        You&apos;re on the <strong>{tier}</strong> plan
-        {interval ? ` (${interval.toLowerCase()})` : ''}.
-      </p>
-
       {renderFeedback()}
       {renderDetailsGrid()}
 
@@ -351,11 +523,13 @@ const AccountSubscriptionSettings = ({
             }}
           >
             <PaymentMethodForm
+              setupIntentId={setupIntentId}
               onSuccess={handlePaymentSuccess}
               onError={setPaymentError}
               onCancel={() => {
                 setShowPaymentForm(false);
                 setSetupClientSecret('');
+                setSetupIntentId('');
                 setPaymentError('');
               }}
             />
@@ -363,14 +537,18 @@ const AccountSubscriptionSettings = ({
         </div>
       )}
 
+      {renderPlanPicker()}
+
       <div className="account-settings-actions-stack">
-        <button
-          type="button"
-          className="account-settings-btn account-settings-btn--primary account-settings-btn--inline"
-          onClick={handleChangePlan}
-        >
-          Change plan
-        </button>
+        {!showPlanPicker && (
+          <button
+            type="button"
+            className="account-settings-btn account-settings-btn--primary account-settings-btn--inline"
+            onClick={handleChangePlan}
+          >
+            Change plan
+          </button>
+        )}
         {!showPaymentForm && (
           <button
             type="button"

@@ -1,0 +1,155 @@
+.county-scope-controls {
+  --county-scope-accent: var(--search-accent, #059669);
+  --county-scope-accent-deep: var(--search-accent-deep, #047857);
+  --county-scope-accent-soft: var(--search-accent-soft, rgba(5, 150, 105, 0.08));
+  --county-scope-accent-muted: rgba(5, 150, 105, 0.14);
+
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  width: 100%;
+}
+
+.county-scope-toggle {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.county-scope-option {
+  flex: 1 1 120px;
+  min-height: 44px;
+  padding: 8px 12px;
+  border: 1px solid #e5e7eb;
+  border-radius: 10px;
+  background: #fff;
+  color: #374151;
+  font-size: 13px;
+  font-weight: 600;
+  text-align: left;
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.county-scope-option-split {
+  flex: 1 1 120px;
+  display: flex;
+  align-items: stretch;
+  min-height: 44px;
+  min-width: 0;
+  border: 1px solid #e5e7eb;
+  border-radius: 10px;
+  overflow: hidden;
+  background: #fff;
+}
+
+.county-scope-option-split--saved-active {
+  border-color: var(--county-scope-accent);
+  box-shadow: inset 0 0 0 1px var(--county-scope-accent);
+}
+
+.county-scope-option--split-main,
+.county-scope-option--split-action {
+  flex: 1 1 50%;
+  min-width: 0;
+  min-height: 44px;
+  border: none;
+  border-radius: 0;
+  padding: 8px 8px;
+}
+
+.county-scope-option--split-main.county-scope-option--active {
+  background: var(--county-scope-accent-soft);
+  color: var(--county-scope-accent-deep);
+}
+
+.county-scope-option--split-action {
+  border-left: 1px solid #e5e7eb;
+  background: var(--county-scope-accent-soft);
+  color: var(--county-scope-accent-deep);
+}
+
+.county-scope-option--split-action:hover:not(:disabled) {
+  background: var(--county-scope-accent-muted);
+}
+
+.county-scope-option--split-action .county-scope-option-label {
+  color: var(--county-scope-accent);
+}
+
+.county-scope-option--split-action .county-scope-option-sub {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.county-scope-option--loading {
+  opacity: 0.85;
+}
+
+.county-scope-option--active {
+  border-color: var(--county-scope-accent);
+  background: var(--county-scope-accent-soft);
+  color: var(--county-scope-accent-deep);
+}
+
+.county-scope-option:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.county-scope-option-label {
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: #6b7280;
+}
+
+.county-scope-option--active .county-scope-option-label {
+  color: var(--county-scope-accent-deep);
+}
+
+.county-scope-option--split-main.county-scope-option--active .county-scope-option-label {
+  color: var(--county-scope-accent-deep);
+}
+
+.county-scope-option-sub {
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.3;
+  color: #111827;
+}
+
+.county-scope-hint {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.45;
+  color: #6b7280;
+}
+
+.county-scope-hint--muted {
+  color: #9ca3af;
+}
+
+.county-scope-controls--compact .county-scope-option {
+  flex: 1 1 100px;
+  min-height: 40px;
+  padding: 6px 10px;
+}
+
+.county-scope-controls--compact .county-scope-option-split {
+  flex: 1 1 100px;
+}
+
+.county-scope-controls--compact .county-scope-option--split-main,
+.county-scope-controls--compact .county-scope-option--split-action {
+  padding: 6px 6px;
+}
+
+.county-scope-controls--compact .county-scope-option-sub {
+  font-size: 11px;
+}

@@ -104,6 +104,12 @@ export const IconChevronRight = () => (
   </svg>
 );
 
+export const IconChevronLeft = () => (
+  <svg {...iconProps} width={20} height={20}>
+    <path d="M14.5 7.5 11 11l3.5 3.5" {...stroke} />
+  </svg>
+);
+
 /** Parcel / ID number */
 export const IconParcel = () => (
   <svg {...iconProps}>

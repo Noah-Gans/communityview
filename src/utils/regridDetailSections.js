@@ -88,6 +88,9 @@ const FLOOD_SECTION_PATTERNS = [
   /hazard/i,
 ];
 
+/** FEMA fields kept on parcel data but not shown as raw values (parsed into friendlier rows instead). */
+const FEMA_DISPLAY_EXCLUDED_KEYS = new Set(['fema_flood_zone_raw']);
+
 const detailSectionSpecs = {
   building: {
     title: 'Building',
@@ -496,25 +499,6 @@ function buildRegridFloodSection(data, consumed) {
   const entries = [];
   if (!data) return entries;
 
-  FEMA_PARCEL_FIELD_KEYS.forEach((key) => {
-    const spec = FLOOD_FIELD_SPECS.find((s) => s.keys.includes(key));
-    const label = spec?.label || formatLabel(key);
-    const entry = buildFemaFieldEntry(data, key, label, consumed);
-    if (entry) entries.push(entry);
-  });
-
-  FLOOD_FIELD_SPECS.forEach(({ label, keys }) => {
-    for (const key of keys) {
-      const raw = getFieldCI(data, key);
-      if (!isScalarDetailValue(raw)) continue;
-      const displayValue = normalizeDetailValue(formatValue(key, raw));
-      if (!displayValue) continue;
-      markKeyConsumed(consumed, key);
-      entries.push({ label, displayValue, key });
-      break;
-    }
-  });
-
   const floodRaw = firstNonEmpty(getFieldCI(data, 'fema_flood_zone_raw'));
   if (floodRaw != null && floodRaw !== '') {
     markKeyConsumed(consumed, 'fema_flood_zone_raw');
@@ -534,8 +518,29 @@ function buildRegridFloodSection(data, consumed) {
     });
   }
 
+  FEMA_PARCEL_FIELD_KEYS.forEach((key) => {
+    if (FEMA_DISPLAY_EXCLUDED_KEYS.has(key)) return;
+    const spec = FLOOD_FIELD_SPECS.find((s) => s.keys.includes(key));
+    const label = spec?.label || formatLabel(key);
+    const entry = buildFemaFieldEntry(data, key, label, consumed);
+    if (entry) entries.push(entry);
+  });
+
+  FLOOD_FIELD_SPECS.forEach(({ label, keys }) => {
+    for (const key of keys) {
+      const raw = getFieldCI(data, key);
+      if (!isScalarDetailValue(raw)) continue;
+      const displayValue = normalizeDetailValue(formatValue(key, raw));
+      if (!displayValue) continue;
+      markKeyConsumed(consumed, key);
+      entries.push({ label, displayValue, key });
+      break;
+    }
+  });
+
   Object.keys(data)
     .filter((key) => !consumed.has(key) && !consumed.has(key.toLowerCase()))
+    .filter((key) => !FEMA_DISPLAY_EXCLUDED_KEYS.has(key.toLowerCase()))
     .filter((key) => keyMatchesAnyPattern(key, FLOOD_SECTION_PATTERNS))
     .sort((a, b) => a.localeCompare(b))
     .forEach((key) => {
@@ -696,6 +701,12 @@ export function ensureFloodSectionHasFemaFields(sections, data, consumed) {
 
   const added = [];
   FEMA_PARCEL_FIELD_KEYS.forEach((key) => {
+    if (FEMA_DISPLAY_EXCLUDED_KEYS.has(key)) {
+      if (hasRenderableDetailValue(getFieldCI(data, key))) {
+        markKeyConsumed(consumed, key);
+      }
+      return;
+    }
     if (existingKeys.has(key.toLowerCase())) return;
     if (consumed.has(key) || consumed.has(key.toLowerCase())) return;
     const spec = FLOOD_FIELD_SPECS.find((s) => s.keys.includes(key));

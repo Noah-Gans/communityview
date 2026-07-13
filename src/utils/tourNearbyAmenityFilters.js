@@ -23,7 +23,12 @@ const FITNESS_GYM_TYPES = new Set([
   'martial_arts_school',
 ]);
 
-const GROCERY_STORE_TYPES = new Set(['supermarket', 'grocery_store', 'grocery_or_supermarket']);
+const GROCERY_STORE_TYPES = new Set([
+  'supermarket',
+  'grocery_store',
+  'grocery_or_supermarket',
+  'food_store',
+]);
 
 const SCHOOL_BLOCK_TYPES = new Set([
   'university',
@@ -90,7 +95,8 @@ function isNonSupermarketFoodRetail(types) {
       types.includes('coffee_shop') ||
       types.includes('meal_takeaway')) &&
     !types.includes('supermarket') &&
-    !types.includes('grocery_store')
+    !types.includes('grocery_store') &&
+    !types.includes('food_store')
   );
 }
 

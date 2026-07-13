@@ -1,9 +1,9 @@
 import queryString from 'query-string';
 
-/** Default map view when URL has no lat/lng/zoom (Nebraska — Regrid-focused area). */
+/** Default map view when URL has no lat/lng/zoom (continental United States). */
 export const DEFAULT_MAP_VIEW = {
-  center: [-97.60393, 40.52867],
-  zoom: 13.935488214211315,
+  center: [-98.5795, 39.8283],
+  zoom: 4,
 };
 
 /** Default basemap when URL has no `basemap` param — outdoors, labeled "Discover" in UI. */
@@ -49,6 +49,19 @@ export function getBasemapIdFromSearch(search) {
   return normalizeBasemapId(fromUrl);
 }
 
+/**
+ * Parse URL basemap including 3D intent (`imagery-3d` normalizes to `imagery` + enable3D).
+ * @param {string} [search]
+ * @returns {{ id: string, enable3D: boolean, raw: string }}
+ */
+export function parseBasemapFromSearch(search) {
+  const params = queryString.parse(search || '');
+  const raw = params.basemap != null ? String(params.basemap).trim().toLowerCase() : '';
+  const id = normalizeBasemapId(raw);
+  const enable3D = raw === 'imagery-3d';
+  return { id, enable3D, raw };
+}
+
 /** Parse `?layers=ownership,…` into a layerStatus-shaped object (for load sequencing). */
 export function getLayerStatusFromSearch(search) {
   const params = queryString.parse(search || '');
@@ -65,7 +78,7 @@ export function getLayerStatusFromSearch(search) {
 /** Default view when starting the interactive tour (matches map init when no URL params). */
 export const TUTORIAL_DEFAULT_VIEW = { center: DEFAULT_MAP_VIEW.center, zoom: DEFAULT_MAP_VIEW.zoom };
 
-/** Fillmore County, NE — parcel-dense area for tour step “parcel-practice”. */
+/** Fillmore County, NE — parcel-dense area for tour side-info step when nothing is selected yet. */
 export const TUTORIAL_PARCEL_PRACTICE_VIEW = {
   center: [-97.61354, 40.5307],
   zoom: 16.147533670128382,

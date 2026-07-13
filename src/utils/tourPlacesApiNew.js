@@ -124,6 +124,69 @@ async function searchNearbyNew(lat, lng, radiusMeters, apiKey, includedTypes, op
   };
 }
 
+function mergePlacesById(...lists) {
+  const seen = new Set();
+  const out = [];
+  for (const list of lists) {
+    if (!Array.isArray(list)) continue;
+    for (const place of list) {
+      const id = String(place?.place_id || '').trim();
+      if (!id || seen.has(id)) continue;
+      seen.add(id);
+      out.push(place);
+    }
+  }
+  return out;
+}
+
+/**
+ * Text Search (New) — finds named businesses (e.g. town grocery) that Nearby Search can miss.
+ */
+async function searchTextNew(lat, lng, radiusMeters, apiKey, textQuery) {
+  const query = String(textQuery || '').trim();
+  if (!query) return [];
+
+  const body = {
+    textQuery: query,
+    maxResultCount: 20,
+    locationBias: {
+      circle: {
+        center: { latitude: lat, longitude: lng },
+        radius: Math.min(50000, Math.max(500, radiusMeters)),
+      },
+    },
+  };
+
+  const res = await fetch('https://places.googleapis.com/v1/places:searchText', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'X-Goog-Api-Key': apiKey,
+      'X-Goog-FieldMask': FIELD_MASK,
+    },
+    body: JSON.stringify(body),
+  });
+
+  const json = await res.json();
+  if (!res.ok) return [];
+
+  const places = Array.isArray(json?.places) ? json.places : [];
+  return places
+    .map((p) => normalizeNewPlaceToLegacy(p, apiKey))
+    .filter((p) => p.place_id && p.name);
+}
+
+const GROCERY_NEARBY_TYPES = ['supermarket', 'grocery_store', 'food_store'];
+
+/**
+ * Grocery: one Nearby Search (same as other amenity categories).
+ */
+export async function fetchTourGroceryPlacesNew(lat, lng, radiusMeters, apiKey) {
+  return searchNearbyNew(lat, lng, radiusMeters, apiKey, GROCERY_NEARBY_TYPES, {
+    rankPreference: 'DISTANCE',
+  });
+}
+
 /**
  * Tour nearby: exactly one Nearby Search per amenity (all types in one request).
  * @param {string[]} includedTypes

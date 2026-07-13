@@ -1,5 +1,5 @@
 import * as turf from '@turf/turf';
-import { curateNearbyTourFeatures } from './tourNearbyRanking';
+import { curateNearbyTourFeatures, sortNearbyTourFeaturesForEditor } from './tourNearbyRanking';
 
 const MI_PER_KM = 0.621371;
 
@@ -41,7 +41,7 @@ function formatDrivingMilesFromMeters(meters) {
 /**
  * @param {{ lat: number, lng: number }} origin
  * @param {{ type?: string, features?: unknown[] }} featureCollection
- * @param {{ mapboxToken?: string, amenityKey?: string, skipCurate?: boolean }} [options]
+ * @param {{ mapboxToken?: string, amenityKey?: string, skipCurate?: boolean, searchRadiusMeters?: number }} [options]
  * @returns {Promise<{ type: 'FeatureCollection', features: unknown[] }>}
  */
 export async function enrichNearbyTourFeatureCollection(origin, featureCollection, options = {}) {
@@ -77,9 +77,20 @@ export async function enrichNearbyTourFeatureCollection(origin, featureCollectio
     return { type: 'FeatureCollection', features };
   }
 
+  if (options.editorMode) {
+    const sorted = sortNearbyTourFeaturesForEditor(features, {
+      amenityKey,
+      searchRadiusMeters: options.searchRadiusMeters,
+    });
+    return { type: 'FeatureCollection', features: sorted };
+  }
+
   const token = String(options.mapboxToken || '').trim() || getMapboxToken();
   if (!token) {
-    const curated = curateNearbyTourFeatures(features, { amenityKey });
+    const curated = curateNearbyTourFeatures(features, {
+      amenityKey,
+      searchRadiusMeters: options.searchRadiusMeters,
+    });
     return { type: 'FeatureCollection', features: curated };
   }
 
@@ -144,6 +155,9 @@ export async function enrichNearbyTourFeatureCollection(origin, featureCollectio
     return { ...f, properties: pk };
   });
 
-  const curated = curateNearbyTourFeatures(merged, { amenityKey });
+  const curated = curateNearbyTourFeatures(merged, {
+    amenityKey,
+    searchRadiusMeters: options.searchRadiusMeters,
+  });
   return { type: 'FeatureCollection', features: curated };
 }

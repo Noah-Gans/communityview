@@ -129,16 +129,16 @@
   position: fixed;
   top: 72px;
   right: 16px;
-  z-index: 25;
+  z-index: 10; /* Below .main-header (11) so account dropdown stays on top */
   display: flex;
   gap: 8px;
   pointer-events: auto;
   align-items: center;
 }
 
-/* Shared client map (/view): no app header — tuck into the top-right corner */
+/* Shared client map (/view): parcels sit below the CV logo (top-right stack) */
 .print-map-top-toolbar--share {
-  top: 12px;
+  top: 88px;
   right: 12px;
   z-index: 9105;
 }
@@ -1463,6 +1463,42 @@ body.print-preview-active .print-scroll-wrapper {
   pointer-events: auto;
 }
 
+.print-share-panel-overlay--mobile {
+  align-items: flex-end;
+  justify-content: center;
+  background: rgba(15, 23, 42, 0.38);
+}
+
+.print-share-panel--mobile {
+  width: 100%;
+  max-width: none;
+  max-height: min(72vh, 560px);
+  border-left: none;
+  border-radius: 20px 20px 0 0;
+  box-shadow: 0 -12px 40px rgba(15, 23, 42, 0.2);
+}
+
+.print-share-panel--mobile .print-share-panel-header {
+  flex-direction: column;
+  align-items: center;
+  position: relative;
+  padding-top: 4px;
+}
+
+.print-share-panel-grabber {
+  width: 40px;
+  height: 4px;
+  border-radius: 999px;
+  background: #d1d5db;
+  margin-bottom: 8px;
+}
+
+.print-share-panel--mobile .print-share-panel-close {
+  position: absolute;
+  top: 8px;
+  right: 0;
+}
+
 .print-share-panel {
   width: min(420px, 100vw);
   max-height: 100vh;
@@ -1792,6 +1828,44 @@ body.print-preview-active .print-scroll-wrapper {
   cursor: not-allowed;
 }
 
+.print-share-tour-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.print-share-tour-actions .print-share-primary-btn,
+.print-share-tour-actions .print-share-secondary-btn {
+  margin-top: 0;
+  flex: 1 1 auto;
+}
+
+.print-share-tour-choices {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.print-share-tour-choice {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.print-share-tour-choice .print-share-primary-btn,
+.print-share-tour-choice .print-share-secondary-btn {
+  margin-top: 0;
+  width: 100%;
+}
+
+.print-share-tour-choice-desc {
+  margin: 0;
+  font-size: 0.82rem;
+  line-height: 1.45;
+  color: #64748b;
+}
+
 .print-share-panel-error {
   font-size: 0.8rem;
   color: #b91c1c;
@@ -1938,6 +2012,13 @@ html.shared-embed-mode.shared-public-map .shared-left-dock {
   justify-content: flex-start;
 }
 
+/* Client map desktop: left dock; mobile footer is in @media (max-width: 768px) below */
+@media (min-width: 769px) {
+  .shared-map-chrome--mobile-footer {
+    display: none !important;
+  }
+}
+
 .print-map-open-blocker {
   z-index: 10050;
 }
@@ -1998,6 +2079,40 @@ html.shared-embed-mode.shared-public-map .shared-left-dock {
   border-left: none;
   display: flex;
   flex-direction: column;
+}
+
+.shared-cv-logo-link {
+  display: inline-flex;
+  align-items: center;
+  flex-shrink: 0;
+  line-height: 0;
+  text-decoration: none;
+  border-radius: 6px;
+}
+
+.shared-cv-logo-link:hover {
+  opacity: 0.88;
+}
+
+.shared-cv-logo {
+  display: block;
+  height: 28px;
+  width: auto;
+  max-width: 100%;
+  object-fit: contain;
+}
+
+.shared-cv-logo--client {
+  border-radius: 8px;
+}
+
+.shared-cv-logo-link--client {
+  display: flex;
+  margin-bottom: 10px;
+}
+
+.shared-cv-logo-link--client .shared-cv-logo {
+  height: 34px;
 }
 
 .shared-left-nav-brand {
@@ -2477,13 +2592,53 @@ html.shared-tour-mode .app-container > .map-container::after {
 
 /* Minimal chrome: top bar + playback strip only (no left explorer rail) */
 .shared-tour-shell {
+  --tour-accent: var(--cv-green-bright, #14de9b);
+  --tour-accent-deep: #1d784f;
+  --tour-accent-deep-muted: var(--cv-green-deep, #385e51);
+  --tour-accent-border: rgba(20, 222, 155, 0.4);
+  --tour-accent-border-strong: rgba(20, 222, 155, 0.72);
+  --tour-accent-text: #d1fae5;
+  --tour-accent-text-bright: #ecfdf5;
+  --tour-edge: 12px;
+  --tour-stack-gap: 10px;
+  --shared-tour-view-footer-h: 76px;
   pointer-events: none;
   position: fixed;
   inset: 0;
   z-index: 9100;
   display: flex;
   flex-direction: column;
+}
+
+.shared-tour-shell-top-chrome {
+  pointer-events: none;
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 9101;
+  display: flex;
+  flex-direction: column;
+  gap: var(--tour-stack-gap);
+  padding: var(--tour-edge) var(--tour-edge) 0;
+}
+
+.shared-tour-shell-panel-row {
+  display: flex;
+  align-items: flex-start;
   justify-content: space-between;
+  gap: var(--tour-edge);
+  width: 100%;
+  min-width: 0;
+}
+
+.shared-tour-shell-left-rail {
+  display: flex;
+  flex-direction: column;
+  gap: var(--tour-stack-gap);
+  flex: 1 1 auto;
+  min-width: 0;
+  max-width: min(380px, calc(100vw - 24px));
 }
 
 .shared-tour-shell-topbar {
@@ -2493,31 +2648,194 @@ html.shared-tour-mode .app-container > .map-container::after {
   justify-content: space-between;
   gap: 16px;
   flex-wrap: wrap;
-  margin: 12px 12px 0;
+  margin: 0;
   padding: 10px 16px;
+  box-sizing: border-box;
   border-radius: 12px;
   background: linear-gradient(105deg, rgba(15, 23, 42, 0.97) 0%, rgba(30, 41, 59, 0.96) 55%, rgba(15, 23, 42, 0.98) 100%);
-  border: 1px solid rgba(251, 191, 36, 0.35);
+  border: 1px solid var(--tour-accent-border);
   box-shadow: 0 12px 40px rgba(2, 6, 23, 0.45);
+}
+
+.shared-tour-cv-logo-card {
+  pointer-events: auto;
+  position: static;
+  top: auto;
+  right: auto;
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 8px 10px;
+  width: fit-content;
+  max-width: min(168px, calc(100vw - 24px));
+  border-radius: 10px;
+  background: #ffffff;
+  border: 1px solid var(--cv-color-border, #d1d5db);
+  box-shadow: 0 8px 24px rgba(2, 6, 23, 0.18);
+}
+
+.shared-tour-footer-brand.shared-tour-cv-logo-card {
+  pointer-events: auto;
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  justify-self: start;
+  grid-column: 1;
+  padding: 5px 8px;
+  border-radius: 8px;
+  background: #ffffff;
+  border: 1px solid var(--cv-color-border, #d1d5db);
+  box-shadow: 0 4px 14px rgba(2, 6, 23, 0.14);
+}
+
+.shared-tour-footer-brand .shared-cv-logo--tour-card {
+  height: 28px;
+  max-width: 108px;
+}
+
+.shared-tour-cv-logo-link--tour-card {
+  display: inline-flex;
+  line-height: 0;
+}
+
+.shared-cv-logo--tour-card {
+  display: block;
+  height: 42px;
+  width: auto;
+  max-width: 150px;
+  object-fit: contain;
+  border-radius: 8px;
+}
+
+/* Client map (/view): CV logo — top right */
+.shared-client-map-logo.shared-tour-cv-logo-card {
+  position: fixed;
+  top: 12px;
+  right: 12px;
+  z-index: 9106;
+}
+
+.shared-tour-shell-left-rail .shared-tour-orbit-listing-card,
+.shared-tour-shell-left-rail .shared-tour-vicinity-left {
+  pointer-events: auto;
+  position: static;
+  top: auto;
+  left: auto;
 }
 
 .shared-tour-orbit-listing-card {
   pointer-events: auto;
-  position: fixed;
-  top: 72px;
-  left: 12px;
-  z-index: 9101;
-  width: min(340px, calc(100vw - 120px));
-  max-width: min(340px, calc(100vw - 120px));
-  padding: 12px 14px;
+  position: relative;
+  z-index: 1;
+  width: min(320px, calc(100vw - 24px));
+  max-width: min(320px, calc(100vw - 24px));
+  padding: 10px 12px;
   border-radius: 12px;
   background: var(--cv-color-surface, #f2f2ec);
   color: var(--cv-color-text, #111827);
   border: 1px solid var(--cv-color-border, #d1d5db);
   box-shadow: 0 12px 32px rgba(2, 6, 23, 0.25);
+}
+
+.shared-tour-orbit-listing-card--full {
+  width: min(360px, calc(100vw - 24px));
+  max-width: min(360px, calc(100vw - 24px));
+  padding: 12px 14px;
+}
+
+.shared-tour-orbit-listing-card--full .shared-side-agent-card {
+  border: none;
+  background: transparent;
+  padding: 0;
+  gap: 10px;
+}
+
+.shared-tour-orbit-listing-card--compact {
+  position: static;
+  width: 100%;
+  max-width: none;
+  padding: 8px 10px;
+}
+
+.shared-tour-vicinity-left {
+  pointer-events: none;
+  position: static;
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: var(--tour-stack-gap);
+  width: 100%;
+  max-height: calc(100vh - 220px);
+  height: auto;
+  min-height: 0;
+}
+
+.shared-tour-vicinity-left .shared-tour-orbit-listing-card--compact {
+  flex-shrink: 0;
+}
+
+.shared-tour-vicinity-left .shared-tour-orbit-listing-card,
+.shared-tour-vicinity-left .shared-tour-nearby-card {
+  pointer-events: auto;
+  position: static;
+  left: auto;
+  top: auto;
+  bottom: auto;
+}
+
+.shared-tour-vicinity-left .shared-tour-nearby-card {
+  flex: 1 1 auto;
+  min-height: 0;
+  width: 100%;
+  max-height: none;
+}
+
+.shared-tour-agent-contact {
+  margin: 0;
+}
+
+.shared-tour-agent-contact-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+}
+
+.shared-tour-agent-contact-photo {
+  flex-shrink: 0;
+  width: 52px;
+  height: 52px;
+  border-radius: 999px;
+  object-fit: cover;
+  border: 2px solid rgba(15, 23, 42, 0.12);
+}
+
+.shared-tour-agent-contact-details {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.shared-tour-agent-contact-name {
+  font-size: 0.92rem;
+  font-weight: 700;
+  color: var(--cv-color-text, #111827);
+  line-height: 1.25;
+}
+
+.shared-tour-agent-contact-link,
+.shared-tour-agent-contact-muted {
+  font-size: 0.82rem;
+  line-height: 1.35;
+  color: var(--cv-color-muted, #475569);
+  text-decoration: none;
+  word-break: break-word;
+}
+
+.shared-tour-agent-contact-link:hover {
+  color: var(--cv-color-primary, #de5e14);
+  text-decoration: underline;
 }
 
 .shared-tour-orbit-listing-description {
@@ -2536,7 +2854,7 @@ html.shared-tour-mode .app-container > .map-container::after {
 .shared-tour-shell-brand {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: 10px;
   min-width: 0;
 }
 
@@ -2546,8 +2864,8 @@ html.shared-tour-mode .app-container > .map-container::after {
   font-weight: 800;
   letter-spacing: 0.14em;
   text-transform: uppercase;
-  color: #0f172a;
-  background: linear-gradient(135deg, #fcd34d, #f59e0b);
+  color: #ecfdf5;
+  background: linear-gradient(135deg, var(--tour-accent), var(--tour-accent-deep));
   padding: 6px 10px;
   border-radius: 8px;
 }
@@ -2564,9 +2882,10 @@ html.shared-tour-mode .app-container > .map-container::after {
 
 .shared-tour-shell-actions {
   display: flex;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   align-items: center;
-  gap: 8px;
+  gap: 10px;
+  margin-left: auto;
 }
 
 .shared-tour-shell-btn {
@@ -2600,10 +2919,10 @@ html.shared-tour-mode .app-container > .map-container::after {
 }
 
 .shared-tour-shell-exit {
-  margin-left: 4px;
+  margin-left: 0;
   font-size: 0.82rem;
   font-weight: 600;
-  color: #fde68a;
+  color: var(--tour-accent);
   text-decoration: none;
   padding: 8px 10px;
   border-radius: 8px;
@@ -2611,7 +2930,7 @@ html.shared-tour-mode .app-container > .map-container::after {
 
 .shared-tour-shell-exit:hover {
   text-decoration: underline;
-  color: #fef9c3;
+  color: var(--tour-accent-text-bright);
 }
 
 .shared-tour-shell-counter {
@@ -2638,21 +2957,30 @@ html.shared-tour-mode .app-container > .map-container::after {
   }
 }
 
+.shared-tour-mobile-only {
+  display: none;
+}
+
+.shared-tour-deck-step {
+  display: none;
+}
+
 .shared-tour-arrow {
   pointer-events: auto;
-  position: fixed;
-  top: 50%;
-  transform: translateY(-50%);
+  position: static;
+  top: auto;
+  transform: none;
   z-index: 9101;
-  width: 48px;
-  height: 88px;
+  flex-shrink: 0;
+  width: 44px;
+  height: 44px;
   margin: 0;
   padding: 0;
-  border: 1px solid rgba(251, 191, 36, 0.45);
-  border-radius: 0 12px 12px 0;
-  background: linear-gradient(90deg, rgba(15, 23, 42, 0.92), rgba(30, 41, 59, 0.55));
-  color: #fef3c7;
-  font-size: 2.1rem;
+  border: 1px solid var(--tour-accent-border);
+  border-radius: 12px;
+  background: linear-gradient(160deg, rgba(15, 23, 42, 0.94), rgba(30, 41, 59, 0.88));
+  color: var(--tour-accent-text);
+  font-size: 1.65rem;
   font-weight: 300;
   line-height: 1;
   cursor: pointer;
@@ -2663,23 +2991,23 @@ html.shared-tour-mode .app-container > .map-container::after {
 }
 
 .shared-tour-arrow--prev {
-  left: 0;
-  border-radius: 0 12px 12px 0;
-  padding-right: 4px;
+  left: auto;
+  border-radius: 12px;
+  padding: 0;
 }
 
 .shared-tour-arrow--next {
-  right: 0;
+  right: auto;
   left: auto;
-  border-radius: 12px 0 0 12px;
-  flex-direction: row-reverse;
-  padding-left: 4px;
-  background: linear-gradient(270deg, rgba(15, 23, 42, 0.92), rgba(30, 41, 59, 0.55));
+  border-radius: 12px;
+  flex-direction: row;
+  padding: 0;
+  background: linear-gradient(160deg, rgba(15, 23, 42, 0.94), rgba(30, 41, 59, 0.88));
 }
 
 .shared-tour-arrow:hover:not(:disabled) {
-  color: #fffbeb;
-  border-color: rgba(253, 224, 71, 0.75);
+  color: var(--tour-accent-text-bright);
+  border-color: var(--tour-accent-border-strong);
 }
 
 .shared-tour-arrow:disabled {
@@ -2687,15 +3015,43 @@ html.shared-tour-mode .app-container > .map-container::after {
   cursor: not-allowed;
 }
 
+.shared-tour-deck-nav {
+  pointer-events: none;
+  align-self: center;
+  display: flex;
+  align-items: stretch;
+  gap: 8px;
+  margin: auto 12px 20px;
+  max-width: min(560px, calc(100vw - 24px));
+  width: 100%;
+}
+
+.shared-tour-deck-nav .shared-tour-deck {
+  pointer-events: auto;
+  flex: 1 1 auto;
+  min-width: 0;
+  align-self: stretch;
+  margin: 0;
+  max-width: min(420px, calc(100vw - 140px));
+}
+
+.shared-tour-deck-nav .shared-tour-arrow {
+  align-self: stretch;
+  width: 52px;
+  height: auto;
+  min-height: 44px;
+  border-radius: 12px;
+}
+
 .shared-tour-deck {
   pointer-events: auto;
   align-self: center;
   margin: 0 12px 20px;
-  max-width: min(560px, calc(100vw - 72px));
-  padding: 16px 20px 14px;
+  max-width: min(420px, calc(100vw - 140px));
+  padding: 14px 16px 12px;
   border-radius: 14px;
   background: linear-gradient(160deg, rgba(15, 23, 42, 0.94) 0%, rgba(30, 41, 59, 0.92) 100%);
-  border: 1px solid rgba(251, 191, 36, 0.38);
+  border: 1px solid var(--tour-accent-border);
   box-shadow: 0 16px 48px rgba(2, 6, 23, 0.5);
 }
 
@@ -2705,7 +3061,7 @@ html.shared-tour-mode .app-container > .map-container::after {
   font-weight: 800;
   letter-spacing: 0.12em;
   text-transform: uppercase;
-  color: #fcd34d;
+  color: var(--tour-accent);
 }
 
 .shared-tour-deck-title {
@@ -2743,15 +3099,15 @@ html.shared-tour-mode .app-container > .map-container::after {
 }
 
 .shared-tour-deck-dot:hover:not(:disabled) {
-  border-color: rgba(253, 224, 71, 0.65);
-  background: rgba(71, 85, 105, 0.9);
+  border-color: var(--tour-accent-border-strong);
+  background: rgba(56, 94, 81, 0.55);
 }
 
 .shared-tour-deck-dot.is-active {
   width: 22px;
   border-radius: 999px;
-  background: linear-gradient(90deg, #fcd34d, #f59e0b);
-  border-color: rgba(251, 191, 36, 0.9);
+  background: linear-gradient(90deg, var(--tour-accent), var(--tour-accent-deep));
+  border-color: var(--tour-accent-border-strong);
 }
 
 .shared-tour-deck-dot:disabled {
@@ -2759,52 +3115,921 @@ html.shared-tour-mode .app-container > .map-container::after {
   cursor: not-allowed;
 }
 
-.shared-tour-nearby-card {
-  pointer-events: auto;
+/* View-mode tour footer: logo left | centered sections | exit right */
+.shared-tour-view-footer.shared-tour-deck-nav {
+  pointer-events: none;
   position: fixed;
-  left: 56px;
-  top: 72px;
-  bottom: 24px;
-  z-index: 9102;
-  width: min(440px, calc(100vw - 72px));
-  max-height: none;
-  height: auto;
-  min-height: min(560px, calc(100vh - 96px));
+  left: 0;
+  right: 0;
+  bottom: 0;
+  align-self: stretch;
+  margin: 0;
+  max-width: none;
+  width: 100%;
+  min-height: var(--shared-tour-view-footer-h);
+  padding: 10px var(--tour-edge);
+  padding-bottom: calc(env(safe-area-inset-bottom, 0px) + 10px);
+  box-sizing: border-box;
+  gap: 10px;
+  align-items: center;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+  background: rgba(12, 18, 28, 0.94);
+  backdrop-filter: blur(10px);
+  border-top: 1px solid rgba(148, 163, 184, 0.28);
+  box-shadow: 0 -8px 28px rgba(2, 6, 23, 0.42);
+  z-index: 9103;
+}
+
+.shared-tour-footer-center {
+  pointer-events: auto;
+  justify-self: center;
+  grid-column: 2;
   display: flex;
-  flex-direction: column;
-  overflow: hidden;
-  border-radius: 12px;
-  padding: 14px 14px 12px;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  max-width: min(760px, 62vw);
+  min-width: 0;
+}
+
+.shared-tour-footer-exit {
+  pointer-events: auto;
+  flex-shrink: 0;
+  justify-self: end;
+  grid-column: 3;
+  font-size: 0.8rem;
+  font-weight: 600;
+  padding: 8px 12px;
+  border-radius: 8px;
+  color: #e2e8f0;
+  text-decoration: none;
+  border: 1px solid rgba(148, 163, 184, 0.45);
+  background: rgba(30, 41, 59, 0.72);
+  white-space: nowrap;
+}
+
+.shared-tour-footer-exit:hover {
+  color: #fff;
+  border-color: var(--tour-accent-border);
+  background: rgba(30, 41, 59, 0.95);
+}
+
+.shared-tour-footer-scroll-btn {
+  pointer-events: auto;
+  flex-shrink: 0;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  color: rgba(226, 232, 240, 0.75);
+  font-size: 1.35rem;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.shared-tour-view-footer .shared-tour-arrow {
+  display: flex;
+  width: 48px;
+  min-width: 48px;
+  height: 48px;
+  min-height: 48px;
+  font-size: 1.9rem;
+  font-weight: 500;
+  border-width: 2px;
+  border-color: rgba(255, 255, 255, 0.92);
+  color: #fff;
+  background: rgba(255, 255, 255, 0.14);
+  box-shadow:
+    0 0 0 1px rgba(255, 255, 255, 0.18),
+    0 4px 18px rgba(0, 0, 0, 0.45);
+  z-index: 2;
+}
+
+.shared-tour-view-footer .shared-tour-arrow:hover:not(:disabled) {
+  color: #fff;
+  border-color: #fff;
+  background: rgba(255, 255, 255, 0.26);
+  box-shadow:
+    0 0 0 1px rgba(255, 255, 255, 0.35),
+    0 6px 22px rgba(0, 0, 0, 0.5);
+}
+
+.shared-tour-view-footer .shared-tour-arrow:active:not(:disabled) {
+  transform: scale(0.94);
+  background: rgba(255, 255, 255, 0.32);
+}
+
+.shared-tour-view-footer .shared-tour-arrow:disabled {
+  opacity: 0.22;
+  border-color: rgba(255, 255, 255, 0.35);
+  color: rgba(255, 255, 255, 0.45);
+  box-shadow: none;
+}
+
+.shared-tour-next-wrap {
+  position: relative;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+}
+
+.shared-tour-continue-hint {
+  position: absolute;
+  right: 0;
+  bottom: calc(100% + 12px);
+  z-index: 9105;
+  padding: 10px 14px;
+  border-radius: 10px;
+  white-space: nowrap;
+  font-size: 0.88rem;
+  font-weight: 700;
+  line-height: 1.25;
+  color: #0f172a;
+  background: #fff;
+  border: 2px solid rgba(255, 255, 255, 0.95);
+  box-shadow:
+    0 10px 28px rgba(2, 6, 23, 0.45),
+    0 0 0 1px rgba(15, 23, 42, 0.08);
+  pointer-events: none;
+  animation: shared-tour-continue-hint-bob 2.2s ease-in-out infinite;
+}
+
+.shared-tour-continue-hint::after {
+  content: '';
+  position: absolute;
+  right: 16px;
+  bottom: -8px;
+  width: 14px;
+  height: 14px;
+  background: #fff;
+  border-right: 2px solid rgba(255, 255, 255, 0.95);
+  border-bottom: 2px solid rgba(255, 255, 255, 0.95);
+  transform: rotate(45deg);
+  box-shadow: 4px 4px 8px rgba(2, 6, 23, 0.12);
+}
+
+@keyframes shared-tour-continue-hint-bob {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-4px);
+  }
+}
+
+.shared-tour-footer-scroll-btn:hover:not(:disabled) {
+  color: #fff;
+  background: rgba(148, 163, 184, 0.14);
+}
+
+.shared-tour-footer-scroll-btn:disabled {
+  opacity: 0.28;
+  cursor: not-allowed;
+}
+
+.shared-tour-footer-tabs {
+  --tour-footer-edge: 0px;
+  flex: 1 1 auto;
+  min-width: 0;
+  max-width: min(560px, 46vw);
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: clamp(14px, 2.5vw, 28px);
+  overflow-x: auto;
+  overflow-y: hidden;
+  scroll-behavior: smooth;
+  scroll-snap-type: x proximity;
+  scrollbar-width: none;
+  -webkit-overflow-scrolling: touch;
+  padding: 2px 0;
+}
+
+.shared-tour-footer-tabs-edge {
+  flex: 0 0 var(--tour-footer-edge, 0px);
+  min-width: 0;
+  height: 1px;
+  pointer-events: none;
+}
+
+.shared-tour-footer-tabs::-webkit-scrollbar {
+  display: none;
+}
+
+.shared-tour-footer-tab {
+  pointer-events: auto;
+  flex: 0 0 auto;
+  scroll-snap-align: center;
+  margin: 0;
+  padding: 6px 2px 8px;
+  border: none;
+  border-bottom: 2px solid transparent;
+  background: transparent;
+  color: rgba(226, 232, 240, 0.62);
+  font-size: clamp(0.78rem, 1.8vw, 0.92rem);
+  font-weight: 500;
+  line-height: 1.2;
+  white-space: nowrap;
+  cursor: pointer;
+  transition:
+    color 0.15s ease,
+    border-color 0.15s ease;
+}
+
+.shared-tour-footer-tab:hover:not(:disabled) {
+  color: rgba(255, 255, 255, 0.92);
+}
+
+.shared-tour-footer-tab.is-active {
+  color: #fff;
+  font-weight: 700;
+  border-bottom-color: #fff;
+}
+
+.shared-tour-footer-tab:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+html.shared-public-map.shared-tour-mode:not(.shared-tour-edit-mode) .map-floating-controls-stack,
+html.shared-tour-mode:not(.shared-tour-edit-mode) .map-floating-controls-stack {
+  position: fixed !important;
+  top: auto !important;
+  left: auto !important;
+  right: 20px !important;
+  bottom: calc(var(--shared-tour-view-footer-h, 76px) + env(safe-area-inset-bottom, 0px) + 12px) !important;
+  z-index: 8990 !important;
+}
+
+html.shared-public-map.shared-tour-mode:not(.shared-tour-edit-mode) .layer-selector-popup,
+html.shared-tour-mode:not(.shared-tour-edit-mode) .layer-selector-popup {
+  z-index: 9200 !important;
+}
+
+html.shared-public-map.shared-tour-mode:not(.shared-tour-edit-mode) .mapboxgl-ctrl-bottom-left,
+html.shared-public-map.shared-tour-mode:not(.shared-tour-edit-mode) .mapboxgl-ctrl-bottom-right,
+html.shared-tour-mode:not(.shared-tour-edit-mode) .mapboxgl-ctrl-bottom-left,
+html.shared-tour-mode:not(.shared-tour-edit-mode) .mapboxgl-ctrl-bottom-right {
+  bottom: calc(var(--shared-tour-view-footer-h, 76px) + env(safe-area-inset-bottom, 0px) + 8px) !important;
+  z-index: 8990 !important;
+}
+
+.shared-tour-view-footer .shared-tour-deck,
+.shared-tour-view-footer .shared-tour-deck-kicker,
+.shared-tour-view-footer .shared-tour-deck-title,
+.shared-tour-view-footer .shared-tour-deck-subtitle,
+.shared-tour-view-footer .shared-tour-deck-dots,
+.shared-tour-view-footer .shared-tour-deck-step {
+  display: none;
+}
+
+/* Property tour mobile: compact agent top bar + bottom footer deck */
+@media (max-width: 768px) {
+  html.shared-tour-mode {
+    --shared-tour-footer-h: 72px;
+    --shared-tour-view-footer-h: 72px;
+    --shared-tour-mobile-peek-h: min(42vh, 300px);
+  }
+
+  html.shared-tour-mode .print-map-top-toolbar--share {
+    display: none !important;
+  }
+
+  html.shared-public-map.shared-tour-mode:not(.shared-tour-edit-mode) .map-floating-controls-stack,
+  html.shared-tour-mode:not(.shared-tour-edit-mode) .map-floating-controls-stack {
+    right: 12px !important;
+    bottom: calc(var(--shared-tour-view-footer-h, 72px) + env(safe-area-inset-bottom, 0px) + 12px) !important;
+  }
+
+  html.shared-public-map.shared-tour-mode:not(.shared-tour-edit-mode) .layer-selector-popup,
+  html.shared-tour-mode:not(.shared-tour-edit-mode) .layer-selector-popup {
+    position: fixed !important;
+    top: auto !important;
+    left: 0 !important;
+    right: 0 !important;
+    bottom: calc(var(--shared-tour-view-footer-h, 72px) + env(safe-area-inset-bottom, 0px)) !important;
+    max-height: min(58vh, calc(100dvh - var(--shared-tour-view-footer-h, 72px) - 72px));
+  }
+
+  html.shared-tour-mode .mapboxgl-ctrl-bottom-left,
+  html.shared-tour-mode .mapboxgl-ctrl-bottom-right {
+    bottom: calc(var(--shared-tour-footer-h) + env(safe-area-inset-bottom, 0px) + 8px) !important;
+    z-index: 8990 !important;
+  }
+
+  .shared-tour-mobile-only {
+    display: block;
+  }
+
+  .shared-tour-footer-exit {
+    padding: 7px 9px;
+    font-size: 0.72rem;
+  }
+
+  .shared-tour-footer-brand .shared-cv-logo--tour-card {
+    height: 24px;
+    max-width: 88px;
+  }
+
+  .shared-tour-footer-tab {
+    font-size: 0.76rem;
+    padding-bottom: 6px;
+  }
+
+  .shared-tour-footer-center {
+    gap: 6px;
+    max-width: min(100%, calc(100vw - 200px));
+  }
+
+  .shared-tour-footer-tabs {
+    max-width: min(360px, calc(100vw - 240px));
+  }
+
+  .shared-tour-view-footer .shared-tour-arrow {
+    width: 44px;
+    min-width: 44px;
+    height: 44px;
+    min-height: 44px;
+    font-size: 1.75rem;
+    border-color: rgba(255, 255, 255, 0.92);
+    color: #fff;
+    background: rgba(255, 255, 255, 0.14);
+  }
+
+  .shared-tour-continue-hint {
+    font-size: 0.8rem;
+    padding: 8px 12px;
+    max-width: min(220px, calc(100vw - 48px));
+    white-space: normal;
+    text-align: center;
+    right: -4px;
+  }
+
+  .shared-tour-view-footer.shared-tour-deck-nav {
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    gap: 6px;
+  }
+
+  .shared-tour-desktop-only {
+    display: none !important;
+  }
+
+  .shared-tour-shell-top-chrome {
+    padding: 0;
+    gap: 0;
+  }
+
+  .shared-tour-mobile-agent-top {
+    pointer-events: auto;
+    flex: 0 0 auto;
+    width: 100%;
+    max-height: calc(env(safe-area-inset-top, 0px) + 132px);
+    box-sizing: border-box;
+    padding: 6px 8px 8px;
+    padding-top: calc(env(safe-area-inset-top, 0px) + 6px);
+    background: transparent;
+    border: none;
+    box-shadow: none;
+    overflow: hidden;
+    isolation: isolate;
+    z-index: 9103;
+    transition: max-height 0.38s ease;
+  }
+
+  .shared-tour-mobile-agent-top--expanded {
+    max-height: calc(env(safe-area-inset-top, 0px) + 420px);
+    overflow: visible;
+  }
+
+  .shared-tour-mobile-agent-card {
+    margin: 0;
+    border-radius: 12px;
+    background: rgba(242, 242, 236, 0.98);
+    border: 1px solid var(--cv-color-border, #d1d5db);
+    box-shadow: 0 4px 18px rgba(2, 6, 23, 0.12);
+    transition:
+      padding 0.38s ease,
+      border-radius 0.38s ease,
+      box-shadow 0.38s ease,
+      max-height 0.38s ease;
+  }
+
+  .shared-tour-mobile-agent-card--expanded {
+    padding: 14px;
+    max-height: none;
+    overflow: visible;
+  }
+
+  .shared-tour-mobile-agent-card-row {
+    display: flex;
+    align-items: flex-start;
+    gap: 12px;
+  }
+
+  .shared-tour-mobile-agent-photo {
+    flex-shrink: 0;
+    width: 56px;
+    height: 56px;
+    border-radius: 999px;
+    object-fit: cover;
+    border: 2px solid rgba(15, 23, 42, 0.1);
+    background: #fff;
+    transition: width 0.38s ease, height 0.38s ease;
+  }
+
+  .shared-tour-mobile-agent-card--expanded .shared-tour-mobile-agent-photo {
+    width: 64px;
+    height: 64px;
+  }
+
+  .shared-tour-mobile-agent-photo--placeholder {
+    background: #e5e7eb;
+  }
+
+  .shared-tour-mobile-agent-details {
+    min-width: 0;
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+  }
+
+  .shared-tour-mobile-agent-map-title {
+    font-size: 0.72rem;
+    font-weight: 700;
+    letter-spacing: 0.02em;
+    text-transform: uppercase;
+    color: #6b7280;
+    line-height: 1.25;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .shared-tour-mobile-agent-card--expanded .shared-tour-mobile-agent-map-title {
+    font-size: 1.08rem;
+    font-weight: 800;
+    letter-spacing: -0.01em;
+    text-transform: none;
+    color: var(--cv-color-text, #111827);
+    line-height: 1.2;
+    white-space: normal;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    margin: 0 0 8px;
+    text-align: center;
+    width: 100%;
+  }
+
+  .shared-tour-mobile-agent-name {
+    font-size: 0.95rem;
+    font-weight: 700;
+    color: var(--cv-color-text, #111827);
+    line-height: 1.2;
+  }
+
+  .shared-tour-mobile-agent-contact {
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+  }
+
+  .shared-tour-mobile-agent-link,
+  .shared-tour-mobile-agent-muted {
+    font-size: 0.8rem;
+    line-height: 1.35;
+    color: var(--cv-color-muted, #475569);
+    text-decoration: none;
+    word-break: break-word;
+  }
+
+  .shared-tour-mobile-agent-description {
+    margin: 0 0 12px;
+    font-size: 0.82rem;
+    line-height: 1.5;
+    color: #475569;
+    display: -webkit-box;
+    -webkit-line-clamp: 4;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+    transition:
+      opacity 0.35s ease,
+      max-height 0.38s ease,
+      margin 0.38s ease;
+  }
+
+  .shared-tour-mobile-agent-card--compact .shared-tour-mobile-agent-description,
+  .shared-tour-mobile-agent-card--compact .shared-tour-mobile-agent-logo,
+  .shared-tour-mobile-agent-card--compact .shared-tour-mobile-agent-map-title {
+    display: none;
+  }
+
+  .shared-tour-mobile-agent-logo {
+    display: block;
+    width: 100%;
+    max-width: 100%;
+    height: auto;
+    max-height: 72px;
+    margin-top: 10px;
+    padding: 10px 14px;
+    box-sizing: border-box;
+    border-radius: 8px;
+    border: 1px solid #e2e8f0;
+    background: #fff;
+    object-fit: contain;
+    object-position: center;
+    transition:
+      opacity 0.35s ease,
+      max-height 0.38s ease,
+      margin 0.38s ease;
+  }
+
+  .shared-tour-mobile-agent-card--expanded .shared-tour-mobile-agent-logo {
+    max-height: 88px;
+    padding: 12px 16px;
+  }
+
+  .shared-tour-mobile-agent-link:hover {
+    color: var(--cv-color-primary, #de5e14);
+    text-decoration: underline;
+  }
+
+  .shared-tour-mobile-agent-card--compact {
+    padding: 9px 11px;
+    max-height: none;
+    overflow: visible;
+    border-radius: 10px;
+    box-shadow: 0 2px 12px rgba(2, 6, 23, 0.1);
+  }
+
+  .shared-tour-mobile-agent-card--compact .shared-tour-mobile-agent-card-row {
+    align-items: flex-start;
+    gap: 10px;
+  }
+
+  .shared-tour-mobile-agent-card--compact .shared-tour-mobile-agent-photo {
+    width: 44px;
+    height: 44px;
+  }
+
+  .shared-tour-mobile-agent-card--compact .shared-tour-mobile-agent-name {
+    font-size: 0.84rem;
+    font-weight: 700;
+    line-height: 1.2;
+  }
+
+  .shared-tour-mobile-agent-card--compact .shared-tour-mobile-agent-contact {
+    flex-direction: column;
+    gap: 2px;
+  }
+
+  .shared-tour-mobile-agent-card--compact .shared-tour-mobile-agent-link,
+  .shared-tour-mobile-agent-card--compact .shared-tour-mobile-agent-muted {
+    font-size: 0.72rem;
+    line-height: 1.3;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    max-width: 100%;
+  }
+
+  .shared-tour-mobile-vicinity {
+    pointer-events: none;
+    position: fixed;
+    left: 0;
+    right: 0;
+    bottom: calc(var(--shared-tour-footer-h) + env(safe-area-inset-bottom, 0px));
+    z-index: 9101;
+    max-height: none;
+    padding: 0 10px 8px;
+    box-sizing: border-box;
+  }
+
+  .shared-tour-mobile-nearby-panel.shared-tour-mobile-nearby-peek {
+    pointer-events: auto;
+    position: static;
+    width: 100%;
+    max-width: none;
+    min-height: 0;
+    height: auto;
+    max-height: var(--shared-tour-mobile-peek-h);
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    border-radius: 18px 18px 14px 14px;
+    padding: 8px 12px 10px;
+    background: rgba(242, 242, 236, 0.98);
+    color: #111827;
+    border: 1px solid var(--cv-color-border, #d1d5db);
+    border-bottom: none;
+    box-shadow: 0 -8px 28px rgba(17, 24, 39, 0.18);
+  }
+
+  .shared-tour-mobile-nearby-peek--few {
+    max-height: min(28vh, 200px);
+  }
+
+  .shared-tour-mobile-nearby-peek--minimized {
+    max-height: none;
+    cursor: pointer;
+    padding-bottom: 8px;
+  }
+
+  .shared-tour-mobile-nearby-peek--minimized .shared-tour-mobile-nearby-peek-list-wrap,
+  .shared-tour-mobile-nearby-peek--minimized .shared-tour-mobile-nearby-peek-status {
+    display: none;
+  }
+
+  .shared-tour-mobile-nearby-peek-inner {
+    display: flex;
+    flex-direction: column;
+    flex: 1 1 auto;
+    min-height: 0;
+    gap: 6px;
+  }
+
+  .shared-tour-mobile-nearby-peek-handle {
+    flex-shrink: 0;
+    width: 40px;
+    height: 4px;
+    margin: 2px auto 4px;
+    border-radius: 999px;
+    background: #cbd5e1;
+  }
+
+  .shared-tour-mobile-nearby-peek-header {
+    flex-shrink: 0;
+    margin: 0;
+    padding: 0 2px 4px;
+    border-bottom: 1px solid rgba(15, 23, 42, 0.08);
+  }
+
+  .shared-tour-mobile-nearby-peek-title {
+    margin: 0;
+    font-size: 1rem;
+    font-weight: 800;
+    line-height: 1.25;
+    color: #111827;
+  }
+
+  .shared-tour-mobile-nearby-peek-status {
+    flex-shrink: 0;
+    margin: 0;
+    padding: 4px 2px;
+    font-size: 0.8rem;
+    color: #64748b;
+  }
+
+  .shared-tour-mobile-nearby-peek-status--error {
+    color: var(--cv-color-danger, #de1714);
+  }
+
+  .shared-tour-mobile-nearby-peek-list-wrap {
+    flex: 0 1 auto;
+    min-height: 0;
+    max-height: min(calc(42vh - 72px), 228px);
+    overflow-x: hidden;
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+    padding-right: 2px;
+  }
+
+  .shared-tour-mobile-nearby-peek--few .shared-tour-mobile-nearby-peek-list-wrap {
+    max-height: none;
+    overflow-y: visible;
+  }
+
+  .shared-tour-mobile-nearby-peek .shared-tour-nearby-card-list {
+    margin: 0;
+    padding: 0;
+  }
+
+  .shared-tour-mobile-nearby-peek .shared-tour-nearby-card-list li {
+    padding: 6px 0;
+    border-bottom: 1px solid rgba(15, 23, 42, 0.06);
+  }
+
+  .shared-tour-mobile-nearby-peek .shared-tour-nearby-card-list li:last-child {
+    border-bottom: none;
+  }
+
+  .shared-tour-mobile-nearby-peek .shared-tour-nearby-map-btn {
+    flex-shrink: 0;
+    padding: 5px 10px;
+    font-size: 0.72rem;
+  }
+
+  .shared-tour-shell {
+    justify-content: flex-end;
+  }
+
+  .shared-tour-deck-nav.shared-tour-mobile-footer,
+  .shared-tour-deck-nav.shared-tour-view-footer {
+    pointer-events: none;
+    position: fixed;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    align-self: stretch;
+    margin: 0;
+    max-width: none;
+    width: 100%;
+    min-height: var(--shared-tour-footer-h);
+    padding: 10px 12px calc(env(safe-area-inset-bottom, 0px) + 10px);
+    background: linear-gradient(180deg, rgba(15, 23, 42, 0.98) 0%, rgba(2, 6, 23, 0.99) 100%);
+    border-top: 2px solid var(--tour-accent-border-strong);
+    box-shadow: 0 -10px 32px rgba(2, 6, 23, 0.5);
+    z-index: 9102;
+    gap: 10px;
+    align-items: center;
+  }
+
+  .shared-tour-view-footer .shared-tour-arrow,
+  .shared-tour-mobile-footer .shared-tour-arrow {
+    display: flex;
+    width: 48px;
+    min-width: 48px;
+    min-height: 48px;
+    height: 48px;
+    font-size: 1.75rem;
+    font-weight: 500;
+    line-height: 1;
+    border-radius: 12px;
+    align-self: center;
+    border: 2px solid rgba(255, 255, 255, 0.92);
+    color: #fff;
+    background: rgba(255, 255, 255, 0.14);
+    box-shadow:
+      0 0 0 1px rgba(255, 255, 255, 0.18),
+      0 4px 18px rgba(0, 0, 0, 0.45);
+  }
+
+  .shared-tour-view-footer .shared-tour-arrow:hover:not(:disabled),
+  .shared-tour-mobile-footer .shared-tour-arrow:hover:not(:disabled) {
+    color: #fff;
+    border-color: #fff;
+    background: rgba(255, 255, 255, 0.26);
+  }
+
+  .shared-tour-mobile-footer .shared-tour-arrow:active:not(:disabled) {
+    transform: scale(0.94);
+  }
+
+  .shared-tour-mobile-footer .shared-tour-deck {
+    pointer-events: auto;
+    flex: 1;
+    min-width: 0;
+    margin: 0;
+    padding: 6px 8px 4px;
+    max-width: none;
+    background: transparent;
+    border: none;
+    box-shadow: none;
+    border-radius: 0;
+  }
+
+  .shared-tour-deck-step {
+    display: block;
+    margin: 0 0 4px;
+    font-size: 0.68rem;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--tour-accent);
+    line-height: 1.2;
+  }
+
+  .shared-tour-mobile-footer .shared-tour-deck-title {
+    margin: 0 0 8px;
+    font-size: 0.9rem;
+    font-weight: 700;
+    line-height: 1.25;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .shared-tour-mobile-footer .shared-tour-deck-dots {
+    flex-wrap: nowrap;
+    justify-content: flex-start;
+    gap: 5px;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    padding-bottom: 1px;
+    scrollbar-width: none;
+  }
+
+  .shared-tour-mobile-footer .shared-tour-deck-dots::-webkit-scrollbar {
+    display: none;
+  }
+
+  .shared-tour-mobile-footer .shared-tour-deck-dot {
+    flex-shrink: 0;
+    width: 7px;
+    height: 7px;
+  }
+
+  .shared-tour-mobile-footer .shared-tour-deck-dot.is-active {
+    width: 16px;
+  }
+
+  html.shared-tour-mode .app-container > .map-container::after {
+    box-shadow: inset 0 0 50px rgba(2, 6, 23, 0.32);
+  }
+}
+
+@media (min-width: 769px) {
+  .shared-tour-nearby-card {
+    pointer-events: auto;
+    position: fixed;
+    left: 12px;
+    top: 72px;
+    bottom: auto;
+    z-index: 9102;
+    width: min(380px, calc(100vw - 24px));
+    max-height: calc(100vh - 72px - 132px);
+    height: auto;
+    min-height: min(420px, calc(100vh - 220px));
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    border-radius: 12px;
+    padding: 14px 14px 12px;
+  }
+
+  /* Amenity slide: left column only stretches (logo stays fixed-size top-right). */
+  .shared-tour-shell--vicinity:not(.shared-tour-shell--edit) .shared-tour-vicinity-left {
+    position: fixed;
+    top: var(--tour-edge);
+    left: var(--tour-edge);
+    bottom: calc(var(--shared-tour-view-footer-h) + var(--tour-edge));
+    width: min(380px, calc(100vw - 24px));
+    max-height: none;
+    height: auto;
+    z-index: 9102;
+  }
+
+  .shared-tour-shell--vicinity .shared-tour-vicinity-left .shared-tour-nearby-card {
+    position: static;
+    top: auto;
+    left: auto;
+    bottom: auto;
+    flex: 1 1 auto;
+    min-height: 0;
+    height: auto;
+    max-height: none;
+    width: 100%;
+  }
+
+  .shared-tour-shell:not(.shared-tour-shell--vicinity):not(.shared-tour-shell--edit)
+    .shared-tour-shell-left-rail
+    .shared-tour-orbit-listing-card--full {
+    position: fixed;
+    top: var(--tour-edge);
+    left: var(--tour-edge);
+    z-index: 9102;
+  }
+}
+
+.shared-tour-shell--vicinity .shared-tour-vicinity-left {
+  z-index: 9102;
 }
 
 /* Uses design tokens from src/index.css (:root) */
 .cv-tour-nearby-panel.shared-tour-nearby-card {
   background: var(--cv-color-surface, #f2f2ec);
-  color: var(--cv-color-text, #111827);
+  color: #111827;
   border: 1px solid var(--cv-color-border, #d1d5db);
   box-shadow: 0 12px 32px rgba(17, 24, 39, 0.12);
 }
 
-.cv-tour-nearby-panel .shared-tour-nearby-card-title {
-  color: var(--cv-color-text, #111827);
+.cv-tour-nearby-panel .shared-tour-nearby-card-title,
+.cv-tour-nearby-panel .shared-tour-nearby-card-sub,
+.cv-tour-nearby-panel .shared-tour-nearby-card-lead,
+.cv-tour-nearby-panel .shared-tour-nearby-card-name,
+.cv-tour-nearby-panel .shared-tour-nearby-card-distance,
+.cv-tour-nearby-panel .shared-tour-nearby-card-list li,
+.cv-tour-nearby-panel .shared-tour-nearby-card-row-text small {
+  color: #111827;
 }
 
 .cv-tour-nearby-panel .shared-tour-nearby-card-sub {
-  color: var(--cv-color-muted, #6b7280);
-}
-
-.cv-tour-nearby-panel .shared-tour-nearby-card-lead {
-  color: var(--cv-color-text, #111827);
+  color: #111827;
 }
 
 .cv-tour-nearby-panel .shared-tour-nearby-card-media-placeholder {
-  color: var(--cv-color-muted, #6b7280);
+  color: #111827;
   background: rgba(255, 255, 255, 0.65);
   border-color: var(--cv-color-border, #d1d5db);
 }
 
 .cv-tour-nearby-panel .shared-tour-nearby-card-list li {
-  color: var(--cv-color-text, #111827);
+  color: #111827;
   cursor: pointer;
 }
 
@@ -2815,29 +4040,916 @@ html.shared-tour-mode .app-container > .map-container::after {
 }
 
 .cv-tour-nearby-panel .shared-tour-nearby-card-name {
-  color: var(--cv-color-text, #111827);
+  color: #111827;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
   max-width: 100%;
 }
 
-.cv-tour-nearby-panel .shared-tour-nearby-card-row-text small {
-  color: var(--cv-color-muted, #6b7280);
+.cv-tour-nearby-panel .shared-tour-nearby-card-rating {
+  color: #111827;
+  font-weight: 600;
+}
+
+.cv-tour-nearby-panel .shared-tour-nearby-card-star {
+  color: var(--tour-accent-deep, #1d784f);
+  margin-left: 1px;
 }
 
 .cv-tour-nearby-panel .shared-tour-nearby-map-btn {
   cursor: pointer;
-  background: var(--cv-color-danger, #de1714);
-  box-shadow: 0 2px 0 rgba(120, 30, 25, 0.35);
+  background: var(--tour-accent-deep, #1d784f);
+  box-shadow: 0 2px 0 rgba(29, 120, 79, 0.35);
 }
 
 .cv-tour-nearby-panel .shared-tour-nearby-map-btn:hover {
-  background: var(--cv-color-primary, #de5e14);
+  background: var(--tour-accent-deep-muted, #385e51);
 }
 
 .cv-tour-nearby-panel .shared-tour-nearby-card-photo {
   border-color: var(--cv-color-border, #d1d5db);
+}
+
+.cv-tour-nearby-panel .shared-tour-nearby-card-distance {
+  color: #111827;
+}
+
+/* Tour edit mode (`/tour/:token?edit=1`) — amenity slide side panels */
+.shared-tour-shell--edit .shared-tour-shell-top-chrome {
+  pointer-events: none;
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: var(--shared-tour-edit-footer-h);
+  height: auto;
+  display: flex;
+  flex-direction: column;
+  padding: var(--tour-edge);
+  gap: 0;
+  box-sizing: border-box;
+  overflow: hidden;
+}
+
+.shared-tour-shell--edit .tour-edit-chrome {
+  position: absolute;
+  top: var(--tour-edge);
+  right: var(--tour-edge);
+  z-index: 2;
+  flex-shrink: 0;
+  padding: 0;
+}
+
+.shared-tour-shell--edit.shared-tour-shell--vicinity .shared-tour-shell-panel-row,
+.shared-tour-shell--edit .tour-edit-panel-row {
+  flex: 1 1 auto;
+  min-height: 0;
+  height: 100%;
+  align-items: stretch;
+  justify-content: flex-start;
+  gap: 0;
+}
+
+.tour-edit-chrome {
+  pointer-events: auto;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+}
+
+.tour-edit-chrome-preview,
+.tour-edit-chrome-save,
+.tour-edit-chrome-exit {
+  pointer-events: auto;
+  font-size: 13px;
+  font-weight: 600;
+  padding: 8px 14px;
+  border-radius: 8px;
+  border: 1px solid #cbd5e1;
+  background: rgba(255, 255, 255, 0.94);
+  color: #0f172a;
+  text-decoration: none;
+  cursor: pointer;
+  box-shadow: 0 4px 16px rgba(15, 23, 42, 0.08);
+}
+
+.tour-edit-chrome-preview:hover,
+.tour-edit-chrome-save:hover,
+.tour-edit-chrome-exit:hover {
+  background: #fff;
+  border-color: #94a3b8;
+}
+
+.tour-edit-chrome-save {
+  background: #1d4ed8;
+  border-color: #1d4ed8;
+  color: #fff;
+}
+
+.tour-edit-chrome-save:hover {
+  background: #1e40af;
+  border-color: #1e40af;
+  color: #fff;
+}
+
+.tour-edit-chrome-save.is-saved {
+  background: #15803d;
+  border-color: #15803d;
+}
+
+.tour-edit-chrome-save.is-error {
+  background: #b91c1c;
+  border-color: #b91c1c;
+}
+
+.tour-edit-chrome-save:disabled {
+  opacity: 0.72;
+  cursor: wait;
+}
+
+.tour-edit-chrome-preview {
+  background: #0f766e;
+  border-color: #0f766e;
+  color: #fff;
+}
+
+.tour-edit-chrome-preview:hover {
+  background: #0d9488;
+  border-color: #0d9488;
+}
+
+html.shared-tour-mode.shared-tour-edit-mode {
+  --shared-tour-edit-footer-h: 188px;
+  --tour-edit-slide-box-w: 120px;
+}
+
+html.shared-tour-mode.shared-tour-edit-mode .map-floating-controls-stack {
+  position: fixed !important;
+  top: auto !important;
+  left: auto !important;
+  right: 20px !important;
+  bottom: calc(var(--shared-tour-edit-footer-h) + 16px) !important;
+  z-index: 8990 !important;
+}
+
+html.shared-tour-mode.shared-tour-edit-mode .mapboxgl-ctrl-bottom-left,
+html.shared-tour-mode.shared-tour-edit-mode .mapboxgl-ctrl-bottom-right {
+  bottom: calc(var(--shared-tour-edit-footer-h) + 12px) !important;
+}
+
+.shared-tour-edit-footer.shared-tour-deck-nav {
+  pointer-events: auto;
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  align-self: stretch;
+  margin: 0;
+  max-width: none;
+  width: 100%;
+  min-height: var(--shared-tour-edit-footer-h);
+  z-index: 9102;
+  gap: 12px;
+  padding: 14px 20px 16px;
+  padding-bottom: calc(env(safe-area-inset-bottom, 0px) + 16px);
+  background: #ffffff;
+  border-top: 1px solid #e5e7eb;
+  box-shadow: 0 -8px 32px rgba(17, 24, 39, 0.08);
+  box-sizing: border-box;
+}
+
+.shared-tour-edit-footer .shared-tour-arrow {
+  align-self: center;
+  flex-shrink: 0;
+  width: 48px;
+  min-height: 48px;
+  border-radius: 10px;
+  border: 1px solid #e5e7eb;
+  background: #f9fafb;
+  color: #374151;
+  box-shadow: none;
+  font-size: 1.65rem;
+}
+
+.shared-tour-edit-footer .shared-tour-arrow:hover:not(:disabled) {
+  background: #f3f4f6;
+  border-color: #d1d5db;
+  color: #111827;
+}
+
+.tour-edit-slide-footer {
+  flex: 1;
+  min-width: 0;
+  pointer-events: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  align-items: stretch;
+}
+
+.tour-edit-slide-footer-heading {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 0 2px;
+}
+
+.tour-edit-slide-footer-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: #111827;
+  letter-spacing: -0.01em;
+}
+
+.tour-edit-slide-footer-hint {
+  font-size: 11px;
+  color: #6b7280;
+}
+
+.tour-edit-slide-footer-track {
+  display: flex;
+  align-items: stretch;
+  gap: 8px;
+  overflow-x: auto;
+  overflow-y: hidden;
+  flex: 1;
+  min-width: 0;
+  padding: 2px 0 4px;
+  scrollbar-width: thin;
+  scroll-behavior: smooth;
+}
+
+.tour-edit-slide-footer-row {
+  display: flex;
+  align-items: stretch;
+  gap: 10px;
+  width: 100%;
+  min-width: 0;
+}
+
+.tour-edit-add-slide {
+  position: relative;
+  flex: 0 0 auto;
+  align-self: center;
+}
+
+.tour-edit-add-slide-btn {
+  width: 52px;
+  height: 92px;
+  border-radius: 10px;
+  border: 1px dashed #94a3b8;
+  background: #f8fafc;
+  color: #0f766e;
+  font-size: 2rem;
+  font-weight: 300;
+  line-height: 1;
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s, color 0.15s;
+}
+
+.tour-edit-add-slide-btn:hover:not(:disabled) {
+  background: #ecfdf5;
+  border-color: #0f766e;
+  color: #0d9488;
+}
+
+.tour-edit-add-slide-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.tour-edit-add-slide-menu {
+  position: absolute;
+  right: 0;
+  bottom: calc(100% + 8px);
+  z-index: 20;
+  min-width: 220px;
+  max-width: min(280px, calc(100vw - 24px));
+  max-height: 280px;
+  overflow-x: hidden;
+  overflow-y: auto;
+  padding: 8px;
+  border-radius: 10px;
+  border: 1px solid #e5e7eb;
+  background: #ffffff;
+  box-shadow: 0 12px 32px rgba(15, 23, 42, 0.14);
+}
+
+.tour-edit-add-slide-menu-label {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: #6b7280;
+  padding: 4px 8px 6px;
+}
+
+.tour-edit-add-slide-menu-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.tour-edit-add-slide-menu-item {
+  display: block;
+  width: 100%;
+  max-width: 100%;
+  text-align: left;
+  padding: 8px 10px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: #111827;
+  font-size: 13px;
+  cursor: pointer;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tour-edit-add-slide-menu-item:hover {
+  background: #f3f4f6;
+}
+
+.tour-edit-slide-tile.is-locked .tour-edit-slide-select {
+  background: #f3f4f6;
+  border-color: #d1d5db;
+  cursor: pointer;
+}
+
+.tour-edit-slide-lock-hint {
+  font-size: 10px;
+  line-height: 1;
+  opacity: 0.7;
+}
+
+.tour-edit-slide-footer-edge {
+  flex: 0 0 calc(50% - var(--tour-edit-slide-box-w, 120px) / 2);
+  min-width: 0;
+  pointer-events: none;
+}
+
+.tour-edit-slide-tile {
+  position: relative;
+  flex: 0 0 var(--tour-edit-slide-box-w, 120px);
+  width: var(--tour-edit-slide-box-w, 120px);
+  max-width: var(--tour-edit-slide-box-w, 120px);
+  min-width: 0;
+  min-height: 92px;
+  align-self: stretch;
+  overflow: hidden;
+  scroll-snap-align: center;
+}
+
+.tour-edit-slide-tile[draggable='true'] {
+  cursor: grab;
+}
+
+.tour-edit-slide-tile[draggable='true']:active {
+  cursor: grabbing;
+}
+
+.tour-edit-slide-remove {
+  position: absolute;
+  top: 5px;
+  right: 5px;
+  z-index: 2;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: 1px solid #e5e7eb;
+  border-radius: 6px;
+  background: #ffffff;
+  color: #6b7280;
+  font-size: 14px;
+  line-height: 1;
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s, color 0.15s;
+}
+
+.tour-edit-slide-remove:hover:not(:disabled) {
+  background: #fef2f2;
+  border-color: #fecaca;
+  color: #b91c1c;
+}
+
+.tour-edit-slide-select {
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  height: 92px;
+  min-height: 92px;
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  padding: 22px 10px 10px;
+  border-radius: 10px;
+  border: 1px solid #e5e7eb;
+  background: #f9fafb;
+  color: #374151;
+  cursor: pointer;
+  overflow: hidden;
+  flex-shrink: 0;
+  transition: background 0.15s, border-color 0.15s, box-shadow 0.15s;
+}
+
+.shared-tour-edit-footer .tour-edit-slide-footer-track {
+  scroll-snap-type: x proximity;
+}
+
+.tour-edit-slide-tile:hover .tour-edit-slide-select:not(:disabled) {
+  background: #f3f4f6;
+  border-color: #d1d5db;
+}
+
+.tour-edit-slide-tile.is-active .tour-edit-slide-select {
+  background: #ffffff;
+  color: #111827;
+  border-color: #111827;
+  box-shadow: 0 0 0 1px #111827;
+}
+
+.tour-edit-slide-tile.is-drag-over .tour-edit-slide-select {
+  border-color: #14de9b;
+  box-shadow: 0 0 0 2px rgba(20, 222, 155, 0.22);
+}
+
+.tour-edit-slide-drag-hint {
+  position: absolute;
+  top: 7px;
+  left: 8px;
+  font-size: 9px;
+  line-height: 1;
+  color: #9ca3af;
+  letter-spacing: -1px;
+  pointer-events: none;
+}
+
+.tour-edit-slide-box-icon {
+  font-size: 20px;
+  line-height: 1;
+}
+
+.tour-edit-slide-box-label {
+  width: 100%;
+  max-width: 100%;
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1.25;
+  text-align: center;
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.tour-edit-left-rail,
+.tour-edit-right-rail {
+  pointer-events: auto;
+  flex-shrink: 0;
+  width: min(360px, calc(50vw - 24px));
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+.shared-tour-shell--edit .tour-edit-left-rail,
+.shared-tour-shell--edit .tour-edit-right-rail {
+  max-height: none;
+  height: 100%;
+}
+
+.shared-tour-shell--edit .tour-edit-intro-rail {
+  margin-left: auto;
+}
+
+.shared-tour-shell--edit .tour-edit-left-rail .tour-edit-side-panel,
+.shared-tour-shell--edit .tour-edit-left-rail .tour-edit-amenity-panel,
+.shared-tour-shell--edit .tour-edit-right-rail .tour-edit-intro-elements-panel {
+  height: 100%;
+}
+
+.tour-edit-place-panel,
+.tour-edit-radius-panel,
+.tour-edit-side-panel,
+.tour-edit-amenity-panel,
+.tour-edit-overview-panel,
+.tour-edit-intro-elements-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  height: 100%;
+  min-height: 0;
+  padding: 14px 16px;
+  border-radius: 12px;
+  background: #fff;
+  border: 1px solid #e2e8f0;
+  box-shadow: 0 10px 32px rgba(15, 23, 42, 0.12);
+  overflow: hidden;
+}
+
+.tour-edit-intro-elements-panel {
+  border-color: #e5e7eb;
+  box-shadow: 0 10px 32px rgba(17, 24, 39, 0.08);
+}
+
+.tour-edit-side-panel--amenity,
+.tour-edit-amenity-panel {
+  gap: 0;
+  overflow-x: hidden;
+}
+
+.tour-edit-side-panel-tabs {
+  display: flex;
+  flex-shrink: 0;
+  gap: 6px;
+  padding: 0 0 10px;
+  margin-bottom: 2px;
+  border-bottom: 1px solid #e2e8f0;
+}
+
+.tour-edit-side-panel-tab {
+  flex: 1 1 0;
+  min-width: 0;
+  border: 1px solid #cbd5e1;
+  border-radius: 8px;
+  background: #f8fafc;
+  color: #475569;
+  padding: 7px 10px;
+  font-size: 0.78rem;
+  font-weight: 600;
+  line-height: 1.2;
+  cursor: pointer;
+  transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+}
+
+.tour-edit-side-panel-tab:hover {
+  background: #f1f5f9;
+  color: #334155;
+}
+
+.tour-edit-side-panel-tab.is-active {
+  border-color: #2563eb;
+  background: #eff6ff;
+  color: #1d4ed8;
+}
+
+.tour-edit-side-panel-tab-panels {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-height: 0;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.tour-edit-side-panel-tab-panel {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-height: 0;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.tour-edit-side-panel-tab-panel[hidden] {
+  display: none;
+}
+
+.tour-edit-amenity-tab-panel {
+  gap: 0;
+}
+
+.tour-edit-side-panel--intro {
+  gap: 0;
+  overflow-x: hidden;
+}
+
+.tour-edit-side-panel-body {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  flex: 1 1 auto;
+  min-height: 0;
+  min-width: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+}
+
+.tour-edit-intro-elements .tour-edit-hint {
+  margin-bottom: 4px;
+}
+
+.tour-edit-amenity-search {
+  flex-shrink: 0;
+  padding-bottom: 12px;
+}
+
+.tour-edit-amenity-search-btn {
+  margin-top: 8px;
+  align-self: center;
+  width: 100%;
+  text-align: center;
+}
+
+.tour-edit-amenity-divider {
+  flex-shrink: 0;
+  height: 1px;
+  background: #e2e8f0;
+  margin: 0 0 12px;
+}
+
+.tour-edit-amenity-results {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  flex: 1 1 auto;
+  min-height: 0;
+  min-width: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+}
+
+.tour-edit-amenity-results-hint {
+  margin: 0;
+}
+
+.tour-edit-amenity-rail,
+.tour-edit-side-rail {
+  width: min(380px, calc(42vw - 24px));
+}
+
+.tour-edit-panel-header {
+  flex-shrink: 0;
+}
+
+.tour-edit-panel-title {
+  margin: 0 0 4px;
+  font-size: 1.05rem;
+  font-weight: 700;
+  color: #0f172a;
+}
+
+.tour-edit-panel-sub {
+  margin: 0;
+  font-size: 0.8rem;
+  line-height: 1.4;
+  color: #64748b;
+}
+
+.tour-edit-panel-status {
+  margin: 0;
+  font-size: 0.84rem;
+  color: #475569;
+}
+
+.tour-edit-panel-error {
+  margin: 0;
+  font-size: 0.82rem;
+  color: #b91c1c;
+}
+
+.tour-edit-section-label {
+  margin: 0 0 6px;
+  font-size: 0.88rem;
+  font-weight: 650;
+  color: #0f172a;
+}
+
+.tour-edit-hint {
+  margin: 0 0 8px;
+  font-size: 0.78rem;
+  color: #64748b;
+}
+
+.tour-edit-overview-section {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.tour-edit-radius-presets {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.tour-edit-preset-btn {
+  border: 1px solid #cbd5e1;
+  background: #fff;
+  color: #334155;
+  border-radius: 999px;
+  padding: 5px 10px;
+  font-size: 0.78rem;
+  cursor: pointer;
+}
+
+.tour-edit-preset-btn.is-active {
+  border-color: #2563eb;
+  background: #eff6ff;
+  color: #1d4ed8;
+  font-weight: 600;
+}
+
+.tour-edit-slider-label {
+  font-size: 0.8rem;
+  color: #475569;
+}
+
+.tour-edit-radius-slider {
+  width: 100%;
+}
+
+.tour-edit-amenity-checklist {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 4px;
+}
+
+.tour-edit-amenity-check {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.82rem;
+  color: #334155;
+  cursor: pointer;
+}
+
+.tour-edit-element-checklist {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  align-items: stretch;
+}
+
+.tour-edit-element-checklist li {
+  display: flex;
+  align-items: stretch;
+  gap: 8px;
+  min-width: 0;
+}
+
+.tour-edit-element-checklist li.is-hidden .tour-edit-element-name {
+  color: #64748b;
+}
+
+.tour-edit-element-name {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  padding: 11px 14px;
+  border: 1px solid #e5e7eb;
+  border-radius: 12px;
+  background: #f9fafb;
+  font-size: 0.84rem;
+  font-weight: 500;
+  line-height: 1.25;
+  color: #111827;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tour-edit-element-checklist .tour-edit-visibility-btn {
+  align-self: stretch;
+  min-width: 52px;
+  min-height: 44px;
+  padding: 8px 10px;
+  font-size: 0.78rem;
+}
+
+.tour-edit-element-check {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.82rem;
+  color: #374151;
+  cursor: pointer;
+}
+
+.tour-edit-place-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 8px;
+  width: 100%;
+  min-width: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+  min-height: 0;
+}
+
+.tour-edit-place-list li {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  max-width: 100%;
+  min-height: 52px;
+  overflow: hidden;
+  padding: 10px 12px;
+  border: 1px solid #e2e8f0;
+  border-radius: 10px;
+  background: #fff;
+}
+
+.tour-edit-place-list li.is-hidden {
+  opacity: 0.55;
+  background: #f8fafc;
+}
+
+.tour-edit-place-main {
+  flex: 1;
+  min-width: 0;
+  border: none;
+  background: transparent;
+  text-align: left;
+  padding: 0;
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.tour-edit-place-name {
+  font-size: 0.86rem;
+  font-weight: 600;
+  color: #0f172a;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tour-edit-place-meta {
+  font-size: 0.74rem;
+  color: #64748b;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 100%;
+}
+
+.tour-edit-visibility-btn,
+.tour-edit-primary-btn,
+.tour-edit-secondary-btn,
+.tour-edit-save-btn {
+  font-family: inherit;
+  cursor: pointer;
+  border-radius: 8px;
+  font-size: 0.82rem;
+}
+
+.tour-edit-visibility-btn {
+  flex-shrink: 0;
+  border: 1px solid #cbd5e1;
+  background: #fff;
+  color: #334155;
+  padding: 5px 8px;
+}
+
+.tour-edit-primary-btn,
+.tour-edit-save-btn {
+  border: none;
+  background: #1d784f;
+  color: #fff;
+  padding: 9px 14px;
+  font-weight: 600;
+}
+
+.tour-edit-secondary-btn {
+  border: 1px solid #cbd5e1;
+  background: #fff;
+  color: #334155;
+  padding: 8px 12px;
+}
+
+.tour-edit-overview-actions {
+  gap: 8px;
+  margin-top: auto;
+  padding-top: 8px;
+}
+
+.tour-edit-primary-btn:disabled,
+.tour-edit-save-btn:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
 }
 
 .shared-tour-nearby-card-inner {
@@ -2973,14 +5085,6 @@ html.shared-tour-mode .app-container > .map-container::after {
   line-height: 1.25;
 }
 
-.cv-tour-nearby-panel .shared-tour-nearby-card-rating {
-  color: #b45309;
-}
-
-.cv-tour-nearby-panel .shared-tour-nearby-card-distance {
-  color: var(--cv-color-muted, #6b7280);
-}
-
 .shared-tour-nearby-card-row-text small {
   color: #fbcfe8;
   font-size: 0.76rem;
@@ -3054,15 +5158,15 @@ html.shared-tour-mode .app-container > .map-container::after {
 }
 
 .shared-tour-playback-dot.is-active {
-  background: #fbbf24;
-  border-color: #fde68a;
-  box-shadow: 0 0 0 4px rgba(251, 191, 36, 0.25);
+  background: var(--tour-accent, #14de9b);
+  border-color: #6ee7b7;
+  box-shadow: 0 0 0 4px rgba(20, 222, 155, 0.22);
 }
 
 .shared-tour-playback-line {
   width: 36px;
   height: 2px;
-  background: linear-gradient(90deg, #22c55e, #fbbf24);
+  background: linear-gradient(90deg, #22c55e, var(--tour-accent, #14de9b));
   margin: 0 4px;
 }
 
@@ -3118,12 +5222,12 @@ html.shared-tour-mode .app-container > .map-container::after {
   border-radius: 20px;
   overflow: hidden;
   background: rgba(15, 23, 42, 0.75);
-  border: 1px solid rgba(251, 191, 36, 0.25);
+  border: 1px solid var(--tour-accent-border, rgba(20, 222, 155, 0.28));
   box-shadow: 0 28px 80px rgba(2, 6, 23, 0.65), 0 0 0 1px rgba(255, 255, 255, 0.04) inset;
 }
 
 .shared-tour-slideshow-accent {
-  background: linear-gradient(180deg, #fbbf24, #d97706, #b45309);
+  background: linear-gradient(180deg, var(--tour-accent, #14de9b), var(--tour-accent-deep, #1d784f), var(--tour-accent-deep-muted, #385e51));
 }
 
 .shared-tour-slideshow-body {
@@ -3137,7 +5241,7 @@ html.shared-tour-mode .app-container > .map-container::after {
   font-weight: 800;
   letter-spacing: 0.16em;
   text-transform: uppercase;
-  color: #fcd34d;
+  color: var(--tour-accent, #14de9b);
 }
 
 .shared-tour-slideshow-title {
@@ -3172,9 +5276,9 @@ html.shared-tour-mode .app-container > .map-container::after {
   padding: 14px 28px;
   font-size: 1rem;
   font-weight: 800;
-  color: #0f172a;
-  background: linear-gradient(165deg, #fcd34d, #f59e0b);
-  box-shadow: 0 6px 20px rgba(245, 158, 11, 0.35);
+  color: #ecfdf5;
+  background: linear-gradient(165deg, var(--tour-accent, #14de9b), var(--tour-accent-deep, #1d784f));
+  box-shadow: 0 6px 20px rgba(29, 120, 79, 0.35);
 }
 
 .shared-tour-slideshow-primary:hover:not(:disabled) {
@@ -3380,22 +5484,72 @@ a.shared-tour-slideshow-secondary:hover {
   white-space: nowrap;
 }
 
+/* Photo fullscreen must paint above tour chrome (shell ~9100 lives in overlay-container). */
+html.shared-photo-fullscreen-open .app-container > .map-container {
+  position: relative;
+  z-index: 10100;
+}
+
+html.shared-photo-fullscreen-open .shared-photo-card-wrap {
+  display: none !important;
+}
+
+/* Map floating controls sit below fullscreen overlay. */
+html.shared-photo-fullscreen-open .map-floating-controls-stack,
+html.shared-photo-fullscreen-open .print-map-top-toolbar--share {
+  z-index: 1 !important;
+  pointer-events: none !important;
+}
+
+/* Shared client + tour viewers: no "zoom to my location" control. */
+html.shared-public-map .location-zoom-button-container {
+  display: none !important;
+}
+
+html.shared-photo-fullscreen-open {
+  --photo-fs-close-top: calc(env(safe-area-inset-top, 0px) + 16px);
+  --photo-fs-close-right: max(16px, env(safe-area-inset-right, 0px));
+  --photo-fs-stage-top: calc(env(safe-area-inset-top, 0px) + 72px);
+  --photo-fs-stage-bottom: calc(env(safe-area-inset-bottom, 0px) + 24px);
+}
+
+html.shared-tour-mode.shared-photo-fullscreen-open {
+  --photo-fs-close-top: 96px;
+  --photo-fs-stage-top: 108px;
+  --photo-fs-stage-bottom: calc(var(--shared-tour-footer-h, 80px) + env(safe-area-inset-bottom, 0px) + 20px);
+}
+
+@media (max-width: 768px) {
+  html.shared-tour-mode.shared-photo-fullscreen-open {
+    --photo-fs-close-top: calc(env(safe-area-inset-top, 0px) + 80px);
+    --photo-fs-stage-top: calc(env(safe-area-inset-top, 0px) + 92px);
+  }
+}
+
 .shared-photo-fullscreen {
   position: fixed;
   inset: 0;
-  z-index: 9600;
+  z-index: 10200;
+  pointer-events: none;
 }
 
 .shared-photo-fullscreen-backdrop {
+  pointer-events: auto;
   position: absolute;
   inset: 0;
   border: none;
-  background: rgba(15, 23, 42, 0.72);
+  background: rgba(2, 6, 23, 0.72);
+  backdrop-filter: blur(4px);
+  cursor: pointer;
 }
 
 .shared-photo-fullscreen-stage {
+  pointer-events: auto;
   position: absolute;
-  inset: 4vh 6vw;
+  top: var(--photo-fs-stage-top);
+  right: max(12px, env(safe-area-inset-right, 0px));
+  bottom: var(--photo-fs-stage-bottom);
+  left: max(12px, env(safe-area-inset-left, 0px));
   display: flex;
   align-items: center;
   justify-content: center;
@@ -3404,56 +5558,121 @@ a.shared-tour-slideshow-secondary:hover {
 .shared-photo-fullscreen-image {
   max-width: 100%;
   max-height: 100%;
+  width: auto;
+  height: auto;
   object-fit: contain;
-  border-radius: 12px;
-  box-shadow: 0 14px 40px rgba(0, 0, 0, 0.45);
+  border-radius: 14px;
+  box-shadow:
+    0 24px 64px rgba(0, 0, 0, 0.55),
+    0 0 0 1px rgba(255, 255, 255, 0.08);
 }
 
 .shared-photo-fullscreen-close {
-  position: absolute;
-  top: 0;
-  right: 0;
-  width: 42px;
-  height: 42px;
-  border-radius: 999px;
-  border: none;
-  background: rgba(255, 255, 255, 0.92);
-  color: #0f172a;
-  font-size: 1.9rem;
-  line-height: 1;
+  pointer-events: auto;
+  position: fixed;
+  top: var(--photo-fs-close-top);
+  right: var(--photo-fs-close-right);
+  z-index: 4;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 48px;
+  height: 48px;
+  padding: 0;
+  border-radius: 14px;
+  border: 1px solid rgba(255, 255, 255, 0.22);
+  background: rgba(15, 23, 42, 0.82);
+  color: #f8fafc;
   cursor: pointer;
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.45);
+  transition:
+    background 0.15s ease,
+    border-color 0.15s ease,
+    transform 0.12s ease;
 }
 
-.shared-photo-fullscreen-count {
-  position: absolute;
-  top: 4px;
-  left: 6px;
+.shared-photo-fullscreen-close:hover {
+  background: rgba(30, 41, 59, 0.95);
+  border-color: rgba(20, 222, 155, 0.55);
+  color: #ecfdf5;
+}
+
+.shared-photo-fullscreen-close:active {
+  transform: scale(0.94);
+}
+
+.shared-photo-fullscreen-counter {
+  pointer-events: none;
+  position: fixed;
+  top: calc(var(--photo-fs-close-top) + 12px);
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 4;
+  padding: 6px 14px;
+  border-radius: 999px;
+  background: rgba(15, 23, 42, 0.78);
+  border: 1px solid rgba(255, 255, 255, 0.14);
   color: #e2e8f0;
-  font-size: 0.88rem;
+  font-size: 0.82rem;
   font-weight: 700;
+  letter-spacing: 0.04em;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.35);
 }
 
 .shared-photo-fullscreen-nav {
-  position: absolute;
+  pointer-events: auto;
+  position: fixed;
   top: 50%;
   transform: translateY(-50%);
-  width: 44px;
-  height: 44px;
-  border-radius: 999px;
-  border: none;
-  background: rgba(255, 255, 255, 0.92);
-  color: #0f172a;
-  font-size: 1.8rem;
-  line-height: 1;
+  z-index: 4;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 52px;
+  height: 52px;
+  padding: 0;
+  border-radius: 14px;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  background: rgba(15, 23, 42, 0.78);
+  color: #f8fafc;
   cursor: pointer;
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.4);
+  transition:
+    background 0.15s ease,
+    border-color 0.15s ease,
+    transform 0.12s ease;
+}
+
+.shared-photo-fullscreen-nav:hover {
+  background: rgba(30, 41, 59, 0.94);
+  border-color: rgba(20, 222, 155, 0.5);
+  color: #ecfdf5;
+}
+
+.shared-photo-fullscreen-nav:active {
+  transform: translateY(-50%) scale(0.94);
 }
 
 .shared-photo-fullscreen-nav-prev {
-  left: 8px;
+  left: max(14px, env(safe-area-inset-left, 0px));
 }
 
 .shared-photo-fullscreen-nav-next {
-  right: 8px;
+  right: max(14px, env(safe-area-inset-right, 0px));
+}
+
+@media (max-width: 768px) {
+  .shared-photo-fullscreen-nav {
+    width: 46px;
+    height: 46px;
+    border-radius: 12px;
+  }
+
+  .shared-photo-fullscreen-close {
+    width: 44px;
+    height: 44px;
+    border-radius: 12px;
+  }
 }
 
 .shared-photo-fullscreen-places {
@@ -3518,6 +5737,7 @@ a.shared-tour-slideshow-secondary:hover {
   .print-controls-bar,
   .tool-panel,
   .login-dropdown,
+  .map-floating-controls-stack,
   .layer-selector-container,
   .location-zoom-button-container,
   .shared-map-chrome,
@@ -3593,15 +5813,162 @@ a.shared-tour-slideshow-secondary:hover {
     margin: 8px 0 0 8px;
     max-width: calc(100vw - 16px);
   }
+
   .shared-left-nav {
     width: 142px;
   }
+
   .shared-left-nav-item {
     font-size: 0.78rem;
     padding: 10px 10px;
   }
+
   .shared-left-panel {
     width: min(300px, calc(100vw - 150px));
+  }
+}
+
+/* Client map mobile: bottom footer + repositioned map controls */
+@media (max-width: 768px) {
+  .shared-map-chrome--desktop-dock {
+    display: none !important;
+  }
+
+  html.shared-public-map:not(.shared-tour-mode) {
+    --shared-client-footer-h: 52px;
+    --shared-client-control-size: 50px;
+    --shared-client-control-gap: 16px;
+    --shared-client-control-pad: 14px;
+  }
+
+  .shared-map-chrome--footer {
+    top: auto;
+    bottom: 0;
+    z-index: 9120;
+    display: flex;
+    justify-content: center;
+    align-items: flex-end;
+  }
+
+  .shared-client-footer {
+    pointer-events: none;
+    width: 100%;
+    max-width: 100vw;
+    display: flex;
+    flex-direction: column;
+  }
+
+  .shared-client-footer-panel {
+    pointer-events: none;
+    max-height: 0;
+    overflow: hidden;
+    opacity: 0;
+    transition: max-height 0.28s ease, opacity 0.2s ease;
+  }
+
+  .shared-client-footer-panel.is-open {
+    pointer-events: auto;
+    position: relative;
+    z-index: 2;
+    max-height: min(52vh, 420px);
+    opacity: 1;
+  }
+
+  .shared-client-footer-panel-inner {
+    position: relative;
+    z-index: 2;
+    margin: 0 10px 8px;
+    padding: 14px 16px 16px;
+    max-height: min(52vh, 420px);
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+    background: rgba(255, 255, 255, 0.98);
+    border: 1px solid #e5e7eb;
+    border-radius: 14px 14px 0 0;
+    box-shadow: 0 -8px 32px rgba(15, 23, 42, 0.14);
+  }
+
+  .shared-client-footer-panel-inner .shared-side-section {
+    gap: 10px;
+  }
+
+  .shared-client-footer-bar {
+    pointer-events: auto;
+    position: relative;
+    z-index: 1;
+    display: flex;
+    align-items: stretch;
+    gap: 0;
+    min-height: var(--shared-client-footer-h);
+    padding: 0 6px calc(env(safe-area-inset-bottom, 0px) + 4px);
+    background: rgba(15, 23, 42, 0.96);
+    border-top: 1px solid rgba(148, 163, 184, 0.28);
+    box-shadow: 0 -4px 20px rgba(2, 6, 23, 0.22);
+  }
+
+  .shared-client-footer-tab {
+    flex: 1;
+    min-width: 0;
+    border: none;
+    border-top: 2px solid transparent;
+    background: transparent;
+    color: rgba(226, 232, 240, 0.72);
+    font-family: inherit;
+    font-size: 0.72rem;
+    font-weight: 600;
+    letter-spacing: 0.01em;
+    padding: 10px 4px 8px;
+    cursor: pointer;
+    transition: color 0.15s ease, border-color 0.15s ease, background-color 0.15s ease;
+  }
+
+  .shared-client-footer-tab:hover {
+    color: #f8fafc;
+    background: rgba(51, 65, 85, 0.45);
+  }
+
+  .shared-client-footer-tab.is-active {
+    color: #ffffff;
+    border-top-color: #14de9b;
+    background: rgba(30, 41, 59, 0.85);
+  }
+
+  .shared-client-map-logo.shared-tour-cv-logo-card {
+    top: 8px;
+    right: 8px;
+    transform: scale(0.88);
+    transform-origin: top right;
+    padding: 7px 9px;
+  }
+
+  .shared-client-map-logo .shared-cv-logo--tour-card {
+    height: 37px;
+    max-width: 132px;
+  }
+
+  html.shared-public-map:not(.shared-tour-mode) .map-floating-controls-stack {
+    --map-control-gap: var(--shared-client-control-gap);
+    bottom: calc(
+      var(--shared-client-footer-h) + env(safe-area-inset-bottom, 0px) + var(--shared-client-control-pad)
+    ) !important;
+    right: 12px !important;
+    left: auto !important;
+    top: auto !important;
+  }
+
+  html.shared-public-map:not(.shared-tour-mode) .print-map-top-toolbar--share {
+    top: auto !important;
+    bottom: calc(var(--shared-client-footer-h) + env(safe-area-inset-bottom, 0px) + 14px) !important;
+    left: 12px !important;
+    right: auto !important;
+    z-index: 9105;
+  }
+
+  html.shared-public-map:not(.shared-tour-mode) .layer-selector-popup {
+    z-index: 9200;
+    bottom: calc(var(--shared-client-footer-h) + env(safe-area-inset-bottom, 0px));
+    max-height: min(58vh, calc(100dvh - var(--shared-client-footer-h) - 72px));
+    min-height: min(50vh, 320px);
   }
 }
 

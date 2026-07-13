@@ -4,6 +4,7 @@ import {
   SOIL_STATE_CODES,
   soilMvtSourceLayerId,
 } from '../../components/map/mapStyles';
+import { resolveHostedMapLayerFromFeature } from '../../utils/hostedMapLayerConfig';
 import { isRegridParcelPolygonFeature } from '../../utils/regridParcelBoundary';
 import { isVectorPmtilesArchiveUrl } from './mapLayerShared';
 
@@ -58,18 +59,29 @@ export const tileLayerUrls = {
     'https://storage.googleapis.com/community_view_layers/tiles/transmission_lines_hifld_us_z7_z14.pmtiles',
 };
 
+/** Temporarily disabled — raster overlay not ready for production. */
+export const DISABLED_TILE_LAYERS = new Set(['wildfire_hazard']);
+
 /** Raster PMTiles overlays (PNG/WebP tiles — not queryable MVT). */
 export const rasterTileLayerUrls = {
-  wildfire_hazard:
-    'https://storage.googleapis.com/community_view_layers/tiles/wildfire_hazard_whp2023_cls_conus_z7_z14.pmtiles',
+  // wildfire_hazard: disabled — see DISABLED_TILE_LAYERS
 };
 
 export const rasterTileLayerZoom = {
-  wildfire_hazard: { minzoom: 7, maxzoom: 14 },
+  // wildfire_hazard: { minzoom: 7, maxzoom: 14 },
 };
 
 export function getHostedTileLayerUrl(layerName) {
   return tileLayerUrls[layerName] ?? rasterTileLayerUrls[layerName] ?? null;
+}
+
+/** Every layer toggle id — used when `layerStatus` is `{}` to hide all map layers. */
+export function getAllMapLayerToggleIds() {
+  return [
+    'ownership',
+    ...Object.keys(tileLayerUrls),
+    ...Object.keys(rasterTileLayerUrls),
+  ].filter((id) => !DISABLED_TILE_LAYERS.has(id));
 }
 
 export function isRasterHostedTileLayer(layerName) {
@@ -90,6 +102,11 @@ export function tileLayerMapLayersPresent(map, layerName) {
     return Boolean(
       map.getLayer('conservation_easements-layer') ||
         map.getLayer('conservation_easements-outline-layer')
+    );
+  }
+  if (layerName === 'ownership') {
+    return Boolean(
+      map.getLayer('regrid-parcels-layer') || map.getLayer('regrid-parcels-outline')
     );
   }
   return Boolean(map.getLayer(`${layerName}-layer`));
@@ -139,6 +156,14 @@ export function setTileLayerVisibility(map, layerName, visibility) {
     });
     return;
   }
+  if (layerName === 'ownership') {
+    ['regrid-parcels-layer', 'regrid-parcels-outline'].forEach((layerId) => {
+      if (map.getLayer(layerId)) {
+        map.setLayoutProperty(layerId, 'visibility', visibility);
+      }
+    });
+    return;
+  }
   const layerId = `${layerName}-layer`;
   if (map.getLayer(layerId)) {
     map.setLayoutProperty(layerId, 'visibility', visibility);
@@ -165,27 +190,42 @@ export function getQueryLayerIdsForTileLayer(layerName, map) {
 }
 
 /** Whether a clicked/rendered feature belongs to a map layer toggle id (e.g. `ownership`, `public_land`). */
+export function getMapLayerToggleIdForFeature(feature) {
+  if (!feature) return null;
+  if (isRegridParcelPolygonFeature(feature)) return 'ownership';
+  const stamped = feature.properties?.cvMapLayer;
+  if (stamped) return stamped;
+  const fromLayerMeta = resolveHostedMapLayerFromFeature(feature);
+  if (fromLayerMeta) return fromLayerMeta;
+  const lid = feature.layer?.id;
+  if (typeof lid === 'string') {
+    if (lid.startsWith('soil-') && lid.endsWith('-layer')) return 'soil';
+    if (lid === 'surface_water-flowline-layer') return 'surface_water';
+    if (lid === 'conservation_easements-outline-layer') return 'conservation_easements';
+    if (lid.endsWith('-layer')) {
+      const candidate = lid.slice(0, -'-layer'.length);
+      if (!candidate.includes('-')) return candidate;
+    }
+  }
+  if (typeof feature.source === 'string' && feature.source) return feature.source;
+  return null;
+}
+
 export function featureBelongsToMapLayer(feature, layerName) {
   if (!feature || !layerName) return false;
-  if (layerName === 'ownership') {
-    return isRegridParcelPolygonFeature(feature);
-  }
-  if (layerName === 'soil') {
-    const lid = feature.layer?.id;
-    return typeof lid === 'string' && lid.startsWith('soil-');
-  }
-  if (layerName === 'surface_water') {
-    const lid = feature.layer?.id;
-    return lid === 'surface_water-layer' || lid === 'surface_water-flowline-layer';
-  }
-  if (layerName === 'conservation_easements') {
-    const lid = feature.layer?.id;
-    return lid === 'conservation_easements-layer' || lid === 'conservation_easements-outline-layer';
-  }
-  const lid = feature.layer?.id;
-  if (lid === `${layerName}-layer`) return true;
-  if (feature.source === layerName) return true;
-  return false;
+  return getMapLayerToggleIdForFeature(feature) === layerName;
+}
+
+/** Drop selected features whose map layer toggle is off. */
+export function filterSelectionToVisibleLayers(features, layerStatus, { includeOwnership = true } = {}) {
+  if (!Array.isArray(features) || features.length === 0) return [];
+  const status = layerStatus || {};
+  return features.filter((feature) => {
+    const layerId = getMapLayerToggleIdForFeature(feature);
+    if (!layerId) return true;
+    if (layerId === 'ownership') return includeOwnership && Boolean(status.ownership);
+    return Boolean(status[layerId]);
+  });
 }
 
 /** Prefer the most recently toggled visible non-ownership layer when multiple features overlap. */

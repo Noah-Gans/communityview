@@ -113,6 +113,14 @@ async function searchNearbyNew(lat, lng, radiusMeters, apiKey, includedTypes, op
     .filter((p) => p.place_id && p.name);
 }
 
+const GROCERY_NEARBY_TYPES = ["supermarket", "grocery_store", "food_store"];
+
+async function fetchTourGroceryPlacesNew(lat, lng, radiusMeters, apiKey) {
+  return searchNearbyNew(lat, lng, radiusMeters, apiKey, GROCERY_NEARBY_TYPES, {
+    rankPreference: "DISTANCE",
+  });
+}
+
 /** One Nearby Search per amenity — all Google types in a single request. */
 async function fetchTourNearbyPlacesNew(lat, lng, radiusMeters, apiKey, includedTypes) {
   return searchNearbyNew(lat, lng, radiusMeters, apiKey, includedTypes, {
@@ -123,5 +131,6 @@ async function fetchTourNearbyPlacesNew(lat, lng, radiusMeters, apiKey, included
 module.exports = {
   searchNearbyNew,
   fetchTourNearbyPlacesNew,
+  fetchTourGroceryPlacesNew,
   normalizeNewPlaceToLegacy,
 };

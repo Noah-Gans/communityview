@@ -9,6 +9,7 @@ import AccountSettingsPanel from "../components/account/AccountSettingsPanel";
 import { isNativeApp } from "../utils/platformDetection";
 import { useTutorialWalkthrough } from "../contexts/TutorialWalkthroughContext";
 import { REGRID_BATCH_REPORTS_ENABLED } from "../config/featureFlags";
+import { STAY_ON_HOME_STATE } from "../utils/marketingNavigation";
 
 const MainHeader = () => {
   const location = useLocation();
@@ -32,7 +33,7 @@ const MainHeader = () => {
   const isProductPage = ['/map', '/search', '/report', '/print'].includes(location.pathname);
   
   // `src/pages/landingPages/*` — home + FAQ, pricing, features, changelog
-  const isMarketingPage = location.pathname === '/' || location.pathname === '/updates' || location.pathname === '/pricing' || location.pathname === '/features' || location.pathname === '/faq';
+  const isMarketingPage = location.pathname === '/' || location.pathname === '/pricing' || location.pathname === '/features' || location.pathname === '/faq';
   
   // Hide header on sales one-pager
   const isOnePage = location.pathname === '/onepage';
@@ -346,6 +347,8 @@ const MainHeader = () => {
   const showMobileTourNavStrip =
     isMobile && isMapPage && tourActive && tourStepIndex === 1;
 
+  const isPrintDashboard = location.pathname === '/print';
+
   if (isMobile) {
     if (isMapPage) {
       return (
@@ -361,10 +364,19 @@ const MainHeader = () => {
               <span className="mobile-tutorial-nav-hint">More tabs on wider screens</span>
             </div>
           )}
-          <div className="mobile-account-floating">
-            {isMapRoute && renderTutorialHelpButton()}
-            {renderAccountControls(true, { iconOnly: true })}
-          </div>
+          {isMapRoute && (
+            <div className="mobile-account-floating mobile-account-floating--tutorial-only">
+              {renderTutorialHelpButton()}
+            </div>
+          )}
+          {isContactFormOpen && <ContactForm onClose={handleCloseContactForm} />}
+          {renderAccountModals()}
+        </>
+      );
+    }
+    if (isPrintDashboard) {
+      return (
+        <>
           {isContactFormOpen && <ContactForm onClose={handleCloseContactForm} />}
           {renderAccountModals()}
         </>
@@ -395,7 +407,7 @@ const MainHeader = () => {
           {/* Left - Logo (hidden on mobile) */}
           {!isMobile && (
             <div className="header-left">
-              <Link to="/" className="logo-link">
+              <Link to="/" state={user ? STAY_ON_HOME_STATE : undefined} className="logo-link">
                 <img src="/logo.png" alt="Community View Logo" className="logo-image" />
               </Link>
             </div>
@@ -405,9 +417,6 @@ const MainHeader = () => {
           <div className="header-center">
             <button className="nav-button" onClick={() => navigate('/features')}>
               Features
-            </button>
-            <button className="nav-button" onClick={() => navigate('/updates')}>
-              Updates
             </button>
             <button className="nav-button" onClick={() => navigate('/pricing')}>
               Pricing
@@ -438,7 +447,7 @@ const MainHeader = () => {
         >
           {/* Left Side - Logo/Home */}
           <div className="header-left">
-            <Link to="/" className="logo-link">
+            <Link to="/" state={user ? STAY_ON_HOME_STATE : undefined} className="logo-link">
               {isMobile ? (
                 <span className="home-text">Home</span>
               ) : (
@@ -463,7 +472,7 @@ const MainHeader = () => {
               <Link
                 className={`header-tab ${currentActiveTab === "map" ? "active" : ""}`}
                 onClick={() => handleTabChange("map")}
-                to="/map"
+                to={{ pathname: "/map", search: location.search }}
               >
                 Map
               </Link>
@@ -484,15 +493,13 @@ const MainHeader = () => {
                   Reports
                 </Link>
               )}
-              {!isMobile && (
-                <Link
-                  className={`header-tab ${currentActiveTab === "print" ? "active" : ""}`}
-                  onClick={() => handleTabChange("print")}
-                  to="/print"
-                >
-                  Maps
-                </Link>
-              )}
+              <Link
+                className={`header-tab ${currentActiveTab === "print" ? "active" : ""}`}
+                onClick={() => handleTabChange("print")}
+                to={{ pathname: "/print", search: location.search }}
+              >
+                Maps
+              </Link>
             </div>
           )}
 

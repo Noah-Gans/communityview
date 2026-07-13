@@ -117,8 +117,6 @@ export default function useMapPrintOnMap(deps) {
   const polygonDraftPointsRef = useRef([]);
   const polylineDraftPointsRef = useRef([]);
   const lastPlacementCommitRef = useRef({ tool: null, lng: null, lat: null, at: 0 });
-  const sharePhotoTouchStartXRef = useRef(null);
-
   const parcelMapVisibility = useMemo(() => {
     const printHidesParcels =
       isPrinting && !printParcelsOverlayVisible && !propertyMapWizardActive;
@@ -605,15 +603,6 @@ export default function useMapPrintOnMap(deps) {
   }, [mapIsReady, isPrinting, pickPrintElementAtScreen]);
 
   useEffect(() => {
-    if (!sharePhotoPopupFullscreen) return undefined;
-    const prevOverflow = document.body.style.overflow;
-    document.body.style.overflow = 'hidden';
-    return () => {
-      document.body.style.overflow = prevOverflow;
-    };
-  }, [sharePhotoPopupFullscreen]);
-
-  useEffect(() => {
     if (!currentSharePhotoGallery.length) {
       setSharePhotoPopupElementId(null);
       setSharePhotoPopupFullscreen(false);
@@ -985,7 +974,6 @@ export default function useMapPrintOnMap(deps) {
     closeSharePhotoPopup,
     stepSharePhotoPopup,
     stepSharePhotoFeature,
-    sharePhotoTouchStartXRef,
     shouldRenderPrintElementOnMap,
     handleCreateBoundaryFromRegridParcel,
     zoomToPrintElement,

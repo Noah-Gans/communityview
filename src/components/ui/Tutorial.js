@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useEffect } from 'react';
 import './Tutorial.css';
 import on_load from "../../assets/images/tutorial/on_load.png"
 import tool_panel from "../../assets/images/tutorial/tool_panel.png"
@@ -16,7 +16,7 @@ import report from "../../assets/images/tutorial/report.png"
 import print from "../../assets/images/tutorial/print.png"
 
 import { useNavigate, useLocation } from 'react-router-dom'; // For navigation
-import { useEffect } from 'react';
+import { navigateToMarketingHome } from '../../utils/marketingNavigation';
 
 const Tutorial = () => {
   const navigate = useNavigate(); // For navigation back to previous page
@@ -24,7 +24,7 @@ const Tutorial = () => {
 
   const handleClose = () => {
     if (location.state?.fromIntro) {
-      navigate('/'); // go back to Intro explicitly
+      navigateToMarketingHome(navigate);
     } else {
       navigate(-1); // fallback to history
     }
@@ -110,7 +110,7 @@ const Tutorial = () => {
             <p>The tool panel has other tools beside theoom in and out on the left. </p>
             <p>From Left to right the tools follow as:</p>
             <p>Zoom In, Zoom Out, Measure Distance, Measure Polygon, Select Parcels with Polygon, Delete Selcted Drawing, Clear all Drawings</p>
-            <p>Note, when drawing a polygon or line, double click to stop adding to the shape and then click a third time to finalize</p>
+            <p>Note, when drawing a polygon or line, double-click to finish the shape.</p>
 
 
             <img src={tool_panel} alt="Tool panel" className="step-image" />

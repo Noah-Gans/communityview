@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
+import { createPortal } from 'react-dom';
 import { useNavigate } from 'react-router-dom';
 import { doc, getDoc } from 'firebase/firestore';
 import { getFunctions, httpsCallable } from 'firebase/functions';
@@ -11,6 +12,8 @@ import {
   IconPalette,
   IconCompass,
   IconLogOut,
+  IconChevronRight,
+  IconChevronLeft,
 } from './AccountMenuIcons';
 import AccountSubscriptionSettings from './AccountSubscriptionSettings';
 import AccountProfileSettings from './AccountProfileSettings';
@@ -24,6 +27,28 @@ const SECTIONS = [
   { id: 'preferences', label: 'Map preferences', icon: IconPalette },
   { id: 'help', label: 'Help', icon: IconCompass },
 ];
+
+const MOBILE_MENU_SECTIONS = [
+  ...SECTIONS.filter((section) => section.id !== 'overview'),
+  { id: 'account', label: 'Account actions', icon: IconLogOut },
+];
+
+const useIsMobileLayout = () => {
+  const [isMobile, setIsMobile] = useState(
+    () =>
+      typeof window !== 'undefined' &&
+      window.matchMedia('(max-width: 768px)').matches
+  );
+
+  useEffect(() => {
+    const mediaQuery = window.matchMedia('(max-width: 768px)');
+    const onChange = (event) => setIsMobile(event.matches);
+    mediaQuery.addEventListener('change', onChange);
+    return () => mediaQuery.removeEventListener('change', onChange);
+  }, []);
+
+  return isMobile;
+};
 
 const hexToRgba = (hex, alpha) => {
   const normalized = hex.replace('#', '');
@@ -47,8 +72,8 @@ const NavItem = ({ section, isActive, onClick, hint }) => {
     <button
       type="button"
       className={`account-settings-nav-item${isActive ? ' active' : ''}`}
-      onClick={onClick}
       aria-current={isActive ? 'page' : undefined}
+      onClick={onClick}
     >
       <span className="account-settings-nav-icon">
         <Icon />
@@ -56,6 +81,34 @@ const NavItem = ({ section, isActive, onClick, hint }) => {
       <span className="account-settings-nav-label">{section.label}</span>
       {hint && <span className="account-settings-nav-hint">{hint}</span>}
     </button>
+  );
+};
+
+const MobileListRow = ({ section, hint, onClick, variant }) => {
+  const Icon = section.icon;
+  return (
+    <li>
+      <button
+        type="button"
+        className={`account-settings-mobile-row${
+          variant === 'danger' ? ' account-settings-mobile-row--danger' : ''
+        }`}
+        onClick={onClick}
+      >
+        <span className="account-settings-mobile-row-icon">
+          <Icon />
+        </span>
+        <span className="account-settings-mobile-row-body">
+          <span className="account-settings-mobile-row-label">{section.label}</span>
+          {hint ? (
+            <span className="account-settings-mobile-row-hint">{hint}</span>
+          ) : null}
+        </span>
+        <span className="account-settings-mobile-row-chevron" aria-hidden="true">
+          <IconChevronRight />
+        </span>
+      </button>
+    </li>
   );
 };
 
@@ -74,12 +127,17 @@ const AccountSettingsPanel = ({
   onDeleteAccount,
 }) => {
   const navigate = useNavigate();
+  const isMobile = useIsMobileLayout();
   const { user, subscriptionStatus, highlightSettings, setHighlightSettings } = useUser();
   const [activeSection, setActiveSection] = useState(initialSection);
+  const [mobileShowList, setMobileShowList] = useState(
+    initialSection === 'overview'
+  );
   const [profileSummary, setProfileSummary] = useState({
     firstName: '',
     lastName: '',
     profilePhotoUrl: '',
+    firmLogoUrl: '',
     contactEmail: '',
   });
   const [details, setDetails] = useState(null);
@@ -111,11 +169,16 @@ const AccountSettingsPanel = ({
 
   useEffect(() => {
     const onKeyDown = (e) => {
-      if (e.key === 'Escape') onClose();
+      if (e.key !== 'Escape') return;
+      if (isMobile && !mobileShowList) {
+        setMobileShowList(true);
+        return;
+      }
+      onClose();
     };
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [onClose]);
+  }, [onClose, isMobile, mobileShowList]);
 
   const loadProfileSummary = useCallback(async () => {
     if (!user?.uid) return;
@@ -127,6 +190,7 @@ const AccountSettingsPanel = ({
           firstName: data.firstName || '',
           lastName: data.lastName || '',
           profilePhotoUrl: data.profilePhotoUrl || '',
+          firmLogoUrl: data.firmLogoUrl || '',
           contactEmail: data.contactEmail || data.email || user.email || '',
         });
       }
@@ -164,7 +228,20 @@ const AccountSettingsPanel = ({
 
   useEffect(() => {
     setActiveSection(initialSection);
+    setMobileShowList(initialSection === 'overview');
   }, [initialSection]);
+
+  const openSection = (sectionId) => {
+    setActiveSection(sectionId);
+    if (isMobile) {
+      setMobileShowList(false);
+      requestAnimationFrame(() => {
+        document
+          .querySelector('.account-settings-main')
+          ?.scrollTo({ top: 0, behavior: 'auto' });
+      });
+    }
+  };
 
   useEffect(() => {
     if (activeSection !== 'preferences') return;
@@ -283,14 +360,14 @@ const AccountSettingsPanel = ({
           <>
             {renderProfileCard()}
             <p className="account-settings-lead">
-              Manage your Community View account, billing, and map preferences from
-              the sections on the left.
+              Manage your Community View account, billing, and map preferences
+              using the sections in the menu.
             </p>
             <div className="account-settings-quick-links">
               <button
                 type="button"
                 className="account-settings-quick-link"
-                onClick={() => setActiveSection('subscription')}
+                onClick={() => openSection('subscription')}
               >
                 <IconCreditCard />
                 <span>View subscription</span>
@@ -298,7 +375,7 @@ const AccountSettingsPanel = ({
               <button
                 type="button"
                 className="account-settings-quick-link"
-                onClick={() => setActiveSection('profile')}
+                onClick={() => openSection('profile')}
               >
                 <IconUser />
                 <span>Edit profile</span>
@@ -306,7 +383,7 @@ const AccountSettingsPanel = ({
               <button
                 type="button"
                 className="account-settings-quick-link"
-                onClick={() => setActiveSection('preferences')}
+                onClick={() => openSection('preferences')}
               >
                 <IconPalette />
                 <span>Highlight settings</span>
@@ -339,6 +416,7 @@ const AccountSettingsPanel = ({
                 firstName: profile.firstName || '',
                 lastName: profile.lastName || '',
                 profilePhotoUrl: profile.profilePhotoUrl || '',
+                firmLogoUrl: profile.firmLogoUrl || '',
                 contactEmail: profile.contactEmail || user?.email || '',
               })
             }
@@ -542,60 +620,150 @@ const AccountSettingsPanel = ({
     }
   };
 
-  return (
-    <div className="account-settings-fullscreen" role="dialog" aria-modal="true">
-      <header className="account-settings-topbar">
-        <div className="account-settings-topbar-text">
-          <h1 id="account-settings-title">Account settings</h1>
-          <p>Manage your profile, billing, and preferences</p>
-        </div>
-        <button
-          type="button"
-          className="account-settings-close"
-          onClick={onClose}
-          aria-label="Close account settings"
-        >
-          ×
-        </button>
-      </header>
+  const showMobileList = isMobile && mobileShowList;
 
-      <div className="account-settings-layout">
-        <nav className="account-settings-nav" aria-label="Account sections">
-          <p className="account-settings-nav-title">Account menu</p>
-          <p className="account-settings-nav-email" title={user?.email}>
-            {user?.email}
-          </p>
-
-          {SECTIONS.map((section) => (
-            <NavItem
+  const renderMobileList = () => (
+    <div className="account-settings-mobile-list">
+      <div className="account-settings-mobile-list-inner">
+        {renderProfileCard()}
+        <ul className="account-settings-mobile-menu">
+          {MOBILE_MENU_SECTIONS.map((section) => (
+            <MobileListRow
               key={section.id}
               section={section}
-              isActive={activeSection === section.id}
-              onClick={() => setActiveSection(section.id)}
-              hint={section.id === 'subscription' ? subscriptionHint : undefined}
+              hint={
+                section.id === 'subscription' ? subscriptionHint : undefined
+              }
+              variant={section.id === 'account' ? 'danger' : undefined}
+              onClick={() => openSection(section.id)}
             />
           ))}
-
-          <div className="account-settings-nav-divider" role="separator" />
-
-          <NavItem
-            section={{ id: 'account', label: 'Account actions', icon: IconLogOut }}
-            isActive={activeSection === 'account'}
-            onClick={() => setActiveSection('account')}
-          />
-        </nav>
-
-        <main className="account-settings-main">
-          <div className="account-settings-main-inner">
-            <h2 className="account-settings-section-title">
-              {sectionTitle[activeSection]}
-            </h2>
-            {renderContent()}
-          </div>
-        </main>
+        </ul>
       </div>
     </div>
   );
+
+  const renderMainContent = (includeSectionTitle) => (
+    <main className="account-settings-main">
+      <div
+        className={`account-settings-main-inner${
+          isMobile ? ' account-settings-main-inner--mobile-detail' : ''
+        }`}
+      >
+        {includeSectionTitle ? (
+          <h2 className="account-settings-section-title">
+            {sectionTitle[activeSection]}
+          </h2>
+        ) : null}
+        {renderContent()}
+      </div>
+    </main>
+  );
+
+  const panel = (
+    <div
+      className={`account-settings-fullscreen${
+        isMobile ? ' account-settings-fullscreen--mobile' : ''
+      }${showMobileList ? ' account-settings-fullscreen--mobile-list' : ''}${
+        isMobile && !mobileShowList ? ' account-settings-fullscreen--mobile-detail' : ''
+      }`}
+      role="dialog"
+      aria-modal="true"
+    >
+      <header
+        className={`account-settings-topbar${
+          isMobile && !mobileShowList ? ' account-settings-topbar--detail' : ''
+        }`}
+      >
+        {showMobileList ? (
+          <>
+            <div className="account-settings-topbar-text">
+              <h1 id="account-settings-title">Account settings</h1>
+            </div>
+            <button
+              type="button"
+              className="account-settings-close"
+              onClick={onClose}
+              aria-label="Close account settings"
+            >
+              ×
+            </button>
+          </>
+        ) : isMobile ? (
+          <>
+            <button
+              type="button"
+              className="account-settings-back"
+              onClick={() => setMobileShowList(true)}
+              aria-label="Back to account settings"
+            >
+              <IconChevronLeft />
+            </button>
+            <h1 className="account-settings-topbar-detail-title">
+              {sectionTitle[activeSection]}
+            </h1>
+            <span className="account-settings-topbar-detail-spacer" aria-hidden="true" />
+          </>
+        ) : (
+          <>
+            <div className="account-settings-topbar-text">
+              <h1 id="account-settings-title">Account settings</h1>
+              <p>Manage your profile, billing, and preferences</p>
+            </div>
+            <button
+              type="button"
+              className="account-settings-close"
+              onClick={onClose}
+              aria-label="Close account settings"
+            >
+              ×
+            </button>
+          </>
+        )}
+      </header>
+
+      {isMobile ? (
+        showMobileList ? renderMobileList() : renderMainContent(false)
+      ) : (
+        <div className="account-settings-layout">
+          <nav className="account-settings-nav" aria-label="Account sections">
+            <p className="account-settings-nav-title">Account menu</p>
+            <p className="account-settings-nav-email" title={user?.email}>
+              {user?.email}
+            </p>
+
+            {SECTIONS.map((section) => (
+              <NavItem
+                key={section.id}
+                section={section}
+                isActive={activeSection === section.id}
+                onClick={() => openSection(section.id)}
+                hint={
+                  section.id === 'subscription' ? subscriptionHint : undefined
+                }
+              />
+            ))}
+
+            <div className="account-settings-nav-divider" role="separator" />
+
+            <NavItem
+              section={{
+                id: 'account',
+                label: 'Account actions',
+                icon: IconLogOut,
+              }}
+              isActive={activeSection === 'account'}
+              onClick={() => openSection('account')}
+            />
+          </nav>
+
+          {renderMainContent(true)}
+        </div>
+      )}
+    </div>
+  );
+
+  return createPortal(panel, document.body);
 };
 
 export default AccountSettingsPanel;

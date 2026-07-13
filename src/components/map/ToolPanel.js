@@ -7,8 +7,7 @@ const ToolPanel = ({
   onDrawLine, 
   onDrawPolygon, 
   onClear, 
-  onSelectParcels,
-  onDeleteSelectedFeature // New function for selecting parcels with polygon
+  onDeleteSelectedFeature,
 }) => {
   return (
       <div className="tool-panel" data-tour="tool-panel">
@@ -31,11 +30,6 @@ const ToolPanel = ({
               <div className="tooltip-container">
                 <button className="tool-btn" onClick={onDrawPolygon} data-tour="tool-draw-polygon">⬢</button>
                 <span className="tooltip-text">Draw a Polygon</span>
-              </div>
-
-              <div className="tooltip-container select-parcels-btn">
-                <button className="tool-btn" onClick={onSelectParcels} data-tour="tool-select-parcels">📌</button>
-                <span className="tooltip-text">Select Parcels with Polygon</span>
               </div>
 
               <div className="tooltip-container">

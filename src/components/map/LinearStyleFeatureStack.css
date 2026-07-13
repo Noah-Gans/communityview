@@ -1,0 +1,148 @@
+.lfs-mobile {
+  background: #000;
+  color: #fff;
+  padding: clamp(40px, 8vw, 64px) 16px;
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.lfs-mobile__header {
+  text-align: center;
+  margin-bottom: 20px;
+}
+
+.lfs-mobile__heading {
+  margin: 0 0 12px;
+  font-size: clamp(1.65rem, 6vw, 2.25rem);
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  line-height: 1.15;
+}
+
+.lfs-mobile__subtitle {
+  margin: 0;
+  font-size: clamp(0.95rem, 3.5vw, 1.1rem);
+  line-height: 1.5;
+  color: rgba(255, 255, 255, 0.7);
+  max-width: 36ch;
+  margin-left: auto;
+  margin-right: auto;
+}
+
+.lfs-mobile__tabs {
+  display: flex;
+  gap: 8px;
+  overflow-x: auto;
+  padding: 4px 2px 12px;
+  margin: 0 -4px 16px;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: none;
+}
+
+.lfs-mobile__tabs::-webkit-scrollbar {
+  display: none;
+}
+
+.lfs-mobile__tab {
+  flex: 0 0 auto;
+  padding: 8px 14px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  background: rgba(255, 255, 255, 0.05);
+  color: rgba(255, 255, 255, 0.75);
+  font: inherit;
+  font-size: 0.78rem;
+  font-weight: 600;
+  white-space: nowrap;
+  cursor: pointer;
+  transition:
+    background 0.2s ease,
+    border-color 0.2s ease,
+    color 0.2s ease;
+}
+
+.lfs-mobile__tab.is-active {
+  background: rgba(0, 212, 170, 0.15);
+  border-color: rgba(0, 212, 170, 0.45);
+  color: #00d4aa;
+}
+
+.lfs-mobile__card {
+  border-radius: 16px;
+  overflow: hidden;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: #111;
+  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.4);
+}
+
+.lfs-mobile__card img {
+  display: block;
+  width: 100%;
+  height: auto;
+  max-height: 220px;
+  object-fit: cover;
+  object-position: left top;
+}
+
+.lfs-mobile__card-body {
+  padding: 16px;
+}
+
+.lfs-mobile__card-title {
+  margin: 0 0 8px;
+  font-size: 1.05rem;
+  font-weight: 700;
+}
+
+.lfs-mobile__card-desc {
+  margin: 0;
+  font-size: 0.9rem;
+  line-height: 1.45;
+  color: rgba(255, 255, 255, 0.75);
+}
+
+.lfs-mobile__catalogs {
+  margin-top: 20px;
+  display: grid;
+  gap: 16px;
+}
+
+.lfs-mobile__catalog {
+  border-radius: 14px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: rgba(255, 255, 255, 0.04);
+  padding: 14px;
+}
+
+.lfs-mobile__catalog h3 {
+  margin: 0 0 10px;
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: #34d399;
+}
+
+.lfs-mobile__pills {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.lfs-mobile__pill {
+  border-radius: 999px;
+  padding: 6px 10px;
+  font-size: 0.72rem;
+  line-height: 1.2;
+  background: rgba(255, 255, 255, 0.05);
+  color: rgba(255, 255, 255, 0.55);
+}
+
+.lfs-mobile__pill.is-highlighted {
+  background: rgba(16, 185, 129, 0.2);
+  color: #a7f3d0;
+  box-shadow: inset 0 0 0 1px rgba(52, 211, 153, 0.35);
+}

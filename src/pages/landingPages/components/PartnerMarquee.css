@@ -1,0 +1,98 @@
+/* Partner marquee — shared with home page */
+.partner-logos-title {
+  font-size: clamp(1.2rem, 2.5vw, 1.8rem);
+  font-weight: 600;
+  color: rgba(255, 255, 255, 0.9);
+  text-align: center;
+  margin: 60px auto 30px;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+  width: 100%;
+  max-width: 1200px;
+  padding: 0 20px;
+  box-sizing: border-box;
+}
+
+.stats-banner {
+  width: 100vw;
+  background: rgba(255, 255, 255, 0.05);
+  border-top: 1px solid rgba(255, 255, 255, 0.1);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+  padding: 40px 20px;
+  position: relative;
+  z-index: 5;
+}
+
+.stats-banner-container {
+  max-width: 100%;
+  margin: 0 auto;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  overflow: hidden;
+}
+
+.partner-logos-carousel {
+  width: 100%;
+  overflow: hidden;
+}
+
+.partner-logos-track {
+  display: flex;
+  align-items: center;
+  gap: 60px;
+  animation: scroll-logos 40s linear infinite;
+  will-change: transform;
+  width: fit-content;
+}
+
+.partner-logos-track:hover {
+  animation-play-state: paused;
+}
+
+.partner-logo-item {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 80px;
+}
+
+.partner-logo-item img {
+  max-height: 80px;
+  max-width: 200px;
+  object-fit: contain;
+  filter: brightness(1.2) contrast(1.1);
+  transition: all 0.3s ease;
+}
+
+.partner-logo-with-bg {
+  background: rgba(255, 255, 255, 0.95);
+  padding: 16px 28px;
+}
+
+@keyframes scroll-logos {
+  0% { transform: translateX(0); }
+  100% { transform: translateX(-50%); }
+}
+
+@media (max-width: 768px) {
+  .partner-logos-title {
+    font-size: 1.1rem;
+    margin-bottom: 20px;
+  }
+
+  .partner-logos-track {
+    gap: 40px;
+    animation-duration: 30s;
+  }
+
+  .partner-logo-item {
+    height: 60px;
+  }
+
+  .partner-logo-item img {
+    max-height: 60px;
+    max-width: 150px;
+  }
+}

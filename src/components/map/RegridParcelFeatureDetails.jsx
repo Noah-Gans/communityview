@@ -86,15 +86,32 @@ export default function RegridParcelFeatureDetails({
   onZoomToFeature,
   handleCreateMap,
   isMobile,
-  isMapAppView,
+  mobileSheetState = 'hidden',
 }) {
+  const isMobilePeek = isMobile && mobileSheetState === 'peek';
   const renderDetailField = renderDetailFieldProp || defaultRenderDetailField;
   const locationDisplay = parseRegridLocation(
     feature?.properties?.path,
     detailedData,
     feature
   );
-
+  const displayOwner =
+    feature?.properties?.owner ||
+    detailedData?.owner ||
+    detailedData?.owner_name ||
+    null;
+  const displayAddress =
+    feature?.properties?.address ||
+    detailedData?.address ||
+    detailedData?.physical_address ||
+    detailedData?.physical ||
+    null;
+  const displayParcelNumber =
+    feature?.properties?.parcelnumb ||
+    detailedData?.parcelnumb ||
+    feature?.properties?.county_parcel_id ||
+    detailedData?.county_parcel_id ||
+    null;
   const parcelCacheKey =
     parcelCacheKeyProp || ll_uuid || feature?.properties?.path || null;
   const detailsToggleKey = parcelCacheKey ? `enhancedDetails_${parcelCacheKey}` : null;
@@ -169,13 +186,17 @@ export default function RegridParcelFeatureDetails({
     return buildRegridPropertyLayout(detailedData || {}, { path: pathValue, county, state }, feature);
   }, [detailedData, feature, hasDetailedData]);
 
-  const regridEnhancedParts = useMemo(() => {
-    if (!parcelCacheKey) {
-      return { toolbar: null, expand: null };
-    }
+  const regridPropertyDetailsPanel = useMemo(() => {
+    if (!parcelCacheKey) return null;
 
-    const toolbar = (
-      <div className="enhanced-details-panel enhanced-details-panel--regrid-toolbar-only">
+    const { sections } = expandedDetailLayout;
+
+    return (
+      <div
+        className={`enhanced-details-panel enhanced-details-panel--regrid-unified${
+          !isEnhancedDetailsCollapsed ? ' is-expanded' : ''
+        }`}
+      >
         <div className="enhanced-details-toolbar">
           <button
             type="button"
@@ -183,23 +204,22 @@ export default function RegridParcelFeatureDetails({
             onClick={toggleEnhancedDetails}
             aria-expanded={!isEnhancedDetailsCollapsed}
             aria-label={
-              isEnhancedDetailsCollapsed ? 'Expand parcel details' : 'Collapse parcel details'
+              isEnhancedDetailsCollapsed ? 'Expand property details' : 'Collapse property details'
             }
             data-tour={index === 0 ? 'info-see-more-details' : undefined}
           >
             <span className="enhanced-details-toggle-label">Property details</span>
-            <span className="enhanced-details-toggle-icon" aria-hidden="true">
-              {isEnhancedDetailsCollapsed ? '▼' : '▲'}
+            <span
+              className={`enhanced-details-toggle-icon${
+                !isEnhancedDetailsCollapsed ? ' is-open' : ''
+              }`}
+              aria-hidden="true"
+            >
+              ▼
             </span>
           </button>
         </div>
-      </div>
-    );
 
-    const { sections } = expandedDetailLayout;
-
-    const expand = (
-      <div className="enhanced-details-panel enhanced-details-panel--regrid-expand-only">
         <div
           className={`enhanced-details-expand${!isEnhancedDetailsCollapsed ? ' is-open' : ''}`}
           aria-hidden={isEnhancedDetailsCollapsed}
@@ -285,8 +305,6 @@ export default function RegridParcelFeatureDetails({
         </div>
       </div>
     );
-
-    return { toolbar, expand };
   }, [
     parcelCacheKey,
     isEnhancedDetailsCollapsed,
@@ -305,77 +323,63 @@ export default function RegridParcelFeatureDetails({
   return (
     <div className="feature-details-regrid-primary">
       <div className="feature-header">
-        <h3 className="feature-owner-name">{feature?.properties?.owner || 'N/A'}</h3>
-        <div className="feature-address">{feature?.properties?.address || 'N/A'}</div>
+        <h3 className="feature-owner-name">{displayOwner || (isLoading ? 'Loading…' : 'N/A')}</h3>
+        <div className="feature-address">{displayAddress || (isLoading ? 'Loading…' : 'N/A')}</div>
       </div>
 
       <div className="regrid-action-buttons">
-        {!isMobile && (
-          <div className="action-buttons-row">
-            {onZoomToFeature && (
-              <button
-                type="button"
-                className="sp-map-button sp-button-half"
-                onClick={() => onZoomToFeature(feature)}
-                title="Zoom to this feature on the map"
-              >
-                Zoom to
-              </button>
-            )}
+        <div className="action-buttons-row">
+          {onZoomToFeature && (
             <button
               type="button"
-              className="sp-property-button sp-button-half"
+              className={`sp-map-button${!isMobile ? ' sp-button-half' : ''}`}
+              onClick={() => onZoomToFeature(feature)}
+              title="Zoom to this feature on the map"
+            >
+              Zoom to
+            </button>
+          )}
+          {!isMobile && (
+            <button
+              type="button"
+              className={`sp-property-button${onZoomToFeature ? ' sp-button-half' : ''}`}
               onClick={() => handleCreateMap(feature)}
               title="Create a map from this parcel"
             >
               Create Map
             </button>
-          </div>
-        )}
-        {isMobile && (
-          <div className="feature-details-regrid-mobile-actions">
-            {isMapAppView && onZoomToFeature && (
-              <button
-                type="button"
-                className="sp-map-button"
-                onClick={() => onZoomToFeature(feature)}
-                title="Zoom to this feature on the map"
-              >
-                Zoom to
-              </button>
-            )}
-            <button
-              type="button"
-              className="sp-property-button"
-              onClick={() => handleCreateMap(feature)}
-              title="Create a map from this parcel"
-            >
-              Create Map
-            </button>
-          </div>
-        )}
+          )}
+        </div>
       </div>
 
-      <div className="regrid-summary-fields">
-        {renderField('Parcel Number:', feature?.properties?.parcelnumb || 'N/A')}
-        {renderField('Owner:', feature?.properties?.owner || 'N/A')}
-        {renderField('Address:', feature?.properties?.address || 'N/A')}
-        {renderField('Location:', locationDisplay)}
-        {hasDetailedData &&
+      <div
+        className={`regrid-summary-fields${isMobile ? ' regrid-summary-fields--mobile' : ''}${
+          !isEnhancedDetailsCollapsed ? ' regrid-summary-fields--expanded' : ''
+        }`}
+      >
+        {renderField('APN:', displayParcelNumber || (isLoading ? 'Loading…' : 'N/A'))}
+        {renderField('Owner:', displayOwner || (isLoading ? 'Loading…' : 'N/A'))}
+        {renderField('Address:', displayAddress || (isLoading ? 'Loading…' : 'N/A'))}
+        {renderField('Location:', locationDisplay || (isLoading ? 'Loading…' : 'N/A'))}
+        {!isEnhancedDetailsCollapsed &&
+          hasDetailedData &&
           expandedDetailLayout.mailingLegal.map((entry) => (
             <React.Fragment key={entry.label}>
-              {renderField(entry.label, entry.rawValue, entry.displayValue)}
+              {renderField(entry.label, entry.rawValue, entry.displayValue, {
+                multiline:
+                  entry.multiline ??
+                  (String(entry.displayValue || '').includes('\n') ||
+                    String(entry.label || '').toLowerCase().includes('legal')),
+              })}
             </React.Fragment>
           ))}
       </div>
 
-      <div className="regrid-controls-stack">
-        {regridEnhancedParts.toolbar}
-      </div>
+      {!isMobilePeek && (
+        <div className="regrid-controls-stack">{regridPropertyDetailsPanel}</div>
+      )}
 
-      {regridEnhancedParts.expand}
-
-      {isLoading && (
+      {isLoading && !isMobilePeek && (
         <div className="regrid-summary-loading" style={{ padding: '10px', textAlign: 'center', color: '#666' }}>
           Loading detailed information...
         </div>

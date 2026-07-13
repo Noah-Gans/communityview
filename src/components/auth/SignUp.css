@@ -165,6 +165,197 @@
   max-width: 400px;
   flex-shrink: 0;
   margin-bottom: 8px;
+  margin-left: auto;
+  margin-right: auto;
+  align-self: center;
+}
+
+.signup-error-action {
+  margin-top: 10px;
+  margin-bottom: 0;
+  text-align: center;
+}
+
+.signup-error-action a {
+  color: #4ade80;
+  font-weight: 600;
+  text-decoration: none;
+}
+
+.signup-error-action a:hover {
+  text-decoration: underline;
+}
+
+.signup-reactivation-notice {
+  width: 100%;
+  max-width: 400px;
+  margin: 0 auto 16px;
+  padding: 12px 14px;
+  border-radius: 10px;
+  background: rgba(0, 107, 69, 0.15);
+  border: 1px solid rgba(74, 222, 128, 0.35);
+  color: rgba(255, 255, 255, 0.9);
+  font-size: 0.9rem;
+  line-height: 1.45;
+  text-align: center;
+}
+
+.signup-reactivation-notice strong {
+  color: #ffffff;
+}
+
+/* Free trial messaging */
+.signup-trial-footnote {
+  width: 100%;
+  margin: 16px 0 0;
+  text-align: center;
+  font-size: 0.8rem;
+  color: rgba(255, 255, 255, 0.45);
+  line-height: 1.4;
+}
+
+.plan-trial-price {
+  text-align: center;
+  padding: 4px 0 0;
+}
+
+.plan-trial-price__today {
+  display: flex;
+  align-items: baseline;
+  justify-content: center;
+  gap: 6px;
+}
+
+.plan-trial-price__amount {
+  font-size: 2.5rem;
+  font-weight: 800;
+  color: #4ade80;
+  line-height: 1;
+}
+
+.plan-trial-price__period {
+  font-size: 1rem;
+  color: rgba(255, 255, 255, 0.7);
+  font-weight: 600;
+}
+
+.plan-trial-price__duration {
+  margin: 6px 0 0;
+  font-size: 0.85rem;
+  color: #86efac;
+  font-weight: 600;
+}
+
+.plan-trial-price__then {
+  margin: 10px 0 0;
+  padding-top: 10px;
+  border-top: 1px solid rgba(255, 255, 255, 0.1);
+  font-size: 0.88rem;
+  color: rgba(255, 255, 255, 0.55);
+  line-height: 1.4;
+}
+
+.plan-trial-price__equiv {
+  display: block;
+  font-size: 0.78rem;
+  color: rgba(255, 255, 255, 0.4);
+  margin-top: 2px;
+}
+
+.trial-summary-card {
+  width: 100%;
+  padding: 16px 18px;
+  border-radius: 14px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: rgba(255, 255, 255, 0.04);
+  margin-bottom: 20px;
+  box-sizing: border-box;
+}
+
+.trial-summary-card__row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 0;
+  font-size: 0.92rem;
+  color: rgba(255, 255, 255, 0.65);
+}
+
+.trial-summary-card__row strong {
+  color: #fff;
+  font-weight: 600;
+  text-align: right;
+}
+
+.trial-summary-card__row--muted {
+  font-size: 0.85rem;
+  color: rgba(255, 255, 255, 0.45);
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+  margin-top: 4px;
+  padding-top: 12px;
+}
+
+.trial-summary-card__free {
+  color: #fff !important;
+  font-size: 1.05rem;
+}
+
+.checkout-preparing {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 32px 16px;
+  text-align: center;
+}
+
+.checkout-preparing__spinner {
+  width: 36px;
+  height: 36px;
+  border: 3px solid rgba(255, 255, 255, 0.15);
+  border-top-color: #4ade80;
+  border-radius: 50%;
+  animation: signup-checkout-spin 0.8s linear infinite;
+  margin-bottom: 16px;
+}
+
+@keyframes signup-checkout-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.checkout-preparing__title {
+  margin: 0 0 6px;
+  color: rgba(255, 255, 255, 0.9);
+  font-size: 0.95rem;
+  font-weight: 600;
+}
+
+.checkout-preparing__hint {
+  margin: 0;
+  color: rgba(255, 255, 255, 0.5);
+  font-size: 0.85rem;
+  line-height: 1.4;
+}
+
+.checkout-insecure-notice {
+  width: 100%;
+  margin-bottom: 16px;
+  padding: 12px 14px;
+  border-radius: 10px;
+  border: 1px solid rgba(251, 191, 36, 0.4);
+  background: rgba(251, 191, 36, 0.08);
+  color: rgba(255, 255, 255, 0.82);
+  font-size: 0.82rem;
+  line-height: 1.45;
+  box-sizing: border-box;
+}
+
+.checkout-insecure-notice code {
+  font-size: 0.78rem;
+  color: #fde68a;
 }
 
 /* Compact progress indicator for step 2 */
@@ -265,6 +456,9 @@
   max-width: 580px;
   box-sizing: border-box;
   position: relative; /* For close button positioning */
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
 }
 
 /* Reduce padding on native apps for step 1 to fit content */

@@ -44,7 +44,9 @@
   },
   "scripts": {
     "start": "craco start",
+    "start:https": "env HTTPS=true HOST=127.0.0.1 craco start",
     "build": "craco build",
+    "postbuild": "bash scripts/prune-build-for-deploy.sh",
     "test": "craco test",
     "eject": "react-scripts eject",
     "predeploy": "npm run build",

@@ -624,20 +624,20 @@
 /* Mobile Responsiveness */
 @media (max-width: 768px) {
   .features-page {
-    padding-top: 70px;
+    padding-top: 24px;
   }
 
   .features-hero {
-    padding: 40px 20px 30px;
+    padding: 32px 16px 24px;
   }
 
   .features-main-title {
-    font-size: 2rem;
+    font-size: clamp(1.65rem, 6vw, 2rem);
     line-height: 1.2;
   }
 
   .features-subtitle {
-    font-size: 1rem;
+    font-size: 0.95rem;
   }
 
   .features-content {
@@ -799,11 +799,11 @@
 
 @media (max-width: 480px) {
   .features-page {
-    padding-top: 60px;
+    padding-top: 16px;
   }
 
   .features-hero {
-    padding: 30px 15px 20px;
+    padding: 24px 14px 20px;
   }
 
   .features-main-title {

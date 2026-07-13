@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { useMapContext } from '../MapContext';
 import { useUser } from '../../contexts/UserContext';
 import './Print.css';
@@ -7,10 +7,16 @@ import {
   saveMapPdfWithFooter,
   sanitizeMapExportBasename,
 } from '../../utils/mapExportCapture';
+import { buildPrintAgentMetaFromSources } from '../../utils/sharedMapAgentMeta';
+import { auth } from '../../firebase/firebaseConfig';
 import { legends } from '../../assets/legends';
 import { layerNameMappings } from '../../components/map/layerMappings';
+import MapLoadingOverlay from '../../components/loading/MapLoadingOverlay';
 import PrintDashboard from './PrintDashboard';
 import ShareMapPanel from './ShareMapPanel';
+import {
+  mapHasShareableTour,
+} from '../../utils/tourSettings';
 import {
   fetchSavedMapsSummaries,
   invalidateSavedMapsCache,
@@ -43,9 +49,14 @@ export default function Print() {
     setCurrentBasemapId,
     activeBasemapIdRef,
     pendingPrintBasemapRestoreRef,
+    pendingCreateMapFromFeatureRef,
+    pendingCreateMapBasemapIdRef,
+    mobileMapsSearchQuery,
   } = useMapContext();
 
-  const [viewMode, setViewMode] = useState('dashboard');
+  const [viewMode, setViewMode] = useState(() =>
+    pendingCreateMapFromFeatureRef?.current ? 'edit' : 'dashboard'
+  );
   const [searchQuery, setSearchQuery] = useState('');
   const [savedMaps, setSavedMaps] = useState([]);
   const [currentMapId, setCurrentMapId] = useState(null);
@@ -58,6 +69,7 @@ export default function Print() {
   const [saveError, setSaveError] = useState(null);
   const [lastSavedNotice, setLastSavedNotice] = useState(null);
   const [sharePanel, setSharePanel] = useState(null);
+  const [sharePanelTourMeta, setSharePanelTourMeta] = useState(null);
   const [newMapSetupOpen, setNewMapSetupOpen] = useState(false);
   const [draftMapTitle, setDraftMapTitle] = useState('');
   /** 'parcels' = property wizard; 'custom' = open canvas, no parcel step */
@@ -69,6 +81,9 @@ export default function Print() {
   /** While set, full-screen blocker hides stale map until load + basemap settle. */
   const [openingMapId, setOpeningMapId] = useState(null);
   const mapLoadGenerationRef = useRef(0);
+  const [isMobileViewport, setIsMobileViewport] = useState(
+    () => typeof window !== 'undefined' && window.innerWidth <= 768
+  );
 
   const PAPER_INCHES = useMemo(
     () => ({
@@ -79,6 +94,12 @@ export default function Print() {
     }),
     []
   );
+
+  useEffect(() => {
+    const onResize = () => setIsMobileViewport(window.innerWidth <= 768);
+    window.addEventListener('resize', onResize);
+    return () => window.removeEventListener('resize', onResize);
+  }, []);
 
   // Load user's saved maps
   const loadSavedMaps = useCallback(
@@ -99,10 +120,11 @@ export default function Print() {
     [user]
   );
 
-  // Filter maps by search query
+  // Filter maps by search query (mobile search lives in MobileTopBar)
+  const mapsFilterQuery = isMobileViewport ? mobileMapsSearchQuery : searchQuery;
   const filteredMaps = savedMaps.filter((map) => {
-    if (!searchQuery) return true;
-    const query = searchQuery.toLowerCase();
+    if (!mapsFilterQuery) return true;
+    const query = mapsFilterQuery.toLowerCase();
     return (
       (map.title || '').toLowerCase().includes(query) ||
       (map.description || '').toLowerCase().includes(query)
@@ -135,6 +157,83 @@ export default function Print() {
     return null;
   }, [sharePanel, savedMaps, mapTitle, mapDescription]);
 
+  const resolvedTourMeta = useMemo(() => {
+    if (sharePanelTourMeta) {
+      return {
+        tourNearbyCache: sharePanelTourMeta.tourNearbyCache || null,
+        tourSettings: sharePanelTourMeta.tourSettings || null,
+        tourSlidePlan: sharePanelTourMeta.tourSlidePlan || null,
+      };
+    }
+    if (viewMode === 'edit' && currentMap) {
+      return {
+        tourNearbyCache: currentMap.tourNearbyCache || null,
+        tourSettings: currentMap.tourSettings || null,
+        tourSlidePlan: currentMap.tourSlidePlan || null,
+      };
+    }
+    return {
+      tourNearbyCache: null,
+      tourSettings: null,
+      tourSlidePlan: null,
+    };
+  }, [viewMode, currentMap, sharePanelTourMeta]);
+
+  const hasTourData = useMemo(
+    () =>
+      mapHasShareableTour({
+        tourNearbyCache: resolvedTourMeta.tourNearbyCache,
+        tourSettings: resolvedTourMeta.tourSettings,
+        tourSlidePlan: resolvedTourMeta.tourSlidePlan,
+      }),
+    [resolvedTourMeta]
+  );
+
+  const handleTourGenerated = useCallback((result) => {
+    setSharePanelTourMeta({
+      tourNearbyCache: result?.tourNearbyCache || null,
+      tourSettings: result?.tourSettings || null,
+      tourSlidePlan: result?.tourSlidePlan || null,
+    });
+    if (viewMode === 'edit' && currentMapId) {
+      setCurrentMap((prev) =>
+        prev
+          ? {
+              ...prev,
+              tourNearbyCache: result?.tourNearbyCache || prev.tourNearbyCache,
+              tourSettings: result?.tourSettings || prev.tourSettings,
+              tourSlidePlan: result?.tourSlidePlan || prev.tourSlidePlan,
+            }
+          : prev
+      );
+    }
+  }, [viewMode, currentMapId]);
+
+  useEffect(() => {
+    const mapId = sharePanelResolved?.mapId;
+    if (!mapId || !sharePanel) {
+      if (!mapId) setSharePanelTourMeta(null);
+      return;
+    }
+    let cancelled = false;
+    mapService
+      .getMapById(mapId)
+      .then((map) => {
+        if (cancelled) return;
+        setSharePanelTourMeta({
+          tourNearbyCache: map.tourNearbyCache || null,
+          tourSettings: map.tourSettings || null,
+          tourSlidePlan: map.tourSlidePlan || null,
+        });
+      })
+      .catch(() => {
+        if (!cancelled) setSharePanelTourMeta(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [sharePanelResolved?.mapId, sharePanel]);
+
   useEffect(() => {
     window.dispatchEvent(
       new CustomEvent('print-share-panel-visible', {
@@ -165,18 +264,53 @@ export default function Print() {
     setIsPrinting(true);
   };
 
-  /** Satellite basemap for map maker flows. */
-  const applyMapMakerSatelliteBasemap = () => {
-    queueMicrotask(() => {
+  const scheduleSavedBasemapApply = useCallback((savedBasemap, attempt = 0) => {
+    const mapboxMap = mapRef?.current;
+    const apply = typeof window.applyBasemapById === 'function' ? window.applyBasemapById : null;
+    if (!apply || !mapboxMap) {
+      if (attempt < 80) window.setTimeout(() => scheduleSavedBasemapApply(savedBasemap, attempt + 1), 50);
+      return;
+    }
+    const run = () => {
       try {
-        if (typeof window.applyBasemapById === 'function') {
-          window.applyBasemapById('satellite-streets-v12');
-        }
+        apply(savedBasemap);
       } catch (_) {
-        /* map may not be mounted yet */
+        /* ignore */
       }
-    });
-  };
+    };
+    if (mapboxMap.isStyleLoaded?.()) {
+      run();
+      return;
+    }
+    mapboxMap.once('idle', run);
+  }, [mapRef]);
+
+  const nudgeMapMakerBasemap = useCallback((basemapId) => {
+    const next = String(basemapId || 'satellite-streets-v12').trim() || 'satellite-streets-v12';
+    try {
+      if (typeof window.nudgeBasemapById === 'function') {
+        window.nudgeBasemapById(next);
+      } else if (typeof window.applyBasemapById === 'function') {
+        window.applyBasemapById(next);
+      }
+    } catch (_) {
+      /* ignore */
+    }
+  }, []);
+
+  /** Basemap for map maker flows — one apply + one late nudge (URL sync stays in Map.js). */
+  const applyMapMakerBasemap = useCallback(
+    (basemapId = 'satellite-streets-v12') => {
+      const next = String(basemapId || 'satellite-streets-v12').trim() || 'satellite-streets-v12';
+      setCurrentBasemapId(next);
+      if (activeBasemapIdRef) activeBasemapIdRef.current = next;
+      scheduleSavedBasemapApply(next);
+      window.setTimeout(() => nudgeMapMakerBasemap(next), 450);
+    },
+    [activeBasemapIdRef, nudgeMapMakerBasemap, scheduleSavedBasemapApply, setCurrentBasemapId]
+  );
+
+  const applyMapMakerSatelliteBasemap = () => applyMapMakerBasemap('satellite-streets-v12');
 
   /** General map builder (no parcel wizard). */
   const startGeneralMapEditor = () => {
@@ -203,6 +337,7 @@ export default function Print() {
   };
 
   const openNewMapSetup = () => {
+    if (isMobileViewport) return;
     setDraftMapTitle('');
     setDraftMapKind(null);
     setSaveError(null);
@@ -243,29 +378,22 @@ export default function Print() {
     if (pendingPrintBasemapRestoreRef) pendingPrintBasemapRestoreRef.current = null;
   };
 
-  const scheduleSavedBasemapApply = useCallback((savedBasemap, attempt = 0) => {
-    const mapboxMap = mapRef?.current;
-    const apply = typeof window.applyBasemapById === 'function' ? window.applyBasemapById : null;
-    if (!apply || !mapboxMap) {
-      if (attempt < 80) window.setTimeout(() => scheduleSavedBasemapApply(savedBasemap, attempt + 1), 50);
-      return;
+  useEffect(() => {
+    if (!isMobileViewport) return;
+    if (viewMode === 'edit') {
+      exitEditMode();
     }
-    const run = () => {
-      try {
-        apply(savedBasemap);
-      } catch (_) {
-        /* ignore */
-      }
-    };
-    if (mapboxMap.isStyleLoaded?.()) {
-      run();
-      return;
+    if (newMapSetupOpen) {
+      setNewMapSetupOpen(false);
     }
-    mapboxMap.once('idle', run);
-  }, [mapRef]);
+    if (pendingCreateMapFromFeatureRef?.current) {
+      pendingCreateMapFromFeatureRef.current = null;
+    }
+  }, [isMobileViewport, viewMode, newMapSetupOpen, pendingCreateMapFromFeatureRef]);
 
   // Load a saved map (summary list + full document fetch on open)
   const handleLoadMap = async (mapId) => {
+    if (isMobileViewport) return;
     const generation = mapLoadGenerationRef.current + 1;
     mapLoadGenerationRef.current = generation;
 
@@ -429,16 +557,12 @@ export default function Print() {
   };
 
   // Delete a map
-  const handleDeleteMap = async (mapId, e) => {
-    e.stopPropagation();
-    
-    if (!window.confirm('Are you sure you want to delete this map?')) {
-      return;
-    }
-
+  const handleDeleteMap = async (mapId) => {
     try {
       await mapService.deleteMap(mapId);
-      
+
+      setSavedMaps((prev) => prev.filter((m) => m.id !== mapId));
+
       if (currentMapId === mapId) {
         setCurrentMapId(null);
         setCurrentMap(null);
@@ -446,17 +570,16 @@ export default function Print() {
         setMapDescription('');
         exitEditMode();
       }
-      
+
       invalidateSavedMapsCache();
       await loadSavedMaps(true);
     } catch (error) {
       console.error('Error deleting map:', error);
-      alert('Failed to delete map');
+      throw new Error(error?.message || 'Failed to delete map');
     }
   };
 
-  const handleShareMap = (mapId, e) => {
-    e.stopPropagation();
+  const handleShareMap = (mapId) => {
     const map = savedMaps.find((m) => m.id === mapId);
     if (!map) return;
     setSharePanel({ mapId });
@@ -543,35 +666,17 @@ export default function Print() {
     const base = getSanitizedExportBase();
     setIsGeneratingPdf(true);
     try {
+      const agentMeta = buildPrintAgentMetaFromSources(currentMap, userProfile, user);
       await saveMapPdfWithFooter({
         map,
         baseName: base,
         mapTitle: mapTitle || sharePanelResolved?.mapTitle || 'Map',
-        agentName:
-          currentMap?.agentName ||
-          currentMap?.listingAgent?.name ||
-          currentMap?.contact?.name ||
-          [userProfile?.firstName, userProfile?.lastName].filter(Boolean).join(' ') ||
-          '',
-        agentEmail:
-          currentMap?.agentEmail ||
-          currentMap?.listingAgent?.email ||
-          currentMap?.contact?.email ||
-          userProfile?.contactEmail ||
-          user?.email ||
-          '',
-        agentPhone:
-          currentMap?.agentPhone ||
-          currentMap?.listingAgent?.phone ||
-          currentMap?.contact?.phone ||
-          userProfile?.contactPhone ||
-          '',
-        agentLogoUrl:
-          currentMap?.agentLogoUrl ||
-          currentMap?.brandLogoUrl ||
-          currentMap?.listingAgent?.logoUrl ||
-          userProfile?.firmLogoUrl ||
-          '',
+        agentName: agentMeta.agentName,
+        agentEmail: agentMeta.agentEmail,
+        agentPhone: agentMeta.agentPhone,
+        agentLogoUrl: agentMeta.agentLogo,
+        agentPhotoUrl: agentMeta.agentPhoto,
+        ownerUserId: user?.uid || auth.currentUser?.uid || '',
         paperSize: options.paperSize || 'letter',
         orientation: options.orientation || 'landscape',
         dpi: options.dpi || 300,
@@ -580,6 +685,11 @@ export default function Print() {
         layerNameMappings,
         layerLegends: legends,
         cropRectCss: options.cropRectCss || printLayoutRect || null,
+        basemapId:
+          currentBasemapId ||
+          currentMap?.basemapId ||
+          currentMap?.basemap ||
+          '',
       });
       setSharePanel(null);
       setPrintLayoutMode(false);
@@ -591,6 +701,8 @@ export default function Print() {
     getSanitizedExportBase,
     mapTitle,
     sharePanelResolved,
+    currentMap,
+    currentBasemapId,
     printElements,
     layerStatus,
     printLayoutRect,
@@ -616,6 +728,45 @@ export default function Print() {
       setPropertyMapWizardIntent(null);
     };
   }, [setIsPrinting, setPropertyMapWizardActive, setPropertyMapWizardIntent]);
+
+  /** Info panel “Create Map” → skip dashboard; open editor (boundary added in Map.js). */
+  useLayoutEffect(() => {
+    const pending = pendingCreateMapFromFeatureRef?.current;
+    if (!pending) return;
+
+    const props = pending.properties || {};
+    const suggestedTitle = String(
+      props.address || props.physical || props.owner || props.owner_name || ''
+    ).trim();
+
+    setPropertyMapWizardActive(false);
+    setPropertyMapWizardIntent(null);
+    setCurrentMapId(null);
+    setCurrentMap(null);
+    setMapTitle(suggestedTitle);
+    setMapDescription('');
+    clearPrintElements();
+    enterEditMode();
+
+    const basemapId =
+      String(
+        pendingCreateMapBasemapIdRef?.current ||
+          activeBasemapIdRef?.current ||
+          currentBasemapId ||
+          'satellite-streets-v12'
+      ).trim() || 'satellite-streets-v12';
+    if (pendingCreateMapBasemapIdRef) pendingCreateMapBasemapIdRef.current = null;
+    applyMapMakerBasemap(basemapId);
+  }, [
+    applyMapMakerBasemap,
+    pendingCreateMapFromFeatureRef,
+    pendingCreateMapBasemapIdRef,
+    activeBasemapIdRef,
+    currentBasemapId,
+    clearPrintElements,
+    setPropertyMapWizardActive,
+    setPropertyMapWizardIntent,
+  ]);
 
   useEffect(() => {
     const handleOpenSaveDialog = () => {
@@ -668,9 +819,12 @@ export default function Print() {
             onOpenPrintMap={startPrintLayoutFlow}
             rasterExportDisabled
             rasterExportDisabledReason="Open a map with Edit map first — exports use the live map on screen."
+            mobileShareFocus={isMobileViewport}
+            hasTourData={hasTourData}
+            onTourGenerated={handleTourGenerated}
           />
         )}
-        {newMapSetupOpen && (
+        {newMapSetupOpen && !isMobileViewport && (
           <div
             className="new-map-setup-overlay"
             onClick={() => {
@@ -757,10 +911,12 @@ export default function Print() {
           setSearchQuery={setSearchQuery}
           filteredMaps={filteredMaps}
           currentMapId={currentMapId}
+          isMobile={isMobileViewport}
           onCreateNewMap={openNewMapSetup}
           onLoadMap={handleLoadMap}
           onShareMap={handleShareMap}
           onDeleteMap={handleDeleteMap}
+          onMapsUpdated={() => loadSavedMaps(true)}
           formatDate={formatDate}
         />
       </>
@@ -769,32 +925,13 @@ export default function Print() {
 
   return (
     <>
-      {openingMapId && (
-        <div
-          className="shared-map-loading-blocker print-map-open-blocker"
-          role="status"
-          aria-live="polite"
-          aria-busy="true"
-        >
-          <div className="shared-map-loading-card">
-            <img
-              src="/logo_transparent_no_background.png"
-              alt="Community View"
-              className="shared-map-loading-logo"
-            />
-            <div className="shared-map-loading-title">Loading map</div>
-            <div className="shared-map-loading-subtitle">
-              {openingMapTitle ? (
-                <>
-                  Preparing <strong>{openingMapTitle}</strong> — basemap, layers, and map elements…
-                </>
-              ) : (
-                'Preparing basemap, layers, and map elements…'
-              )}
-            </div>
-          </div>
-        </div>
-      )}
+      {openingMapId ? (
+        <MapLoadingOverlay
+          phraseSet="map"
+          mapTitle={openingMapTitle || undefined}
+          className="map-loading-overlay--print-open"
+        />
+      ) : null}
       {sharePanelResolved && (
         <ShareMapPanel
           open
@@ -813,6 +950,8 @@ export default function Print() {
           }}
           onMapsUpdated={loadSavedMaps}
           onOpenPrintMap={startPrintLayoutFlow}
+          hasTourData={hasTourData}
+          onTourGenerated={handleTourGenerated}
         />
         )}
       {printLayoutMode && (

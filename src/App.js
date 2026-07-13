@@ -1,16 +1,14 @@
 import React, { useState } from 'react';
-import { BrowserRouter as Router, Route, Routes } from 'react-router-dom';
+import { BrowserRouter as Router, Route, Routes, useLocation } from 'react-router-dom';
 import LandingPage from './pages/landingPages/LandingPage';
 import MapPage from './pages/Map';
 import Search from './pages/search/Search';
-import SidePanel from "./components/map/SidePanel";
 import { DataProvider } from './assets/DataContext';
 import Report from './pages/report/Report';
 import Print from './pages/print/Print';
 import SharedMapViewPage from './pages/print/SharedMapViewPage';
 import MainHeader from './pages/MainHeader';
 import Tutorial from './components/ui/Tutorial'; // Import the new Tutorial page
-import Updates from './pages/landingPages/Updates';
 import Pricing from './pages/landingPages/Pricing';
 import Features from './pages/landingPages/Features';
 import FAQ from './pages/landingPages/FAQ';
@@ -28,33 +26,30 @@ import ManageSubscription from "./pages/ManageSubscription";
 import AuthGuard from './components/auth/AuthGuard';
 import { TutorialWalkthroughProvider } from './contexts/TutorialWalkthroughContext';
 import TutorialSpotlight from './components/tutorial/TutorialSpotlight';
+import MobileTopBar from './components/map/MobileTopBar';
+import { isMapBackedRoute } from './utils/mapBackedRoutes';
 
 import './App.css';
 
-function App() {
-  const [activeTab, setActiveTab] = useState('intro');  // Default to 'intro'
-  console.log("App is re-rendering");
+function AppRoutes({ activeTab, setActiveTab }) {
+  const location = useLocation();
+  const showMap = isMapBackedRoute(location.pathname);
 
   return (
-    <UserProvider> {/* Wrap the app with UserProvider */}
-    <Router>
-      <MapProvider>
-        <TutorialWalkthroughProvider>
-        <DataProvider>
-          <AuthGuard>
-            <div className="app-container">
-              <MainHeader activeTab={activeTab} onTabChange={setActiveTab} />
+    <div className="app-container">
+      <MainHeader activeTab={activeTab} onTabChange={setActiveTab} />
+      <MobileTopBar />
 
-              {/* Always render the map, so it stays in the background */}
-              <div className="map-container">
-                <MapPage />
-              </div>
+      {showMap && (
+        <div className="map-container">
+          <MapPage />
+        </div>
+      )}
 
-              <TutorialSpotlight />
+      <TutorialSpotlight />
 
-              {/* Components that overlay the map */}
-              <div className="overlay-container">
-                <Routes>
+      <div className="overlay-container">
+        <Routes>
                   <Route path="/" element={<LandingPage onStartClick={() => setActiveTab('map')} />} />
                   <Route path="/map" element={null} />
                   <Route
@@ -85,7 +80,6 @@ function App() {
                     }
                   />
                   <Route path="/tutorial" element={<Tutorial />} />
-                  <Route path="/updates" element={<Updates />} />
                   <Route path="/pricing" element={<Pricing />} />
                   <Route path="/features" element={<Features />} />
                   <Route path="/faq" element={<FAQ />} />
@@ -102,13 +96,28 @@ function App() {
                       <ManageSubscription />
                     </ProtectedRoute>
                   } />
-                </Routes>
-              </div>
-            </div>
-          </AuthGuard>
-        </DataProvider>
-        </TutorialWalkthroughProvider>
-      </MapProvider>
+        </Routes>
+      </div>
+    </div>
+  );
+}
+
+function App() {
+  const [activeTab, setActiveTab] = useState('intro');  // Default to 'intro'
+  console.log("App is re-rendering");
+
+  return (
+    <UserProvider>
+      <Router>
+        <MapProvider>
+          <TutorialWalkthroughProvider>
+            <DataProvider>
+              <AuthGuard>
+                <AppRoutes activeTab={activeTab} setActiveTab={setActiveTab} />
+              </AuthGuard>
+            </DataProvider>
+          </TutorialWalkthroughProvider>
+        </MapProvider>
       </Router>
     </UserProvider>
   );

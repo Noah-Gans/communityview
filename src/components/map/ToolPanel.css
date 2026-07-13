@@ -12,6 +12,7 @@
   border-radius: 10px;
   border: 2px solid black;
   z-index: 9;
+  overflow: visible;
 }
 
   .tool-container {
@@ -84,30 +85,34 @@
   }
   
 
-  .tooltip-container {
+  .tool-panel .tooltip-container {
     position: relative;
     display: inline-block;
+    overflow: visible;
   }
   
-  .tooltip-text {
+  .tool-panel .tooltip-text {
     visibility: hidden;
     background-color: rgba(0, 0, 0, 0.8);
     color: #fff;
-    text-align: center;
+    text-align: left;
     padding: 5px 10px;
     border-radius: 5px;
     font-size: 12px;
     position: absolute;
-    right: 100%; /* Position to the left of the button */
     top: 50%;
+    right: calc(100% + 10px);
+    left: auto;
+    bottom: auto;
     transform: translateY(-50%);
-    margin-right: 10px; /* Add some space between tooltip and button */
     white-space: nowrap;
     opacity: 0;
     transition: opacity 0.3s;
+    z-index: 20;
+    pointer-events: none;
   }
   
-  .tooltip-container:hover .tooltip-text {
+  .tool-panel .tooltip-container:hover .tooltip-text {
     visibility: visible;
     opacity: 1;
   }

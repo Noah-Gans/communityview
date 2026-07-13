@@ -4,6 +4,7 @@ const {
 } = require("./nearbyAmenityFilters");
 
 const TOUR_NEARBY_MAX_RESULTS = 7;
+const TOUR_NEARBY_EDITOR_MAX_RESULTS = 20;
 
 const METERS_PER_MILE = 1609.344;
 
@@ -23,7 +24,7 @@ const DEFAULT_MAX_DISTANCE_METERS = 12000;
 
 const DISTANCE_FIRST_AMENITIES = new Set(["transit"]);
 
-const ALLOW_UNRATED_AMENITIES = new Set(["parks_rec", "trailheads"]);
+const ALLOW_UNRATED_AMENITIES = new Set(["parks_rec", "trailheads", "grocery"]);
 
 function distanceSortDivisor(amenityKey) {
   if (amenityKey === "fitness") return 12;
@@ -33,6 +34,14 @@ function distanceSortDivisor(amenityKey) {
 
 function maxDistanceMetersForAmenity(amenityKey) {
   return MAX_DISTANCE_METERS_BY_AMENITY[amenityKey] ?? DEFAULT_MAX_DISTANCE_METERS;
+}
+
+function resolveMaxDistanceMetersForCuration(amenityKey, searchRadiusMeters) {
+  const fetchRadius = Number(searchRadiusMeters);
+  if (Number.isFinite(fetchRadius) && fetchRadius > 0) {
+    return fetchRadius;
+  }
+  return maxDistanceMetersForAmenity(amenityKey);
 }
 
 function hasNearbyDisplayName(properties) {
@@ -171,7 +180,8 @@ function curateNearbyTourFeatures(features, options = {}) {
     TOUR_NEARBY_MAX_RESULTS,
     options.maxResults ?? TOUR_NEARBY_MAX_RESULTS
   );
-  const maxMiles = maxDistanceMetersForAmenity(amenityKey) / METERS_PER_MILE;
+  const maxMiles =
+    resolveMaxDistanceMetersForCuration(amenityKey, options.searchRadiusMeters) / METERS_PER_MILE;
   const distanceFirst = DISTANCE_FIRST_AMENITIES.has(amenityKey);
 
   const passesRowFilters = (f, lenient) => {
@@ -239,8 +249,40 @@ function curateNearbyTourFeatures(features, options = {}) {
   return assignStablePlaceIds(selected.slice(0, maxCap), amenityKey);
 }
 
+function sortNearbyTourFeaturesForEditor(features, options = {}) {
+  const amenityKey = options.amenityKey != null ? String(options.amenityKey) : "";
+  const maxCap = TOUR_NEARBY_EDITOR_MAX_RESULTS;
+  const maxMiles =
+    resolveMaxDistanceMetersForCuration(amenityKey, options.searchRadiusMeters) / METERS_PER_MILE;
+
+  const passesRowFilters = (f, lenient) => {
+    if (!f || f.geometry?.type !== "Point") return false;
+    const p = f.properties || {};
+    if (amenityKey && p.amenityKey && String(p.amenityKey) !== amenityKey) return false;
+    if (!hasNearbyDisplayName(p)) return false;
+    if (amenityKey && !isAllowedNearbyFeatureProperties(p, amenityKey, { lenient })) return false;
+    const mi = Number(p.straightLineMiles);
+    if (!Number.isFinite(mi) || mi > maxMiles) return false;
+    if (p.business_status === "CLOSED_PERMANENTLY") return false;
+    return true;
+  };
+
+  let filtered = (features || []).filter((f) => passesRowFilters(f, true));
+  if (!filtered.length) {
+    filtered = (features || []).filter((f) => passesRowFilters(f, false));
+  }
+
+  const rated = filtered.filter((f) => hasGoogleRating(f?.properties));
+  const unrated = filtered.filter((f) => !hasGoogleRating(f?.properties));
+  rated.sort((a, b) => compareByQualityScore(a, b, amenityKey));
+  unrated.sort(compareByDistanceThenRating);
+
+  return assignStablePlaceIds([...rated, ...unrated].slice(0, maxCap), amenityKey);
+}
+
 module.exports = {
   curateNearbyTourFeatures,
+  sortNearbyTourFeaturesForEditor,
   TOUR_NEARBY_MAX_RESULTS,
   distanceSortDivisor,
   maxDistanceMetersForAmenity,

@@ -4,7 +4,7 @@
  */
 
 const NEARBY_FETCH_RADIUS_METERS = 25000;
-const NEARBY_TOUR_DATA_VERSION = 26;
+const NEARBY_TOUR_DATA_VERSION = 28;
 const SEARCH_CENTER_MATCH_EPSILON_DEG = 0.008;
 
 const TOUR_NEARBY_AMENITY_KEYS = [
@@ -36,10 +36,11 @@ function tourNearbySearchCentersMatch(a, b) {
   );
 }
 
-function isRootCacheValid(cache, searchCenter) {
+function isRootCacheValid(cache, searchCenter, expectedRadiusMeters) {
   if (!cache || typeof cache !== "object") return false;
   if (Number(cache.dataVersion) !== NEARBY_TOUR_DATA_VERSION) return false;
-  if (Number(cache.searchRadiusMeters) !== NEARBY_FETCH_RADIUS_METERS) return false;
+  const expectedRadius = Number(expectedRadiusMeters) || NEARBY_FETCH_RADIUS_METERS;
+  if (Number(cache.searchRadiusMeters) !== expectedRadius) return false;
   if (!cache.searchCenter || !searchCenter) return false;
   if (!tourNearbySearchCentersMatch(cache.searchCenter, searchCenter)) return false;
   const byAmenity = cache.byAmenity;
@@ -77,6 +78,7 @@ function sanitizeFeature(feature) {
   if (Array.isArray(raw.googleTypes) && raw.googleTypes.length) {
     props.googleTypes = raw.googleTypes.map((t) => String(t));
   }
+  if (raw.tourHidden === true) props.tourHidden = true;
 
   return {
     type: "Feature",
@@ -110,12 +112,20 @@ function normalizeTourNearbyCache(raw) {
     searchRadiusMeters: Number(raw.searchRadiusMeters) || NEARBY_FETCH_RADIUS_METERS,
     searchCenter: { lat, lng },
     byAmenity,
+    tourSettings:
+      raw.tourSettings && typeof raw.tourSettings === "object"
+        ? normalizeTourSettings(raw.tourSettings)
+        : null,
   };
 }
 
-function readAmenityFromTourCache(mapData, amenityKey, searchCenter) {
+function readAmenityFromTourCache(mapData, amenityKey, searchCenter, expectedRadiusMeters) {
   const cache = normalizeTourNearbyCache(mapData && mapData.tourNearbyCache);
-  if (!cache || !isRootCacheValid(cache, searchCenter)) return null;
+  const expectedRadius =
+    Number(expectedRadiusMeters) ||
+    Number(cache && cache.searchRadiusMeters) ||
+    NEARBY_FETCH_RADIUS_METERS;
+  if (!cache || !isRootCacheValid(cache, searchCenter, expectedRadius)) return null;
   const entry = cache.byAmenity && cache.byAmenity[amenityKey];
   if (!entry || entry.fetched !== true) return null;
   return {
@@ -127,6 +137,7 @@ function readAmenityFromTourCache(mapData, amenityKey, searchCenter) {
 }
 
 function mergeTourNearbyCachePayload(existingRaw, incomingRaw) {
+  const replace = Boolean(incomingRaw && incomingRaw.replace === true);
   const existing = normalizeTourNearbyCache(existingRaw) || {
     dataVersion: NEARBY_TOUR_DATA_VERSION,
     searchRadiusMeters: NEARBY_FETCH_RADIUS_METERS,
@@ -136,11 +147,39 @@ function mergeTourNearbyCachePayload(existingRaw, incomingRaw) {
   const incoming = normalizeTourNearbyCache(incomingRaw);
   if (!incoming) return null;
 
+  if (replace) {
+    const merged = {
+      dataVersion: NEARBY_TOUR_DATA_VERSION,
+      searchRadiusMeters:
+        Number(incoming.searchRadiusMeters) ||
+        Number(existing.searchRadiusMeters) ||
+        NEARBY_FETCH_RADIUS_METERS,
+      searchCenter: incoming.searchCenter || existing.searchCenter,
+      byAmenity: { ...incoming.byAmenity },
+      tourSettings: null,
+    };
+    if (incomingRaw.tourSettings && typeof incomingRaw.tourSettings === "object") {
+      merged.tourSettings = normalizeTourSettings(incomingRaw.tourSettings);
+    } else if (existingRaw && existingRaw.tourSettings && typeof existingRaw.tourSettings === "object") {
+      merged.tourSettings = normalizeTourSettings(existingRaw.tourSettings);
+    }
+    return merged;
+  }
+
   const merged = {
     dataVersion: NEARBY_TOUR_DATA_VERSION,
-    searchRadiusMeters: NEARBY_FETCH_RADIUS_METERS,
+    searchRadiusMeters:
+      Number(incoming.searchRadiusMeters) ||
+      Number(existing.searchRadiusMeters) ||
+      NEARBY_FETCH_RADIUS_METERS,
     searchCenter: incoming.searchCenter || existing.searchCenter,
     byAmenity: { ...existing.byAmenity },
+    tourSettings:
+      incomingRaw.tourSettings && typeof incomingRaw.tourSettings === "object"
+        ? normalizeTourSettings(incomingRaw.tourSettings)
+        : existingRaw && existingRaw.tourSettings && typeof existingRaw.tourSettings === "object"
+          ? normalizeTourSettings(existingRaw.tourSettings)
+          : null,
   };
 
   for (const key of TOUR_NEARBY_AMENITY_KEYS) {
@@ -152,14 +191,229 @@ function mergeTourNearbyCachePayload(existingRaw, incomingRaw) {
   return merged;
 }
 
-function buildSingleAmenityCachePayload(searchCenter, amenityKey, featureCollection) {
+function clampTourSearchRadiusMeters(value) {
+  return Math.min(50000, Math.max(500, Number(value) || NEARBY_FETCH_RADIUS_METERS));
+}
+
+function pickSlidePrintElements(...sources) {
+  let best = null;
+  let bestKeyCount = -1;
+  for (const src of sources) {
+    if (!src || typeof src !== "object") continue;
+    const norm = {};
+    for (const [slideId, ids] of Object.entries(src)) {
+      const key = String(slideId || "").trim();
+      if (!key || !Array.isArray(ids)) continue;
+      norm[key] = ids.map((id) => String(id || "").trim()).filter(Boolean);
+    }
+    const keyCount = Object.keys(norm).length;
+    if (keyCount > bestKeyCount) {
+      best = norm;
+      bestKeyCount = keyCount;
+    }
+  }
+  return bestKeyCount >= 0 ? best : null;
+}
+
+/** Keep in sync with `src/utils/tourSettings.js`. */
+function normalizeTourSettings(raw) {
+  const src = raw && typeof raw === "object" ? raw : {};
+  const enabledRaw = Array.isArray(src.enabledAmenityKeys)
+    ? src.enabledAmenityKeys
+    : TOUR_NEARBY_AMENITY_KEYS;
+  const enabledAmenityKeys = [];
+  for (const rawKey of enabledRaw) {
+    const key = String(rawKey || "").trim();
+    if (TOUR_NEARBY_AMENITY_KEYS.includes(key) && !enabledAmenityKeys.includes(key)) {
+      enabledAmenityKeys.push(key);
+    }
+  }
+  const slidePlan = Array.isArray(src.slidePlan)
+    ? src.slidePlan.map((s) => String(s || "").trim()).filter(Boolean)
+    : null;
+  const planKeys = [];
+  if (slidePlan && slidePlan.length) {
+    for (const id of slidePlan) {
+      if (!String(id).startsWith("amenity:")) continue;
+      const key = String(id).slice(8).trim();
+      if (TOUR_NEARBY_AMENITY_KEYS.includes(key) && !planKeys.includes(key)) {
+        planKeys.push(key);
+      }
+    }
+  }
+  const resolvedAmenityKeys = planKeys.length
+    ? planKeys
+    : enabledAmenityKeys.length
+      ? enabledAmenityKeys
+      : [...TOUR_NEARBY_AMENITY_KEYS];
+  return {
+    searchRadiusMeters: clampTourSearchRadiusMeters(src.searchRadiusMeters),
+    enabledAmenityKeys: resolvedAmenityKeys,
+    slidePlan: slidePlan && slidePlan.length ? slidePlan : null,
+    amenityRadiusMeters:
+      src.amenityRadiusMeters && typeof src.amenityRadiusMeters === "object"
+        ? src.amenityRadiusMeters
+        : null,
+    slidePrintElements:
+      src.slidePrintElements && typeof src.slidePrintElements === "object"
+        ? src.slidePrintElements
+        : null,
+  };
+}
+
+function resolveTourSettingsFromMapData(mapData) {
+  const rawCache = mapData && mapData.tourNearbyCache;
+  const fromDoc = mapData && mapData.tourSettings;
+  const fromCacheEmbedded = rawCache && rawCache.tourSettings;
+
+  const radius =
+    (fromCacheEmbedded && fromCacheEmbedded.searchRadiusMeters != null
+      ? fromCacheEmbedded.searchRadiusMeters
+      : null) ??
+    (rawCache && rawCache.searchRadiusMeters != null ? rawCache.searchRadiusMeters : null) ??
+    (fromDoc && fromDoc.searchRadiusMeters != null ? fromDoc.searchRadiusMeters : null);
+
+  const tourSlidePlanRoot =
+    mapData && Array.isArray(mapData.tourSlidePlan)
+      ? mapData.tourSlidePlan.map((s) => String(s || "").trim()).filter(Boolean)
+      : null;
+
+  const slidePlanFromCache =
+    fromCacheEmbedded && Array.isArray(fromCacheEmbedded.slidePlan)
+      ? fromCacheEmbedded.slidePlan
+      : null;
+  const slidePlanFromDoc =
+    fromDoc && Array.isArray(fromDoc.slidePlan) ? fromDoc.slidePlan : null;
+  const slidePlan =
+    tourSlidePlanRoot && tourSlidePlanRoot.length
+      ? tourSlidePlanRoot
+      : slidePlanFromDoc && slidePlanFromDoc.length
+        ? slidePlanFromDoc
+        : slidePlanFromCache;
+
+  if (slidePlan && slidePlan.length) {
+    const enabledFromDoc =
+      fromDoc && Array.isArray(fromDoc.enabledAmenityKeys) ? fromDoc.enabledAmenityKeys : null;
+    const enabledFromCache =
+      fromCacheEmbedded && Array.isArray(fromCacheEmbedded.enabledAmenityKeys)
+        ? fromCacheEmbedded.enabledAmenityKeys
+        : null;
+    return normalizeTourSettings({
+      slidePlan,
+      searchRadiusMeters: radius,
+      enabledAmenityKeys: enabledFromDoc?.length ? enabledFromDoc : enabledFromCache,
+      amenityRadiusMeters:
+        (fromDoc && fromDoc.amenityRadiusMeters) ||
+        (fromCacheEmbedded && fromCacheEmbedded.amenityRadiusMeters) ||
+        null,
+      slidePrintElements: pickSlidePrintElements(
+        fromDoc && fromDoc.slidePrintElements,
+        fromCacheEmbedded && fromCacheEmbedded.slidePrintElements
+      ),
+    });
+  }
+
+  const enabledFromCache =
+    fromCacheEmbedded && Array.isArray(fromCacheEmbedded.enabledAmenityKeys)
+      ? fromCacheEmbedded.enabledAmenityKeys
+      : null;
+  const enabledFromDoc =
+    fromDoc && Array.isArray(fromDoc.enabledAmenityKeys) ? fromDoc.enabledAmenityKeys : null;
+  const enabledAmenityKeys = enabledFromCache && enabledFromCache.length
+    ? enabledFromCache
+    : enabledFromDoc && enabledFromDoc.length
+      ? enabledFromDoc
+      : null;
+
+  if (enabledAmenityKeys && enabledAmenityKeys.length) {
+    return normalizeTourSettings({
+      enabledAmenityKeys,
+      searchRadiusMeters: radius,
+      slidePlan,
+      amenityRadiusMeters:
+        (fromDoc && fromDoc.amenityRadiusMeters) ||
+        (fromCacheEmbedded && fromCacheEmbedded.amenityRadiusMeters) ||
+        null,
+      slidePrintElements: pickSlidePrintElements(
+        fromDoc && fromDoc.slidePrintElements,
+        fromCacheEmbedded && fromCacheEmbedded.slidePrintElements
+      ),
+    });
+  }
+
+  const root = normalizeTourNearbyCache(rawCache);
+  if (root) {
+    const embeddedKeys = root.tourSettings && root.tourSettings.enabledAmenityKeys;
+    if (Array.isArray(embeddedKeys) && embeddedKeys.length) {
+      return normalizeTourSettings({
+        enabledAmenityKeys: embeddedKeys,
+        searchRadiusMeters: root.searchRadiusMeters,
+        slidePlan: root.tourSettings && root.tourSettings.slidePlan,
+        amenityRadiusMeters: root.tourSettings && root.tourSettings.amenityRadiusMeters,
+        slidePrintElements: pickSlidePrintElements(
+          fromDoc && fromDoc.slidePrintElements,
+          fromCacheEmbedded && fromCacheEmbedded.slidePrintElements,
+          root.tourSettings && root.tourSettings.slidePrintElements
+        ),
+      });
+    }
+    const keys = TOUR_NEARBY_AMENITY_KEYS.filter((k) => {
+      const features = root.byAmenity[k] && root.byAmenity[k].features;
+      return Array.isArray(features) && features.length > 0;
+    });
+    if (keys.length) {
+      return normalizeTourSettings({
+        enabledAmenityKeys: keys,
+        searchRadiusMeters: root.searchRadiusMeters,
+        slidePrintElements: pickSlidePrintElements(
+          fromDoc && fromDoc.slidePrintElements,
+          fromCacheEmbedded && fromCacheEmbedded.slidePrintElements,
+          root.tourSettings && root.tourSettings.slidePrintElements
+        ),
+      });
+    }
+  }
+
+  if (fromDoc && typeof fromDoc === "object" && Object.keys(fromDoc).length) {
+    return normalizeTourSettings(fromDoc);
+  }
+
+  return null;
+}
+
+function mapHasCuratedTourData(mapData) {
+  if (!mapData) return false;
+  if (Array.isArray(mapData.tourSlidePlan) && mapData.tourSlidePlan.length) {
+    return true;
+  }
+  if (Array.isArray(mapData.tourSettings && mapData.tourSettings.slidePlan) && mapData.tourSettings.slidePlan.length) {
+    return true;
+  }
+  const rawCache = mapData.tourNearbyCache;
+  const root = normalizeTourNearbyCache(rawCache);
+  if (!root) return false;
+  if (Array.isArray(root.tourSettings && root.tourSettings.slidePlan) && root.tourSettings.slidePlan.length) {
+    return true;
+  }
+  for (const fc of Object.values(root.byAmenity || {})) {
+    if ((fc.features || []).some((f) => f.properties && f.properties.tourHidden === true)) return true;
+  }
+  return false;
+}
+
+function buildSingleAmenityCachePayload(searchCenter, amenityKey, featureCollection, searchRadiusMeters) {
   const lat = finiteCoord(searchCenter && searchCenter.lat);
   const lng = finiteCoord(searchCenter && searchCenter.lng);
   if (lat == null || lng == null || !amenityKey) return null;
 
+  const radius = Math.min(
+    50000,
+    Math.max(500, Number(searchRadiusMeters) || NEARBY_FETCH_RADIUS_METERS)
+  );
+
   return {
     dataVersion: NEARBY_TOUR_DATA_VERSION,
-    searchRadiusMeters: NEARBY_FETCH_RADIUS_METERS,
+    searchRadiusMeters: radius,
     searchCenter: { lat, lng },
     byAmenity: {
       [amenityKey]: sanitizeAmenityCollection(featureCollection),
@@ -173,6 +427,9 @@ module.exports = {
   isRootCacheValid,
   tourNearbySearchCentersMatch,
   normalizeTourNearbyCache,
+  normalizeTourSettings,
+  resolveTourSettingsFromMapData,
+  mapHasCuratedTourData,
   readAmenityFromTourCache,
   mergeTourNearbyCachePayload,
   buildSingleAmenityCachePayload,

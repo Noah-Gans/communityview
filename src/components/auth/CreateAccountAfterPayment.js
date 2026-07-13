@@ -3,6 +3,7 @@ import { createUserWithEmailAndPassword } from "firebase/auth";
 import { auth, db } from "../../firebase/firebaseConfig";
 import { doc, getDoc, updateDoc, deleteDoc } from "firebase/firestore";
 import { useNavigate } from "react-router-dom";
+import { navigateToMarketingHome } from "../../utils/marketingNavigation";
 import "./CreateAccountAfterPayment.css";
 
 /**
@@ -109,7 +110,7 @@ const CreateAccountAfterPayment = () => {
 
   return (
     <div className="create-account-page">
-      <button className="close-btn" onClick={() => navigate("/")}>
+      <button className="close-btn" onClick={() => navigateToMarketingHome(navigate)}>
         ✕
       </button>
 

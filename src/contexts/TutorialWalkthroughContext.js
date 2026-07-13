@@ -30,7 +30,7 @@ Then we’ll walk through navigation, map interaction, parcel info, and search.`
 • Home logo: returns to the landing page
 • Map: opens the interactive parcel map
 • Search: finds parcels by owner, address, or APN
-• Reports / Maps (desktop): advanced output tools
+• Maps: create and share custom property maps for listings
 • ? button: starts this guided walkthrough
 • Account: settings, subscription, and sign out`,
     targetSelector: '[data-tour="product-nav"]',
@@ -42,9 +42,8 @@ Then we’ll walk through navigation, map interaction, parcel info, and search.`
     id: 'map-main',
     title: 'The main map',
     body: `Map interaction basics:
-• Click + drag to pan the map
-• Scroll wheel / trackpad pinch to zoom
-• Click a parcel boundary to select it`,
+• Click and drag to pan the map
+• Scroll wheel / trackpad pinch to zoom`,
     overlayMode: 'blocks-only',
     blockSelectors: [
       '[data-tour="product-nav"]',
@@ -57,33 +56,34 @@ Then we’ll walk through navigation, map interaction, parcel info, and search.`
     tooltipPlacement: 'bottom',
   },
   {
-    id: 'parcel-practice',
-    title: 'Find a parcel to click',
-    body: `We just zoomed you to a parcel-rich area.
-Now click one visible parcel polygon to continue.`,
-    overlayMode: 'blocks-only',
-    blockSelectors: [
-      '[data-tour="product-nav"]',
-      '[data-tour="side-panel-shell"]',
-      '[data-tour="tool-panel"]',
-      '[data-tour="basemap-selector"]',
-      '[data-tour="location-zoom"]',
-    ],
+    id: 'geolocate',
+    title: 'Zoom to your area',
+    body: `Click the location button on the map to fly to where you are.
+Zooming to yourself also resets your default view — the map will open here the next time you return.
+Does this look like your local area?`,
+    targetSelector: '[data-tour="location-zoom"]',
     tooltipAnchorSelector: '[data-tour="product-nav"]',
     tooltipPlacement: 'bottom',
   },
   {
-    id: 'open-side-panel',
-    title: 'Open the side panel',
+    id: 'parcel-select',
+    title: 'Select a nearby parcel',
     body:
-      'Use the expand arrow on the right edge of the map to open the side panel. The tour will continue as soon as it is open.',
-    targetSelector: '[data-tour="side-panel-toggle"]',
-    placement: 'right',
+      'Click a parcel boundary near where you zoomed. The side panel will open with ownership and property details for that parcel.',
+    overlayMode: 'blocks-only',
+    blockSelectors: [
+      '[data-tour="product-nav"]',
+      '[data-tour="tool-panel"]',
+      '[data-tour="basemap-selector"]',
+      '[data-tour="location-zoom"]',
+    ],
+    tooltipAnchorSelector: '[data-tour="product-nav"]',
+    tooltipPlacement: 'bottom',
   },
   {
     id: 'side-info',
     title: 'Parcel info card',
-    body: `This Info panel is where parcel details live:
+    body: `You selected a parcel — here is where the details live:
 • Owner
 • Parcel ID
 • Address and location
@@ -149,7 +149,7 @@ Try Discover, Imagery, Satellite, or Streets depending on whether you want clean
     id: 'tools-overview',
     title: 'Tool panel',
     body:
-      'This desktop tool stack gives you quick map actions. The top buttons zoom in and out, and the lower buttons help draw, select, and clean up shapes.',
+      'This desktop tool stack gives you quick map actions. The top buttons zoom in and out, and the lower buttons help draw and clean up shapes.',
     targetSelector: '[data-tour="tool-panel"]',
     placement: 'left',
     responsiveNote: 'This tool panel is hidden on smaller mobile layouts.',
@@ -158,19 +158,10 @@ Try Discover, Imagery, Satellite, or Streets depending on whether you want clean
     id: 'tools-draw',
     title: 'Draw tools',
     body:
-      'Use the line and polygon tools to measure or sketch directly on the map. Finish a shape with a double-click, then click once more to finalize it.',
+      'Use the line and polygon tools to measure or sketch directly on the map. Finish a shape with a double-click.',
     targetSelector: '[data-tour="tool-draw-line"]',
     placement: 'left',
     responsiveNote: 'These drawing controls are desktop-only in the current layout.',
-  },
-  {
-    id: 'tools-select',
-    title: 'Polygon parcel select',
-    body:
-      'This pin tool lets you draw a polygon and select every parcel inside it, which is handy when building a report or reviewing an area.',
-    targetSelector: '[data-tour="tool-select-parcels"]',
-    placement: 'left',
-    responsiveNote: 'This spatial select control is hidden on mobile.',
   },
   {
     id: 'tools-clear',

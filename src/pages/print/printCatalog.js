@@ -5,6 +5,14 @@
  * one-click primitives (rectangle, triangle, diamond, SVG icons) are Points.
  */
 
+import {
+  POINT_ICON_KEYS,
+  POINT_ICON_REGISTRY,
+  getPointIconCatalogLabel,
+} from './pointIconRegistry';
+
+export { getPointIconCatalogLabel };
+
 export const MAP_ELEMENT_CATEGORY = {
   ALL: 'all',
   POINT: 'point',
@@ -132,57 +140,11 @@ export const MAP_ELEMENT_ITEMS = [
   },
 ];
 
-/** Point icon tools sourced from /public/logos_for_print. */
-const SVG_ICON_KEYS = [
-  'bridgeWater',
-  'cabin',
-  'camera',
-  'farm',
-  'garageCar',
-  'hiking',
-  'horseSaddle',
-  'houseChimney',
-  'locationPinParking',
-  'planeAlt',
-  'school',
-  'skiing',
-  'skiingNordic',
-  'swimmer',
-  'tablePicnic',
-];
-
-const ICON_LABELS = {
-  bridgeWater: 'Bridge',
-  cabin: 'Cabin',
-  camera: 'Photo Point',
-  farm: 'Barn/Shed',
-  garageCar: 'Garage',
-  hiking: 'Trail Head',
-  horseSaddle: 'Stable',
-  houseChimney: 'Main Home',
-  locationPinParking: 'Parking',
-  planeAlt: 'Airport',
-  school: 'School',
-  skiing: 'Skiing',
-  skiingNordic: 'Skiing Nordic',
-  swimmer: 'Pool',
-  tablePicnic: 'Park',
-};
-
-/** Human-readable name for a point icon `svgKey` (e.g. `bridgeWater` → "Bridge"). */
-export function getPointIconCatalogLabel(svgKey) {
-  if (!svgKey || typeof svgKey !== 'string') return '';
-  if (ICON_LABELS[svgKey]) return ICON_LABELS[svgKey];
-  const spaced = svgKey.replace(/([A-Z])/g, ' $1').trim();
-  if (!spaced) return '';
-  return spaced.charAt(0).toUpperCase() + spaced.slice(1);
-}
-
-SVG_ICON_KEYS.forEach((key) => {
+POINT_ICON_KEYS.forEach((key) => {
   MAP_ELEMENT_ITEMS.push({
     id: `shape_${key}`,
     tool: `shape_${key}`,
-    label: ICON_LABELS[key] || key,
+    label: POINT_ICON_REGISTRY[key].label,
     category: 'point',
     icon: '✶',
   });
@@ -191,8 +153,8 @@ SVG_ICON_KEYS.forEach((key) => {
 /** Point tools in the print palette: text note plus one-click `shape_*` logo markers. */
 export const PRINT_POINT_ICON_CATALOG = [
   { tool: 'note', label: 'Text' },
-  ...SVG_ICON_KEYS.map((key) => ({
+  ...POINT_ICON_KEYS.map((key) => ({
     tool: `shape_${key}`,
-    label: ICON_LABELS[key] || key,
+    label: POINT_ICON_REGISTRY[key].label,
   })),
 ];

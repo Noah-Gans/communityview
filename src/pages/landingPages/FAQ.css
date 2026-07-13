@@ -236,12 +236,20 @@
 
 /* Mobile Responsive */
 @media (max-width: 768px) {
+  .faq-page {
+    padding-top: 24px;
+  }
+
   .faq-hero {
-    padding: 80px 20px 40px;
+    padding: 32px 16px 28px;
+  }
+
+  .faq-main-title {
+    font-size: clamp(1.65rem, 6vw, 2rem);
   }
 
   .faq-content {
-    padding: 0 20px 40px;
+    padding: 0 16px 32px;
   }
 
   .faq-grid {

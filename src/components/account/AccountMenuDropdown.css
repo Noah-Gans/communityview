@@ -120,8 +120,16 @@
 
 @media (max-width: 768px) {
   .account-menu-dropdown {
-    width: 260px;
+    width: min(300px, calc(100vw - 24px));
     right: 0;
+    max-height: min(70dvh, calc(100dvh - 80px));
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .account-menu-item {
+    min-height: 48px;
+    padding: 12px 14px;
   }
 
   .main-header.mobile-account-only .account-menu-dropdown,

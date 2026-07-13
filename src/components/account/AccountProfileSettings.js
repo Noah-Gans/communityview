@@ -3,6 +3,12 @@ import { doc, getDoc, setDoc } from 'firebase/firestore';
 import { db, auth } from '../../firebase/firebaseConfig';
 import { uploadProfileImage } from '../../utils/profileImageUpload';
 
+const normalizeWebsiteUrl = (value) => {
+  const trimmed = String(value || '').trim();
+  if (!trimmed) return '';
+  return /^https?:\/\//i.test(trimmed) ? trimmed : `https://${trimmed}`;
+};
+
 const ImageUploadField = ({
   id,
   label,
@@ -81,6 +87,7 @@ const AccountProfileSettings = ({ user, onProfileUpdated }) => {
   const [lastName, setLastName] = useState('');
   const [contactPhone, setContactPhone] = useState('');
   const [contactEmail, setContactEmail] = useState('');
+  const [contactWebsite, setContactWebsite] = useState('');
   const [profilePhotoUrl, setProfilePhotoUrl] = useState('');
   const [firmLogoUrl, setFirmLogoUrl] = useState('');
   const [photoPreview, setPhotoPreview] = useState('');
@@ -107,6 +114,7 @@ const AccountProfileSettings = ({ user, onProfileUpdated }) => {
           lastName: data.lastName || '',
           contactPhone: data.contactPhone || '',
           contactEmail: data.contactEmail || data.email || authEmail || '',
+          contactWebsite: data.contactWebsite || '',
           profilePhotoUrl: data.profilePhotoUrl || '',
           firmLogoUrl: data.firmLogoUrl || '',
         };
@@ -114,6 +122,7 @@ const AccountProfileSettings = ({ user, onProfileUpdated }) => {
         setLastName(loaded.lastName);
         setContactPhone(loaded.contactPhone);
         setContactEmail(loaded.contactEmail);
+        setContactWebsite(loaded.contactWebsite);
         setProfilePhotoUrl(loaded.profilePhotoUrl);
         setFirmLogoUrl(loaded.firmLogoUrl);
         setPhotoPreview(loaded.profilePhotoUrl);
@@ -126,6 +135,7 @@ const AccountProfileSettings = ({ user, onProfileUpdated }) => {
           lastName: '',
           contactPhone: '',
           contactEmail: authEmail,
+          contactWebsite: '',
           profilePhotoUrl: '',
           firmLogoUrl: '',
         });
@@ -219,6 +229,7 @@ const AccountProfileSettings = ({ user, onProfileUpdated }) => {
         lastName: lastName.trim(),
         contactPhone: contactPhone.trim(),
         contactEmail: trimmedEmail,
+        contactWebsite: normalizeWebsiteUrl(contactWebsite),
         profilePhotoUrl: nextPhotoUrl || '',
         firmLogoUrl: nextLogoUrl || '',
         updatedAt: new Date(),
@@ -249,7 +260,7 @@ const AccountProfileSettings = ({ user, onProfileUpdated }) => {
       </p>
 
       <div className="account-settings-profile-panel">
-        <section className="account-settings-profile-section">
+        <section className="account-settings-profile-section account-settings-profile-section--photos">
           <h3 className="account-settings-profile-section-title">Photos</h3>
           <ImageUploadField
             id="account-profile-photo"
@@ -312,7 +323,7 @@ const AccountProfileSettings = ({ user, onProfileUpdated }) => {
               autoComplete="email"
             />
           </div>
-          <div className="account-settings-field account-settings-field--last">
+          <div className="account-settings-field">
             <label htmlFor="account-contact-phone">Phone</label>
             <input
               id="account-contact-phone"
@@ -321,6 +332,18 @@ const AccountProfileSettings = ({ user, onProfileUpdated }) => {
               onChange={(e) => setContactPhone(e.target.value)}
               placeholder="(555) 555-5555"
               autoComplete="tel"
+            />
+          </div>
+          <div className="account-settings-field account-settings-field--last">
+            <label htmlFor="account-contact-website">Website</label>
+            <input
+              id="account-contact-website"
+              type="url"
+              value={contactWebsite}
+              onChange={(e) => setContactWebsite(e.target.value)}
+              placeholder="www.yourfirm.com"
+              autoComplete="url"
+              inputMode="url"
             />
           </div>
           {authEmail && (
