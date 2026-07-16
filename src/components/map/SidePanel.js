@@ -24,6 +24,11 @@ import {
   getPhotosFromElement,
   validateMapPhotoFile,
 } from '../../utils/mapPhotoStorage';
+import {
+  extractImageFilesFromDataTransfer,
+  extractImageUrlsFromDataTransfer,
+  fetchImageUrlAsFile,
+} from '../../utils/photoDropTransfer';
 import { fetchRegridParcelDetailCached } from '../../utils/regridParcelApi';
 import { fetchSoilMapUnitByMukey } from '../../utils/soilMapUnitApi';
 import RegridParcelFeatureDetails from './RegridParcelFeatureDetails';
@@ -127,18 +132,15 @@ const SidePanel = memo(({
     });
   }, [printElements, printGalleryItems]);
 
-  const handlePrintGalleryUpload = useCallback(
-    async (event) => {
-      const files = Array.from(event.target.files || []);
-      event.target.value = '';
-      if (!files.length) return;
-      if (!user?.uid) {
-        window.alert('Sign in to upload images.');
-        return;
-      }
-      const imageFiles = files.filter((f) => f.type?.startsWith('image/'));
+  const ingestPrintGalleryFiles = useCallback(
+    async (files, { manageBusyState = true } = {}) => {
+      const imageFiles = (files || []).filter((f) => f?.type?.startsWith('image/'));
       if (!imageFiles.length) {
         window.alert('Please select image files.');
+        return;
+      }
+      if (!user?.uid) {
+        window.alert('Sign in to upload images.');
         return;
       }
       for (const file of imageFiles) {
@@ -148,7 +150,7 @@ const SidePanel = memo(({
           return;
         }
       }
-      setPrintGalleryUploading(true);
+      if (manageBusyState) setPrintGalleryUploading(true);
       try {
         const uploaded = [];
         for (const file of imageFiles) {
@@ -165,10 +167,57 @@ const SidePanel = memo(({
         console.error('Gallery upload failed:', err);
         window.alert(err?.message || 'Failed to upload image.');
       } finally {
-        setPrintGalleryUploading(false);
+        if (manageBusyState) setPrintGalleryUploading(false);
       }
     },
     [user, printMapId]
+  );
+
+  const handlePrintGalleryUpload = useCallback(
+    async (event) => {
+      const files = Array.from(event.target.files || []);
+      event.target.value = '';
+      if (!files.length) return;
+      await ingestPrintGalleryFiles(files);
+    },
+    [ingestPrintGalleryFiles]
+  );
+
+  const handlePrintGalleryTransfer = useCallback(
+    async (dataTransfer) => {
+      if (!user?.uid) {
+        window.alert('Sign in to upload images.');
+        return;
+      }
+      const files = extractImageFilesFromDataTransfer(dataTransfer);
+      if (files.length) {
+        await ingestPrintGalleryFiles(files);
+        return;
+      }
+      const urls = extractImageUrlsFromDataTransfer(dataTransfer);
+      if (!urls.length) {
+        window.alert('Drop or paste image files, or an image from another tab.');
+        return;
+      }
+      setPrintGalleryUploading(true);
+      try {
+        const fetched = [];
+        for (const url of urls.slice(0, 12)) {
+          const file = await fetchImageUrlAsFile(url);
+          if (file) fetched.push(file);
+        }
+        if (!fetched.length) {
+          window.alert(
+            'Could not load those images here (site blocked the transfer). Save them locally, then drop or paste the files.'
+          );
+          return;
+        }
+        await ingestPrintGalleryFiles(fetched, { manageBusyState: false });
+      } finally {
+        setPrintGalleryUploading(false);
+      }
+    },
+    [user, ingestPrintGalleryFiles]
   );
 
   /**
@@ -1528,6 +1577,7 @@ const SidePanel = memo(({
                   deletePrintElement={deletePrintElement}
                   printGalleryItems={printGalleryItemsWithFeaturePhotos}
                   onPrintGalleryUpload={handlePrintGalleryUpload}
+                  onPrintGalleryTransfer={handlePrintGalleryTransfer}
                   printGalleryUploading={printGalleryUploading}
                 />
               </div>

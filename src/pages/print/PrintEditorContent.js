@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useMemo, useRef, useState } from 'react';
 import './Print.css';
 import { svgMap, printCatalogToolIcons } from '../../components/map/printShapes/svgMap';
 import { MAP_ELEMENT_CATEGORY, MAP_ELEMENT_ITEMS } from './printCatalog';
@@ -9,6 +9,7 @@ import {
   PRINT_GALLERY_DRAG_MIME,
   registerPrintGalleryDragPayload,
 } from '../../utils/printGalleryDragBuffer';
+import { galleryItemToSrc } from '../../utils/mapPhotoStorage';
 
 /** Order for the “All” tab: Points → Lines → Shapes. */
 const CATALOG_CATEGORY_ORDER = { point: 0, line: 1, shape: 2 };
@@ -36,9 +37,62 @@ export default function PrintEditorContent({
   deletePrintElement,
   printGalleryItems = [],
   onPrintGalleryUpload,
+  onPrintGalleryTransfer,
+  printGalleryUploading = false,
 }) {
   const [openFlowSection, setOpenFlowSection] = useState('elements');
   const [elementCategory, setElementCategory] = useState(MAP_ELEMENT_CATEGORY.ALL);
+  const [galleryDropActive, setGalleryDropActive] = useState(false);
+  const galleryDropDepthRef = useRef(0);
+
+  const canTransferGallery = typeof onPrintGalleryTransfer === 'function';
+
+  const handleGalleryDragEnter = (event) => {
+    if (!canTransferGallery) return;
+    event.preventDefault();
+    event.stopPropagation();
+    if (printGalleryUploading) return;
+    galleryDropDepthRef.current += 1;
+    setGalleryDropActive(true);
+  };
+
+  const handleGalleryDragLeave = (event) => {
+    if (!canTransferGallery) return;
+    event.preventDefault();
+    event.stopPropagation();
+    galleryDropDepthRef.current = Math.max(0, galleryDropDepthRef.current - 1);
+    if (galleryDropDepthRef.current === 0) setGalleryDropActive(false);
+  };
+
+  const handleGalleryDragOver = (event) => {
+    if (!canTransferGallery) return;
+    event.preventDefault();
+    event.stopPropagation();
+    if (event.dataTransfer) event.dataTransfer.dropEffect = 'copy';
+  };
+
+  const handleGalleryDrop = async (event) => {
+    if (!canTransferGallery) return;
+    event.preventDefault();
+    event.stopPropagation();
+    galleryDropDepthRef.current = 0;
+    setGalleryDropActive(false);
+    if (printGalleryUploading) return;
+    await onPrintGalleryTransfer(event.dataTransfer);
+  };
+
+  const handleGalleryPaste = async (event) => {
+    if (!canTransferGallery || printGalleryUploading) return;
+    const clip = event.clipboardData;
+    if (!clip) return;
+    const hasImage =
+      Array.from(clip.files || []).some((f) => f?.type?.startsWith('image/')) ||
+      Array.from(clip.items || []).some((i) => i?.kind === 'file') ||
+      /https?:\/\//i.test(String(clip.getData?.('text/plain') || clip.getData?.('text/uri-list') || ''));
+    if (!hasImage) return;
+    event.preventDefault();
+    await onPrintGalleryTransfer(clip);
+  };
 
   const toggleFlowSection = (id) => {
     setOpenFlowSection((prev) => (prev === id ? null : id));
@@ -241,39 +295,66 @@ export default function PrintEditorContent({
           isOpen={openFlowSection === 'gallery'}
           onToggle={toggleFlowSection}
         >
-          <div className="print-gallery-panel-upload">
+          <div
+            className={`print-gallery-panel-upload${
+              galleryDropActive ? ' is-drop-active' : ''
+            }${printGalleryUploading ? ' is-busy' : ''}`}
+            onDragEnter={handleGalleryDragEnter}
+            onDragLeave={handleGalleryDragLeave}
+            onDragOver={handleGalleryDragOver}
+            onDrop={handleGalleryDrop}
+            onPaste={handleGalleryPaste}
+            tabIndex={canTransferGallery ? 0 : undefined}
+            aria-label={
+              canTransferGallery
+                ? 'Add images by drag and drop, paste, or file picker'
+                : undefined
+            }
+          >
             <label className="sp-map-button print-gallery-panel-label">
-              Upload images
+              {printGalleryUploading ? 'Uploading…' : 'Upload images'}
               <input
                 type="file"
                 accept="image/*"
                 multiple
                 className="print-gallery-panel-file"
                 onChange={onPrintGalleryUpload}
+                disabled={printGalleryUploading}
               />
             </label>
+            {canTransferGallery && (
+              <span className="print-gallery-panel-drop-hint">
+                or drop images / paste with ⌘V · Ctrl+V
+              </span>
+            )}
           </div>
           {printGalleryItems.length > 0 && (
             <>
               <p className="print-gallery-panel-hint">Drag images to the map.</p>
               <ul className="print-gallery-panel-thumbs">
-                {printGalleryItems.map((item) => (
-                  <li key={item.id} className="print-gallery-panel-thumb-wrap">
-                    <img
-                      src={item.dataUrl}
-                      alt={item.name}
-                      draggable
-                      onDragStart={(e) => {
-                        const id = registerPrintGalleryDragPayload(item.dataUrl);
-                        if (!id) return;
-                        e.dataTransfer.setData(PRINT_GALLERY_DRAG_MIME, id);
-                        e.dataTransfer.effectAllowed = 'copy';
-                      }}
-                      className="print-gallery-panel-thumb"
-                      title={item.name}
-                    />
-                  </li>
-                ))}
+                {printGalleryItems.map((item) => {
+                  const src = galleryItemToSrc(item);
+                  return (
+                    <li key={item.id} className="print-gallery-panel-thumb-wrap">
+                      <img
+                        src={src}
+                        alt={item.name}
+                        draggable
+                        onDragStart={(e) => {
+                          const id = registerPrintGalleryDragPayload({
+                            url: src,
+                            storagePath: item.storagePath,
+                          });
+                          if (!id) return;
+                          e.dataTransfer.setData(PRINT_GALLERY_DRAG_MIME, id);
+                          e.dataTransfer.effectAllowed = 'copy';
+                        }}
+                        className="print-gallery-panel-thumb"
+                        title={item.name}
+                      />
+                    </li>
+                  );
+                })}
               </ul>
             </>
           )}

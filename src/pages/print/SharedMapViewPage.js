@@ -1778,6 +1778,8 @@ export default function SharedMapViewPage() {
     const currentParsed = currentPlanId ? parseSlideId(currentPlanId) : null;
     const isBirdSlide =
       currentParsed?.kind === 'intro' && currentParsed.introId === 'bird';
+    const isOrbitSlide =
+      currentParsed?.kind === 'intro' && currentParsed.introId === 'context';
 
     const applyPadding = () =>
       applyTourMobileMapPadding(map, {
@@ -1791,11 +1793,13 @@ export default function SharedMapViewPage() {
       !isMobileViewport ||
       tourAgentExpandedLayout ||
       tourInVicinityStep ||
-      isBirdSlide
+      isBirdSlide ||
+      isOrbitSlide
     ) {
       // Vicinity peek panel must reserve bottom inset immediately — delayed padding
       // mid-camera-move was freezing the photo → first-amenity zoom transition.
-      // Bird slide applies padding before flyTo; shrinking inset mid-orbit felt choppy.
+      // Bird + orbit (context) slides apply padding before the camera move; a delayed
+      // setPadding mid-orbit recenters the map and stutters the rotation.
       // Desktop always applies footer inset immediately.
       applyPadding();
     } else {

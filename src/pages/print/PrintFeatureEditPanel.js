@@ -13,6 +13,11 @@ import {
   photoEntryToSrc,
   validateMapPhotoFile,
 } from '../../utils/mapPhotoStorage';
+import {
+  extractImageFilesFromDataTransfer,
+  extractImageUrlsFromDataTransfer,
+  fetchImageUrlAsFile,
+} from '../../utils/photoDropTransfer';
 import './Print.css';
 
 function NavRow({ children, onClick }) {
@@ -84,11 +89,15 @@ export default function PrintFeatureEditPanel({
   const [subPanel, setSubPanel] = useState(null);
   const [lightboxIndex, setLightboxIndex] = useState(null);
   const [photoUploading, setPhotoUploading] = useState(false);
+  const [photoDropActive, setPhotoDropActive] = useState(false);
   const photoInputRef = useRef(null);
+  const photoDropDepthRef = useRef(0);
 
   useEffect(() => {
     setSubPanel(null);
     setLightboxIndex(null);
+    photoDropDepthRef.current = 0;
+    setPhotoDropActive(false);
   }, [selectedPrintElement?.id]);
 
   useEffect(() => {
@@ -142,17 +151,14 @@ export default function PrintFeatureEditPanel({
 
   const photos = getPhotosFromElement(selectedPrintElement);
 
-  const handlePhotoUpload = async (event) => {
-    const files = Array.from(event.target.files || []);
-    event.target.value = '';
-    if (!files.length) return;
-    if (!user?.uid) {
-      window.alert('Sign in to upload photos.');
+  const uploadPhotoFiles = async (files, { manageBusyState = true } = {}) => {
+    const imageFiles = (files || []).filter((f) => f?.type?.startsWith('image/'));
+    if (!imageFiles.length) {
+      window.alert('Please drop or select image files.');
       return;
     }
-    const imageFiles = files.filter((f) => f.type?.startsWith('image/'));
-    if (!imageFiles.length) {
-      window.alert('Please select image files.');
+    if (!user?.uid) {
+      window.alert('Sign in to upload photos.');
       return;
     }
     for (const file of imageFiles) {
@@ -162,7 +168,7 @@ export default function PrintFeatureEditPanel({
         return;
       }
     }
-    setPhotoUploading(true);
+    if (manageBusyState) setPhotoUploading(true);
     try {
       const added = [];
       for (const file of imageFiles) {
@@ -179,8 +185,84 @@ export default function PrintFeatureEditPanel({
       console.error('Photo upload failed:', err);
       window.alert(err?.message || 'Failed to upload photo.');
     } finally {
+      if (manageBusyState) setPhotoUploading(false);
+    }
+  };
+
+  const handlePhotoUpload = async (event) => {
+    const files = Array.from(event.target.files || []);
+    event.target.value = '';
+    if (!files.length) return;
+    await uploadPhotoFiles(files);
+  };
+
+  const ingestPhotoTransfer = async (dataTransfer) => {
+    const transferFiles = extractImageFilesFromDataTransfer(dataTransfer);
+    if (transferFiles.length) {
+      await uploadPhotoFiles(transferFiles);
+      return;
+    }
+    const urls = extractImageUrlsFromDataTransfer(dataTransfer);
+    if (!urls.length) {
+      window.alert('Drop or paste image files, or an image from another tab.');
+      return;
+    }
+    setPhotoUploading(true);
+    try {
+      const fetched = [];
+      for (const url of urls.slice(0, 12)) {
+        const file = await fetchImageUrlAsFile(url);
+        if (file) fetched.push(file);
+      }
+      if (!fetched.length) {
+        window.alert(
+          'Could not load those images here (site blocked the transfer). Save them locally, then drop or paste the files.'
+        );
+        return;
+      }
+      await uploadPhotoFiles(fetched, { manageBusyState: false });
+    } finally {
       setPhotoUploading(false);
     }
+  };
+
+  const handlePhotoDragEnter = (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    if (photoUploading) return;
+    photoDropDepthRef.current += 1;
+    setPhotoDropActive(true);
+  };
+
+  const handlePhotoDragLeave = (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    photoDropDepthRef.current = Math.max(0, photoDropDepthRef.current - 1);
+    if (photoDropDepthRef.current === 0) setPhotoDropActive(false);
+  };
+
+  const handlePhotoDragOver = (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    if (event.dataTransfer) event.dataTransfer.dropEffect = 'copy';
+  };
+
+  const handlePhotoDrop = async (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    photoDropDepthRef.current = 0;
+    setPhotoDropActive(false);
+    if (photoUploading) return;
+    await ingestPhotoTransfer(event.dataTransfer);
+  };
+
+  const handlePhotoPaste = async (event) => {
+    if (photoUploading) return;
+    const files = extractImageFilesFromDataTransfer(event.clipboardData);
+    const urls = extractImageUrlsFromDataTransfer(event.clipboardData);
+    if (!files.length && !urls.length) return;
+    event.preventDefault();
+    await ingestPhotoTransfer(event.clipboardData);
   };
 
   const handleRemoveAllPhotos = async () => {
@@ -190,6 +272,30 @@ export default function PrintFeatureEditPanel({
       photoGallery: [],
       photoDataUrl: null,
     });
+  };
+
+  const handleRemovePhoto = async (index) => {
+    const target = photos[index];
+    if (!target) return;
+    const nextPhotos = photos.filter((_, i) => i !== index);
+    setLightboxIndex((prev) => {
+      if (prev === null) return prev;
+      if (!nextPhotos.length) return null;
+      if (prev === index) return Math.min(index, nextPhotos.length - 1);
+      return prev > index ? prev - 1 : prev;
+    });
+    updatePrintElement({
+      ...selectedPrintElement,
+      photoGallery: nextPhotos,
+      photoDataUrl: null,
+    });
+    if (target.storagePath) {
+      try {
+        await deleteMapPhoto(target.storagePath);
+      } catch (err) {
+        console.error('Failed to delete photo from storage:', err);
+      }
+    }
   };
 
   const metricsBlock = (
@@ -702,8 +808,33 @@ export default function PrintFeatureEditPanel({
         </label>
       )}
 
-      <div className="print-feature-upload-row">
-        <span className="print-feature-upload-label">Add photo</span>
+      <div
+        className={`print-feature-upload-row${photoDropActive ? ' is-drop-active' : ''}${
+          photoUploading ? ' is-busy' : ''
+        }`}
+        tabIndex={0}
+        role="button"
+        aria-label="Add photos by drag and drop, paste, or file picker"
+        onDragEnter={handlePhotoDragEnter}
+        onDragLeave={handlePhotoDragLeave}
+        onDragOver={handlePhotoDragOver}
+        onDrop={handlePhotoDrop}
+        onPaste={handlePhotoPaste}
+        onKeyDown={(event) => {
+          if (event.key === 'Enter' || event.key === ' ') {
+            event.preventDefault();
+            if (!photoUploading) photoInputRef.current?.click();
+          }
+        }}
+      >
+        <div className="print-feature-upload-copy">
+          <span className="print-feature-upload-label">Add photo</span>
+          <span className="print-feature-upload-hint">
+            {photoUploading
+              ? 'Uploading…'
+              : 'Drop images, paste with ⌘V / Ctrl+V, or browse'}
+          </span>
+        </div>
         <input
           ref={photoInputRef}
           type="file"
@@ -716,7 +847,10 @@ export default function PrintFeatureEditPanel({
         <button
           type="button"
           className="print-feature-upload-btn"
-          onClick={() => !photoUploading && photoInputRef.current?.click()}
+          onClick={(event) => {
+            event.stopPropagation();
+            if (!photoUploading) photoInputRef.current?.click();
+          }}
           disabled={photoUploading}
         >
           {photoUploading ? 'Uploading…' : 'Browse'}
@@ -725,30 +859,51 @@ export default function PrintFeatureEditPanel({
       {photos.length > 0 && (
         <>
           <div className="print-feature-shape-preview print-feature-photo-gallery-hero" style={{ marginTop: 2 }}>
-            <button
-              type="button"
-              className="print-feature-photo-hero-btn"
-              onClick={() => setLightboxIndex(0)}
-              aria-label="Enlarge photo 1"
-            >
-              <div className="print-feature-photo-hero-inner">
-                <img src={photoEntryToSrc(photos[0])} alt="" className="print-feature-photo-hero-img" draggable={false} />
-                <span className="print-feature-photo-hero-hint">Click to enlarge</span>
-              </div>
-            </button>
+            <div className="print-feature-photo-hero-wrap">
+              <button
+                type="button"
+                className="print-feature-photo-hero-btn"
+                onClick={() => setLightboxIndex(0)}
+                aria-label="Enlarge photo 1"
+              >
+                <div className="print-feature-photo-hero-inner">
+                  <img src={photoEntryToSrc(photos[0])} alt="" className="print-feature-photo-hero-img" draggable={false} />
+                  <span className="print-feature-photo-hero-hint">Click to enlarge</span>
+                </div>
+              </button>
+              <button
+                type="button"
+                className="print-feature-photo-remove"
+                onClick={() => handleRemovePhoto(0)}
+                aria-label="Remove photo 1"
+                title="Remove photo"
+              >
+                ×
+              </button>
+            </div>
           </div>
           {photos.length > 1 && (
             <div className="print-feature-photo-thumb-row">
               {photos.slice(1).map((photo, idx) => (
-                <button
-                  key={`ph-${idx + 1}`}
-                  type="button"
-                  className="print-feature-photo-thumb"
-                  onClick={() => setLightboxIndex(idx + 1)}
-                  aria-label={`Enlarge photo ${idx + 2}`}
-                >
-                  <img src={photoEntryToSrc(photo)} alt="" draggable={false} />
-                </button>
+                <div key={`ph-${idx + 1}`} className="print-feature-photo-thumb-wrap">
+                  <button
+                    type="button"
+                    className="print-feature-photo-thumb"
+                    onClick={() => setLightboxIndex(idx + 1)}
+                    aria-label={`Enlarge photo ${idx + 2}`}
+                  >
+                    <img src={photoEntryToSrc(photo)} alt="" draggable={false} />
+                  </button>
+                  <button
+                    type="button"
+                    className="print-feature-photo-remove print-feature-photo-remove--thumb"
+                    onClick={() => handleRemovePhoto(idx + 1)}
+                    aria-label={`Remove photo ${idx + 2}`}
+                    title="Remove photo"
+                  >
+                    ×
+                  </button>
+                </div>
               ))}
             </div>
           )}

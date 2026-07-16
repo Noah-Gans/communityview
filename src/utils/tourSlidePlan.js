@@ -180,10 +180,15 @@ export function isPlanIndexVicinity(slidePlan, planIndex) {
   return parseSlideId(slidePlan?.[planIndex])?.kind === 'amenity';
 }
 
-/** @param {string[]} slidePlan */
+/**
+ * Whether the mobile tour agent card shows its expanded (description) layout.
+ * Only the welcome step expands; "Around the property" (context) and every later
+ * step collapse to the compact agent-profile card.
+ * @param {string[]} slidePlan
+ */
 export function isPlanIndexExpandedAgent(slidePlan, planIndex) {
   const parsed = parseSlideId(slidePlan?.[planIndex]);
-  return parsed?.kind === 'intro' && (parsed.introId === 'welcome' || parsed.introId === 'context');
+  return parsed?.kind === 'intro' && parsed.introId === 'welcome';
 }
 
 /**
