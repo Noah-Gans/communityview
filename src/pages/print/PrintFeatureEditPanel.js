@@ -17,7 +17,11 @@ import {
   extractImageFilesFromDataTransfer,
   extractImageUrlsFromDataTransfer,
   fetchImageUrlAsFile,
-} from '../../utils/photoDropTransfer';
+} from '../../utils/listingPhotoDrop';
+import {
+  PRINT_GALLERY_DRAG_MIME,
+  takePrintGalleryDragPayload,
+} from '../../utils/printGalleryDragBuffer';
 import './Print.css';
 
 function NavRow({ children, onClick }) {
@@ -196,34 +200,9 @@ export default function PrintFeatureEditPanel({
     await uploadPhotoFiles(files);
   };
 
-  const ingestPhotoTransfer = async (dataTransfer) => {
-    const transferFiles = extractImageFilesFromDataTransfer(dataTransfer);
-    if (transferFiles.length) {
-      await uploadPhotoFiles(transferFiles);
-      return;
-    }
-    const urls = extractImageUrlsFromDataTransfer(dataTransfer);
-    if (!urls.length) {
-      window.alert('Drop or paste image files, or an image from another tab.');
-      return;
-    }
-    setPhotoUploading(true);
-    try {
-      const fetched = [];
-      for (const url of urls.slice(0, 12)) {
-        const file = await fetchImageUrlAsFile(url);
-        if (file) fetched.push(file);
-      }
-      if (!fetched.length) {
-        window.alert(
-          'Could not load those images here (site blocked the transfer). Save them locally, then drop or paste the files.'
-        );
-        return;
-      }
-      await uploadPhotoFiles(fetched, { manageBusyState: false });
-    } finally {
-      setPhotoUploading(false);
-    }
+  const resetPhotoDropState = () => {
+    photoDropDepthRef.current = 0;
+    setPhotoDropActive(false);
   };
 
   const handlePhotoDragEnter = (event) => {
@@ -247,11 +226,71 @@ export default function PrintFeatureEditPanel({
     if (event.dataTransfer) event.dataTransfer.dropEffect = 'copy';
   };
 
+  // Append photos that are already in our storage (e.g. dragged from the left
+  // gallery) directly — no re-fetch/upload, so CORS can't block it.
+  const appendExistingPhotos = (entries) => {
+    const seen = new Set(photos.map((p) => p.url));
+    const additions = [];
+    (entries || []).forEach((entry) => {
+      const url = String(entry?.url || '').trim();
+      if (!url || seen.has(url)) return;
+      seen.add(url);
+      additions.push({ url, storagePath: entry.storagePath || null });
+    });
+    if (!additions.length) return;
+    updatePrintElement({
+      ...selectedPrintElement,
+      photoGallery: [...photos, ...additions],
+      photoDataUrl: null,
+    });
+  };
+
+  const ingestPhotoTransfer = async (dataTransfer) => {
+    // Internal drag from the image gallery: reuse the existing storage ref.
+    const galleryId = dataTransfer?.getData?.(PRINT_GALLERY_DRAG_MIME);
+    if (galleryId) {
+      const payload = takePrintGalleryDragPayload(galleryId);
+      if (payload?.url) {
+        appendExistingPhotos([payload]);
+        return;
+      }
+    }
+
+    const transferFiles = extractImageFilesFromDataTransfer(dataTransfer);
+    if (transferFiles.length) {
+      await uploadPhotoFiles(transferFiles);
+      return;
+    }
+
+    const urls = extractImageUrlsFromDataTransfer(dataTransfer);
+    if (!urls.length) {
+      window.alert('Paste or drop image files, or an image from another tab.');
+      return;
+    }
+
+    setPhotoUploading(true);
+    try {
+      const fetched = [];
+      for (const url of urls.slice(0, 12)) {
+        const file = await fetchImageUrlAsFile(url);
+        if (file) fetched.push(file);
+      }
+      if (!fetched.length) {
+        window.alert(
+          'Could not load those images here (site blocked the transfer). Save them locally, then paste or drop the files.'
+        );
+        return;
+      }
+      await uploadPhotoFiles(fetched, { manageBusyState: false });
+    } finally {
+      setPhotoUploading(false);
+    }
+  };
+
   const handlePhotoDrop = async (event) => {
     event.preventDefault();
     event.stopPropagation();
-    photoDropDepthRef.current = 0;
-    setPhotoDropActive(false);
+    resetPhotoDropState();
     if (photoUploading) return;
     await ingestPhotoTransfer(event.dataTransfer);
   };
@@ -272,30 +311,6 @@ export default function PrintFeatureEditPanel({
       photoGallery: [],
       photoDataUrl: null,
     });
-  };
-
-  const handleRemovePhoto = async (index) => {
-    const target = photos[index];
-    if (!target) return;
-    const nextPhotos = photos.filter((_, i) => i !== index);
-    setLightboxIndex((prev) => {
-      if (prev === null) return prev;
-      if (!nextPhotos.length) return null;
-      if (prev === index) return Math.min(index, nextPhotos.length - 1);
-      return prev > index ? prev - 1 : prev;
-    });
-    updatePrintElement({
-      ...selectedPrintElement,
-      photoGallery: nextPhotos,
-      photoDataUrl: null,
-    });
-    if (target.storagePath) {
-      try {
-        await deleteMapPhoto(target.storagePath);
-      } catch (err) {
-        console.error('Failed to delete photo from storage:', err);
-      }
-    }
   };
 
   const metricsBlock = (
@@ -859,51 +874,30 @@ export default function PrintFeatureEditPanel({
       {photos.length > 0 && (
         <>
           <div className="print-feature-shape-preview print-feature-photo-gallery-hero" style={{ marginTop: 2 }}>
-            <div className="print-feature-photo-hero-wrap">
-              <button
-                type="button"
-                className="print-feature-photo-hero-btn"
-                onClick={() => setLightboxIndex(0)}
-                aria-label="Enlarge photo 1"
-              >
-                <div className="print-feature-photo-hero-inner">
-                  <img src={photoEntryToSrc(photos[0])} alt="" className="print-feature-photo-hero-img" draggable={false} />
-                  <span className="print-feature-photo-hero-hint">Click to enlarge</span>
-                </div>
-              </button>
-              <button
-                type="button"
-                className="print-feature-photo-remove"
-                onClick={() => handleRemovePhoto(0)}
-                aria-label="Remove photo 1"
-                title="Remove photo"
-              >
-                ×
-              </button>
-            </div>
+            <button
+              type="button"
+              className="print-feature-photo-hero-btn"
+              onClick={() => setLightboxIndex(0)}
+              aria-label="Enlarge photo 1"
+            >
+              <div className="print-feature-photo-hero-inner">
+                <img src={photoEntryToSrc(photos[0])} alt="" className="print-feature-photo-hero-img" draggable={false} />
+                <span className="print-feature-photo-hero-hint">Click to enlarge</span>
+              </div>
+            </button>
           </div>
           {photos.length > 1 && (
             <div className="print-feature-photo-thumb-row">
               {photos.slice(1).map((photo, idx) => (
-                <div key={`ph-${idx + 1}`} className="print-feature-photo-thumb-wrap">
-                  <button
-                    type="button"
-                    className="print-feature-photo-thumb"
-                    onClick={() => setLightboxIndex(idx + 1)}
-                    aria-label={`Enlarge photo ${idx + 2}`}
-                  >
-                    <img src={photoEntryToSrc(photo)} alt="" draggable={false} />
-                  </button>
-                  <button
-                    type="button"
-                    className="print-feature-photo-remove print-feature-photo-remove--thumb"
-                    onClick={() => handleRemovePhoto(idx + 1)}
-                    aria-label={`Remove photo ${idx + 2}`}
-                    title="Remove photo"
-                  >
-                    ×
-                  </button>
-                </div>
+                <button
+                  key={`ph-${idx + 1}`}
+                  type="button"
+                  className="print-feature-photo-thumb"
+                  onClick={() => setLightboxIndex(idx + 1)}
+                  aria-label={`Enlarge photo ${idx + 2}`}
+                >
+                  <img src={photoEntryToSrc(photo)} alt="" draggable={false} />
+                </button>
               ))}
             </div>
           )}

@@ -75,6 +75,8 @@ export const MapProvider = ({ children }) => {
   const [propertyMapWizardIntent, setPropertyMapWizardIntent] = useState(null);
 
   const [printElements, setPrintElements] = useState([]);
+  /** Per-map agent/contact-card override (null = not loaded). See utils/agentProfile.js. */
+  const [agentProfile, setAgentProfile] = useState(null);
   const [selectedPrintElement, setSelectedPrintElement] = useState(null);
   const [activePrintTool, setActivePrintTool] = useState('select');
   /** True on /view/:token or /tour/:token — disable editing chrome and drag on print features. */
@@ -329,6 +331,8 @@ export const MapProvider = ({ children }) => {
 
     printElements,
     setPrintElements,
+    agentProfile,
+    setAgentProfile,
     updatePrintElement,
     deletePrintElement,
     clearPrintElements,

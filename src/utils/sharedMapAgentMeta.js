@@ -1,3 +1,5 @@
+import { accountAgentDefaults, resolveAgentProfile } from './agentProfile';
+
 export function formatAgentWebsiteHref(url) {
   const trimmed = String(url || '').trim();
   if (!trimmed) return '';
@@ -14,7 +16,18 @@ export function formatAgentWebsiteLabel(url) {
 /** Build display meta for agent/contact block on public shared maps and tours. */
 export function buildSharedMapAgentMeta(data = {}) {
   const listingAgent = data.listingAgent || {};
+  const agentProfile = data.agentProfile || {};
   return {
+    agentTitle:
+      data.agentTitle ||
+      listingAgent.title ||
+      agentProfile.title ||
+      '',
+    agentBrokerage:
+      data.agentBrokerage ||
+      listingAgent.brokerage ||
+      agentProfile.brokerage ||
+      '',
     agentName:
       data.agentName ||
       listingAgent.name ||
@@ -58,42 +71,25 @@ export function buildSharedMapAgentMeta(data = {}) {
   };
 }
 
-/** Merge saved map fields with account profile (print PDF / share footer). */
+/**
+ * Merge saved map fields with account profile (print PDF / share footer).
+ * The per-map `agentProfile` override wins (custom values, with per-field
+ * fallback to the account); the listing snapshot stays as a deeper fallback.
+ */
 export function buildPrintAgentMetaFromSources(mapData = {}, userProfile = null, user = null) {
-  const profileName = [userProfile?.firstName, userProfile?.lastName].filter(Boolean).join(' ');
+  const account = accountAgentDefaults(userProfile, user);
+  const resolved = resolveAgentProfile(mapData?.agentProfile, account);
   return buildSharedMapAgentMeta({
     ...mapData,
-    firstName: userProfile?.firstName,
-    lastName: userProfile?.lastName,
-    contactEmail: userProfile?.contactEmail || user?.email || '',
-    contactPhone: userProfile?.contactPhone || '',
-    contactWebsite: userProfile?.contactWebsite || '',
-    profilePhotoUrl: userProfile?.profilePhotoUrl || mapData?.listingAgent?.photoUrl || '',
-    firmLogoUrl: userProfile?.firmLogoUrl || mapData?.listingAgent?.logoUrl || '',
-    agentPhotoUrl: userProfile?.profilePhotoUrl || mapData?.agentPhotoUrl || mapData?.listingAgent?.photoUrl || '',
-    agentLogoUrl: userProfile?.firmLogoUrl || mapData?.agentLogoUrl || mapData?.listingAgent?.logoUrl || '',
-    contact: {
-      name:
-        mapData?.contact?.name ||
-        mapData?.listingAgent?.name ||
-        profileName ||
-        '',
-      email:
-        mapData?.contact?.email ||
-        mapData?.listingAgent?.email ||
-        userProfile?.contactEmail ||
-        user?.email ||
-        '',
-      phone:
-        mapData?.contact?.phone ||
-        mapData?.listingAgent?.phone ||
-        userProfile?.contactPhone ||
-        '',
-      website:
-        mapData?.contact?.website ||
-        mapData?.listingAgent?.website ||
-        userProfile?.contactWebsite ||
-        '',
-    },
+    agentName: resolved.name,
+    agentTitle: resolved.title,
+    agentBrokerage: resolved.brokerage,
+    agentEmail: resolved.email,
+    agentPhone: resolved.phone,
+    agentWebsite: resolved.website,
+    profilePhotoUrl: resolved.photoUrl,
+    agentPhotoUrl: resolved.photoUrl,
+    firmLogoUrl: resolved.logoUrl,
+    agentLogoUrl: resolved.logoUrl,
   });
 }
