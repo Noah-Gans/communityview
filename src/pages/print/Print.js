@@ -8,6 +8,7 @@ import {
   sanitizeMapExportBasename,
 } from '../../utils/mapExportCapture';
 import { buildPrintAgentMetaFromSources } from '../../utils/sharedMapAgentMeta';
+import { normalizeAgentProfile } from '../../utils/agentProfile';
 import { auth } from '../../firebase/firebaseConfig';
 import { legends } from '../../assets/legends';
 import { layerNameMappings } from '../../components/map/layerMappings';
@@ -35,6 +36,8 @@ export default function Print() {
     paperSize,
     printElements,
     setPrintElements,
+    agentProfile,
+    setAgentProfile,
     setLayerStatus,
     setLayerOrder,
     setPaperSize: setPaperSizeContext,
@@ -319,6 +322,7 @@ export default function Print() {
     setCurrentMapId(null);
     setCurrentMap(null);
     clearPrintElements();
+    setAgentProfile(normalizeAgentProfile(null));
     enterEditMode();
     applyMapMakerSatelliteBasemap();
   };
@@ -329,6 +333,7 @@ export default function Print() {
     setCurrentMapId(null);
     setCurrentMap(null);
     clearPrintElements();
+    setAgentProfile(normalizeAgentProfile(null));
     setSelectedFeatures([]);
     setLayerStatus((prev) => ({ ...prev, ownership: false }));
     setPropertyMapWizardActive(true);
@@ -375,6 +380,7 @@ export default function Print() {
     setPropertyMapWizardActive(false);
     setPropertyMapWizardIntent(null);
     clearPrintElements();
+    setAgentProfile(null);
     if (pendingPrintBasemapRestoreRef) pendingPrintBasemapRestoreRef.current = null;
   };
 
@@ -430,6 +436,8 @@ export default function Print() {
 
       const map = await mapService.getMapById(mapId);
       if (mapLoadGenerationRef.current !== generation) return;
+
+      setAgentProfile(normalizeAgentProfile(map.agentProfile));
 
       const savedBasemap = String(map.basemap || '').trim() || 'satellite-streets-v12';
       if (process.env.NODE_ENV !== 'production') {
@@ -533,6 +541,9 @@ export default function Print() {
         description: mapDescription.trim(),
         ...mapData,
       };
+      if (agentProfile) {
+        fullMapData.agentProfile = normalizeAgentProfile(agentProfile);
+      }
 
       let result;
       if (currentMapId) {
@@ -666,7 +677,11 @@ export default function Print() {
     const base = getSanitizedExportBase();
     setIsGeneratingPdf(true);
     try {
-      const agentMeta = buildPrintAgentMetaFromSources(currentMap, userProfile, user);
+      const agentMeta = buildPrintAgentMetaFromSources(
+        { ...(currentMap || {}), agentProfile: agentProfile || currentMap?.agentProfile || null },
+        userProfile,
+        user
+      );
       await saveMapPdfWithFooter({
         map,
         baseName: base,
@@ -709,6 +724,7 @@ export default function Print() {
     setPrintLayoutMode,
     userProfile,
     user,
+    agentProfile,
   ]);
 
   useEffect(() => {

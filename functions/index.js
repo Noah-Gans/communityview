@@ -1062,8 +1062,11 @@ function generateShareToken() {
 
 const EMPTY_LISTING_AGENT = {
   name: "",
+  title: "",
+  brokerage: "",
   email: "",
   phone: "",
+  website: "",
   photoUrl: "",
   logoUrl: "",
 };
@@ -1081,8 +1084,11 @@ async function getOwnerListingAgent(userId) {
       .join(" ");
     return {
       name,
+      title: "",
+      brokerage: "",
       email: String(u.contactEmail || u.email || "").trim(),
       phone: String(u.contactPhone || "").trim(),
+      website: String(u.contactWebsite || "").trim(),
       photoUrl: String(u.profilePhotoUrl || "").trim(),
       logoUrl: String(u.firmLogoUrl || "").trim(),
     };
@@ -1097,10 +1103,59 @@ function mergeListingAgent(liveAgent, snapshotAgent) {
   const live = liveAgent && typeof liveAgent === "object" ? liveAgent : EMPTY_LISTING_AGENT;
   return {
     name: live.name || String(snap.name || "").trim(),
+    title: live.title || String(snap.title || "").trim(),
+    brokerage: live.brokerage || String(snap.brokerage || "").trim(),
     email: live.email || String(snap.email || "").trim(),
     phone: live.phone || String(snap.phone || "").trim(),
+    website: live.website || String(snap.website || "").trim(),
     photoUrl: live.photoUrl || String(snap.photoUrl || "").trim(),
     logoUrl: live.logoUrl || String(snap.logoUrl || "").trim(),
+  };
+}
+
+/** Sanitize the per-map agent-card override before persisting to the map doc. */
+function sanitizeAgentProfile(raw) {
+  if (!raw || typeof raw !== "object") return null;
+  const s = (v) => String(v == null ? "" : v).trim();
+  return {
+    mode: raw.mode === "custom" ? "custom" : "account",
+    name: s(raw.name),
+    title: s(raw.title),
+    brokerage: s(raw.brokerage),
+    email: s(raw.email),
+    phone: s(raw.phone),
+    website: s(raw.website),
+    photoUrl: s(raw.photoUrl),
+    photoStoragePath: s(raw.photoStoragePath),
+    logoUrl: s(raw.logoUrl),
+    logoStoragePath: s(raw.logoStoragePath),
+  };
+}
+
+/**
+ * Apply a per-map agent-card override on top of the base (account + listing
+ * snapshot) agent. In custom mode, each blank field falls back to the base;
+ * title/brokerage come only from the custom override.
+ */
+function applyAgentProfileOverride(agentProfile, baseAgent) {
+  const base = baseAgent && typeof baseAgent === "object" ? baseAgent : EMPTY_LISTING_AGENT;
+  const p = agentProfile && typeof agentProfile === "object" ? agentProfile : null;
+  const custom = p && p.mode === "custom";
+  const pick = (field) => {
+    const pv = custom ? String((p && p[field]) || "").trim() : "";
+    return pv || String(base[field] || "").trim();
+  };
+  return {
+    name: pick("name"),
+    title: custom ? String((p && p.title) || "").trim() : String(base.title || "").trim(),
+    brokerage: custom
+      ? String((p && p.brokerage) || "").trim()
+      : String(base.brokerage || "").trim(),
+    email: pick("email"),
+    phone: pick("phone"),
+    website: pick("website"),
+    photoUrl: pick("photoUrl"),
+    logoUrl: pick("logoUrl"),
   };
 }
 
@@ -1109,8 +1164,11 @@ function listingAgentResponseFields(listingAgent) {
   return {
     listingAgent: agent,
     agentName: agent.name,
+    agentTitle: agent.title || "",
+    agentBrokerage: agent.brokerage || "",
     agentEmail: agent.email,
     agentPhone: agent.phone,
+    agentWebsite: agent.website || "",
     agentPhotoUrl: agent.photoUrl,
     agentLogoUrl: agent.logoUrl,
   };
@@ -1327,6 +1385,9 @@ exports.updateMap = functions.https.onCall(async (data, context) => {
         }
       }
     }
+    if (mapData.agentProfile !== undefined) {
+      updateData.agentProfile = sanitizeAgentProfile(mapData.agentProfile);
+    }
     if (mapData.isPublic !== undefined) {
       updateData.isPublic = mapData.isPublic;
       if (mapData.isPublic === true) {
@@ -1505,6 +1566,7 @@ function mapDetailFromDoc(doc) {
     layers: m.layers || { status: {}, order: [], labels: {} },
     printSettings: m.printSettings || { paperSize: "full", orientation: "full" },
     printElements: Array.isArray(m.printElements) ? m.printElements : [],
+    agentProfile: m.agentProfile || null,
     isPublic: !!m.isPublic,
     shareToken: m.shareToken || null,
     tourSlidePlan: Array.isArray(m.tourSlidePlan) ? m.tourSlidePlan : null,
@@ -1617,7 +1679,8 @@ exports.getSharedMapByToken = functions.https.onCall(async (data) => {
     const tourNearbyCache = normalizeTourNearbyCache(m.tourNearbyCache);
     const tourSettings = resolveTourSettingsFromMapData(m);
     const liveAgent = await getOwnerListingAgent(m.userId);
-    const listingAgent = mergeListingAgent(liveAgent, m.listingAgent);
+    const baseAgent = mergeListingAgent(liveAgent, m.listingAgent);
+    const listingAgent = applyAgentProfileOverride(m.agentProfile, baseAgent);
     return {
       id: found.id,
       title: m.title || "",

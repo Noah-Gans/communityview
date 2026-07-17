@@ -18,7 +18,7 @@ import { getParcelLinks } from '../../utils/parcelLinks';
 import { parseGFI, getCountyCodeFromFeature, getCountyParcelIdFromFeature } from '../../utils/parseGFI';
 import PrintEditorContent from '../../pages/print/PrintEditorContent';
 import { useUser } from '../../contexts/UserContext';
-import { uploadMapPhoto } from '../../utils/mapPhotoUpload';
+import { uploadMapPhoto, deleteMapPhoto } from '../../utils/mapPhotoUpload';
 import {
   galleryItemToSrc,
   getPhotosFromElement,
@@ -28,7 +28,8 @@ import {
   extractImageFilesFromDataTransfer,
   extractImageUrlsFromDataTransfer,
   fetchImageUrlAsFile,
-} from '../../utils/photoDropTransfer';
+} from '../../utils/listingPhotoDrop';
+import { accountAgentDefaults } from '../../utils/agentProfile';
 import { fetchRegridParcelDetailCached } from '../../utils/regridParcelApi';
 import { fetchSoilMapUnitByMukey } from '../../utils/soilMapUnitApi';
 import RegridParcelFeatureDetails from './RegridParcelFeatureDetails';
@@ -105,8 +106,10 @@ const SidePanel = memo(({
     setSelectedPrintElement,
     deletePrintElement,
     printMapId,
+    agentProfile,
+    setAgentProfile,
   } = useMapContext();
-  const { user } = useUser();
+  const { user, userProfile } = useUser();
   const [printGalleryItems, setPrintGalleryItems] = useState([]);
   const [printGalleryUploading, setPrintGalleryUploading] = useState(false);
   const printGalleryItemsWithFeaturePhotos = useMemo(() => {
@@ -132,15 +135,18 @@ const SidePanel = memo(({
     });
   }, [printElements, printGalleryItems]);
 
-  const ingestPrintGalleryFiles = useCallback(
-    async (files, { manageBusyState = true } = {}) => {
-      const imageFiles = (files || []).filter((f) => f?.type?.startsWith('image/'));
-      if (!imageFiles.length) {
-        window.alert('Please select image files.');
-        return;
-      }
+  const handlePrintGalleryUpload = useCallback(
+    async (event) => {
+      const files = Array.from(event.target.files || []);
+      event.target.value = '';
+      if (!files.length) return;
       if (!user?.uid) {
         window.alert('Sign in to upload images.');
+        return;
+      }
+      const imageFiles = files.filter((f) => f.type?.startsWith('image/'));
+      if (!imageFiles.length) {
+        window.alert('Please select image files.');
         return;
       }
       for (const file of imageFiles) {
@@ -150,7 +156,7 @@ const SidePanel = memo(({
           return;
         }
       }
-      if (manageBusyState) setPrintGalleryUploading(true);
+      setPrintGalleryUploading(true);
       try {
         const uploaded = [];
         for (const file of imageFiles) {
@@ -167,57 +173,93 @@ const SidePanel = memo(({
         console.error('Gallery upload failed:', err);
         window.alert(err?.message || 'Failed to upload image.');
       } finally {
-        if (manageBusyState) setPrintGalleryUploading(false);
+        setPrintGalleryUploading(false);
       }
     },
     [user, printMapId]
   );
 
-  const handlePrintGalleryUpload = useCallback(
-    async (event) => {
-      const files = Array.from(event.target.files || []);
-      event.target.value = '';
-      if (!files.length) return;
-      await ingestPrintGalleryFiles(files);
-    },
-    [ingestPrintGalleryFiles]
-  );
-
+  // Paste (⌘V) or drag image files/URLs straight into the gallery — this is what
+  // the "Save to CommunityView" bookmarklet's "Copy photos" button feeds.
   const handlePrintGalleryTransfer = useCallback(
     async (dataTransfer) => {
+      if (!dataTransfer) return;
+      const directFiles = extractImageFilesFromDataTransfer(dataTransfer);
+      const urls = extractImageUrlsFromDataTransfer(dataTransfer, {
+        lenient: true,
+      }).slice(0, 200);
+      if (!directFiles.length && !urls.length) return;
       if (!user?.uid) {
-        window.alert('Sign in to upload images.');
-        return;
-      }
-      const files = extractImageFilesFromDataTransfer(dataTransfer);
-      if (files.length) {
-        await ingestPrintGalleryFiles(files);
-        return;
-      }
-      const urls = extractImageUrlsFromDataTransfer(dataTransfer);
-      if (!urls.length) {
-        window.alert('Drop or paste image files, or an image from another tab.');
+        window.alert('Sign in to add images.');
         return;
       }
       setPrintGalleryUploading(true);
       try {
-        const fetched = [];
-        for (const url of urls.slice(0, 12)) {
-          const file = await fetchImageUrlAsFile(url);
-          if (file) fetched.push(file);
+        const fetched = await Promise.all(urls.map((u) => fetchImageUrlAsFile(u)));
+        const files = [...directFiles, ...fetched.filter(Boolean)].filter(
+          (f) => f && f.type?.startsWith('image/') && !validateMapPhotoFile(f)
+        );
+        const items = [];
+        for (const file of files) {
+          const { url, storagePath } = await uploadMapPhoto(user.uid, file, {
+            mapId: printMapId,
+          });
+          items.push({
+            id: `gal_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 7)}`,
+            name: file.name || 'Image',
+            url,
+            storagePath,
+          });
         }
-        if (!fetched.length) {
-          window.alert(
-            'Could not load those images here (site blocked the transfer). Save them locally, then drop or paste the files.'
-          );
-          return;
-        }
-        await ingestPrintGalleryFiles(fetched, { manageBusyState: false });
+        // CDN-blocked URLs can't be fetched to re-host — keep them as external refs.
+        urls.forEach((u, i) => {
+          if (!fetched[i]) {
+            items.push({
+              id: `gal_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 7)}`,
+              name: 'Image',
+              url: u,
+              storagePath: null,
+            });
+          }
+        });
+        if (items.length) setPrintGalleryItems((prev) => [...prev, ...items]);
+      } catch (err) {
+        console.error('Gallery paste/drop failed:', err);
+        window.alert(err?.message || 'Failed to add images.');
       } finally {
         setPrintGalleryUploading(false);
       }
     },
-    [user, ingestPrintGalleryFiles]
+    [user, printMapId]
+  );
+
+  // Remove an uploaded/pasted gallery photo (collector items only — photos that
+  // belong to a placed map feature are managed from that feature's editor).
+  const handleRemovePrintGalleryItem = useCallback((item) => {
+    if (!item || typeof item.id !== 'string' || !item.id.startsWith('gal_')) return;
+    setPrintGalleryItems((prev) => prev.filter((g) => g.id !== item.id));
+    if (item.storagePath) {
+      deleteMapPhoto(item.storagePath).catch(() => {});
+    }
+  }, []);
+
+  // Account profile defaults the per-map agent card falls back to.
+  const agentAccountDefaults = useMemo(
+    () => accountAgentDefaults(userProfile, user),
+    [userProfile, user]
+  );
+
+  // Upload a headshot / firm logo for the per-map agent card and return its
+  // hosted URL + storage path (reused from the gallery upload plumbing).
+  const handleUploadAgentImage = useCallback(
+    async (file) => {
+      if (!file) throw new Error('No file provided.');
+      if (!user?.uid) throw new Error('Sign in to upload images.');
+      const err = validateMapPhotoFile(file);
+      if (err) throw new Error(err);
+      return uploadMapPhoto(user.uid, file, { mapId: printMapId });
+    },
+    [user, printMapId]
   );
 
   /**
@@ -1578,7 +1620,12 @@ const SidePanel = memo(({
                   printGalleryItems={printGalleryItemsWithFeaturePhotos}
                   onPrintGalleryUpload={handlePrintGalleryUpload}
                   onPrintGalleryTransfer={handlePrintGalleryTransfer}
+                  onRemovePrintGalleryItem={handleRemovePrintGalleryItem}
                   printGalleryUploading={printGalleryUploading}
+                  agentProfile={agentProfile}
+                  onAgentProfileChange={setAgentProfile}
+                  agentAccountDefaults={agentAccountDefaults}
+                  onUploadAgentImage={handleUploadAgentImage}
                 />
               </div>
             )}

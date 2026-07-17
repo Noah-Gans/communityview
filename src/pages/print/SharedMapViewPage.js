@@ -142,6 +142,11 @@ const SharedAgentCard = ({ meta, description }) => {
         ) : null}
         <div className="shared-side-agent-details">
           <div className="shared-side-agent-name">{meta?.agentName || 'Listing agent'}</div>
+          {meta?.agentTitle || meta?.agentBrokerage ? (
+            <div className="shared-side-agent-subtitle">
+              {[meta.agentTitle, meta.agentBrokerage].filter(Boolean).join(' · ')}
+            </div>
+          ) : null}
           {meta?.agentEmail ? (
             <a href={`mailto:${meta.agentEmail}`} className="shared-side-agent-link">
               {meta.agentEmail}
@@ -223,6 +228,11 @@ function TourMobileAgentCard({ meta, expanded = false }) {
         )}
         <div className="shared-tour-mobile-agent-details">
           <div className="shared-tour-mobile-agent-name">{meta?.agentName || 'Listing agent'}</div>
+          {meta?.agentTitle || meta?.agentBrokerage ? (
+            <div className="shared-tour-mobile-agent-subtitle">
+              {[meta.agentTitle, meta.agentBrokerage].filter(Boolean).join(' · ')}
+            </div>
+          ) : null}
           <div className="shared-tour-mobile-agent-contact">
             {meta?.agentPhone ? (
               <a href={`tel:${meta.agentPhone}`} className="shared-tour-mobile-agent-link">
@@ -271,6 +281,11 @@ const TourAgentContact = ({ meta }) => {
         ) : null}
         <div className="shared-tour-agent-contact-details">
           <div className="shared-tour-agent-contact-name">{meta?.agentName || 'Listing agent'}</div>
+          {meta?.agentTitle || meta?.agentBrokerage ? (
+            <div className="shared-tour-agent-contact-subtitle">
+              {[meta.agentTitle, meta.agentBrokerage].filter(Boolean).join(' · ')}
+            </div>
+          ) : null}
           {meta?.agentEmail ? (
             <a href={`mailto:${meta.agentEmail}`} className="shared-tour-agent-contact-link">
               {meta.agentEmail}
@@ -1778,8 +1793,6 @@ export default function SharedMapViewPage() {
     const currentParsed = currentPlanId ? parseSlideId(currentPlanId) : null;
     const isBirdSlide =
       currentParsed?.kind === 'intro' && currentParsed.introId === 'bird';
-    const isOrbitSlide =
-      currentParsed?.kind === 'intro' && currentParsed.introId === 'context';
 
     const applyPadding = () =>
       applyTourMobileMapPadding(map, {
@@ -1793,13 +1806,11 @@ export default function SharedMapViewPage() {
       !isMobileViewport ||
       tourAgentExpandedLayout ||
       tourInVicinityStep ||
-      isBirdSlide ||
-      isOrbitSlide
+      isBirdSlide
     ) {
       // Vicinity peek panel must reserve bottom inset immediately — delayed padding
       // mid-camera-move was freezing the photo → first-amenity zoom transition.
-      // Bird + orbit (context) slides apply padding before the camera move; a delayed
-      // setPadding mid-orbit recenters the map and stutters the rotation.
+      // Bird slide applies padding before flyTo; shrinking inset mid-orbit felt choppy.
       // Desktop always applies footer inset immediately.
       applyPadding();
     } else {

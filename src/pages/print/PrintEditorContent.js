@@ -1,4 +1,4 @@
-import React, { useMemo, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import './Print.css';
 import { svgMap, printCatalogToolIcons } from '../../components/map/printShapes/svgMap';
 import { MAP_ELEMENT_CATEGORY, MAP_ELEMENT_ITEMS } from './printCatalog';
@@ -10,6 +10,7 @@ import {
   registerPrintGalleryDragPayload,
 } from '../../utils/printGalleryDragBuffer';
 import { galleryItemToSrc } from '../../utils/mapPhotoStorage';
+import AgentProfileEditor from './AgentProfileEditor';
 
 /** Order for the “All” tab: Points → Lines → Shapes. */
 const CATALOG_CATEGORY_ORDER = { point: 0, line: 1, shape: 2 };
@@ -38,60 +39,49 @@ export default function PrintEditorContent({
   printGalleryItems = [],
   onPrintGalleryUpload,
   onPrintGalleryTransfer,
+  onRemovePrintGalleryItem,
   printGalleryUploading = false,
+  agentProfile = null,
+  onAgentProfileChange,
+  agentAccountDefaults = {},
+  onUploadAgentImage,
 }) {
   const [openFlowSection, setOpenFlowSection] = useState('elements');
   const [elementCategory, setElementCategory] = useState(MAP_ELEMENT_CATEGORY.ALL);
   const [galleryDropActive, setGalleryDropActive] = useState(false);
-  const galleryDropDepthRef = useRef(0);
+  const [lightboxSrc, setLightboxSrc] = useState(null);
 
-  const canTransferGallery = typeof onPrintGalleryTransfer === 'function';
+  const canRemoveGalleryItem = typeof onRemovePrintGalleryItem === 'function';
 
-  const handleGalleryDragEnter = (event) => {
-    if (!canTransferGallery) return;
-    event.preventDefault();
-    event.stopPropagation();
-    if (printGalleryUploading) return;
-    galleryDropDepthRef.current += 1;
-    setGalleryDropActive(true);
-  };
+  useEffect(() => {
+    if (!lightboxSrc) return undefined;
+    const onKey = (e) => {
+      if (e.key === 'Escape') setLightboxSrc(null);
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [lightboxSrc]);
 
-  const handleGalleryDragLeave = (event) => {
-    if (!canTransferGallery) return;
-    event.preventDefault();
-    event.stopPropagation();
-    galleryDropDepthRef.current = Math.max(0, galleryDropDepthRef.current - 1);
-    if (galleryDropDepthRef.current === 0) setGalleryDropActive(false);
-  };
+  const canGalleryTransfer = typeof onPrintGalleryTransfer === 'function';
 
-  const handleGalleryDragOver = (event) => {
-    if (!canTransferGallery) return;
-    event.preventDefault();
-    event.stopPropagation();
-    if (event.dataTransfer) event.dataTransfer.dropEffect = 'copy';
-  };
-
-  const handleGalleryDrop = async (event) => {
-    if (!canTransferGallery) return;
-    event.preventDefault();
-    event.stopPropagation();
-    galleryDropDepthRef.current = 0;
-    setGalleryDropActive(false);
-    if (printGalleryUploading) return;
-    await onPrintGalleryTransfer(event.dataTransfer);
-  };
-
-  const handleGalleryPaste = async (event) => {
-    if (!canTransferGallery || printGalleryUploading) return;
-    const clip = event.clipboardData;
-    if (!clip) return;
+  const handleGalleryPaste = (event) => {
+    if (!canGalleryTransfer) return;
+    const dt = event.clipboardData;
+    if (!dt) return;
     const hasImage =
-      Array.from(clip.files || []).some((f) => f?.type?.startsWith('image/')) ||
-      Array.from(clip.items || []).some((i) => i?.kind === 'file') ||
-      /https?:\/\//i.test(String(clip.getData?.('text/plain') || clip.getData?.('text/uri-list') || ''));
+      Array.from(dt.files || []).some((f) => f.type?.startsWith('image/')) ||
+      /cvlisting=|https?:\/\//i.test(dt.getData('text/plain') || '') ||
+      /<img/i.test(dt.getData('text/html') || '');
     if (!hasImage) return;
     event.preventDefault();
-    await onPrintGalleryTransfer(clip);
+    onPrintGalleryTransfer(dt);
+  };
+
+  const handleGalleryDrop = (event) => {
+    if (!canGalleryTransfer) return;
+    event.preventDefault();
+    setGalleryDropActive(false);
+    onPrintGalleryTransfer(event.dataTransfer);
   };
 
   const toggleFlowSection = (id) => {
@@ -299,33 +289,49 @@ export default function PrintEditorContent({
             className={`print-gallery-panel-upload${
               galleryDropActive ? ' is-drop-active' : ''
             }${printGalleryUploading ? ' is-busy' : ''}`}
-            onDragEnter={handleGalleryDragEnter}
-            onDragLeave={handleGalleryDragLeave}
-            onDragOver={handleGalleryDragOver}
-            onDrop={handleGalleryDrop}
-            onPaste={handleGalleryPaste}
-            tabIndex={canTransferGallery ? 0 : undefined}
+            tabIndex={canGalleryTransfer ? 0 : undefined}
+            role={canGalleryTransfer ? 'button' : undefined}
             aria-label={
-              canTransferGallery
-                ? 'Add images by drag and drop, paste, or file picker'
+              canGalleryTransfer
+                ? 'Upload, paste, or drop images'
                 : undefined
             }
+            onDragEnter={
+              canGalleryTransfer
+                ? (e) => {
+                    e.preventDefault();
+                    setGalleryDropActive(true);
+                  }
+                : undefined
+            }
+            onDragOver={
+              canGalleryTransfer
+                ? (e) => {
+                    e.preventDefault();
+                    e.dataTransfer.dropEffect = 'copy';
+                  }
+                : undefined
+            }
+            onDragLeave={
+              canGalleryTransfer ? () => setGalleryDropActive(false) : undefined
+            }
+            onDrop={canGalleryTransfer ? handleGalleryDrop : undefined}
+            onPaste={canGalleryTransfer ? handleGalleryPaste : undefined}
           >
             <label className="sp-map-button print-gallery-panel-label">
-              {printGalleryUploading ? 'Uploading…' : 'Upload images'}
+              {printGalleryUploading ? 'Adding images…' : 'Upload images'}
               <input
                 type="file"
                 accept="image/*"
                 multiple
                 className="print-gallery-panel-file"
                 onChange={onPrintGalleryUpload}
-                disabled={printGalleryUploading}
               />
             </label>
-            {canTransferGallery && (
-              <span className="print-gallery-panel-drop-hint">
-                or drop images / paste with ⌘V · Ctrl+V
-              </span>
+            {canGalleryTransfer && (
+              <p className="print-gallery-panel-drop-hint">
+                or drop / paste (⌘V) — works with the bookmarklet’s “Copy photos”
+              </p>
             )}
           </div>
           {printGalleryItems.length > 0 && (
@@ -334,6 +340,10 @@ export default function PrintEditorContent({
               <ul className="print-gallery-panel-thumbs">
                 {printGalleryItems.map((item) => {
                   const src = galleryItemToSrc(item);
+                  const removable =
+                    canRemoveGalleryItem &&
+                    typeof item.id === 'string' &&
+                    item.id.startsWith('gal_');
                   return (
                     <li key={item.id} className="print-gallery-panel-thumb-wrap">
                       <img
@@ -349,15 +359,47 @@ export default function PrintEditorContent({
                           e.dataTransfer.setData(PRINT_GALLERY_DRAG_MIME, id);
                           e.dataTransfer.effectAllowed = 'copy';
                         }}
+                        onClick={() => setLightboxSrc(src)}
                         className="print-gallery-panel-thumb"
-                        title={item.name}
+                        title={`${item.name} — click to enlarge, drag to the map`}
                       />
+                      {removable && (
+                        <button
+                          type="button"
+                          className="print-gallery-panel-thumb-remove"
+                          aria-label="Remove photo"
+                          title="Remove photo"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            onRemovePrintGalleryItem(item);
+                          }}
+                        >
+                          ×
+                        </button>
+                      )}
                     </li>
                   );
                 })}
               </ul>
             </>
           )}
+        </PrintFlowAccordion>
+      )}
+
+      {extrasReady && typeof onAgentProfileChange === 'function' && (
+        <PrintFlowAccordion
+          id="agentCard"
+          title="Agent card"
+          isOpen={openFlowSection === 'agentCard'}
+          onToggle={toggleFlowSection}
+        >
+          <AgentProfileEditor
+            value={agentProfile}
+            onChange={onAgentProfileChange}
+            account={agentAccountDefaults}
+            galleryItems={printGalleryItems}
+            onUploadImage={onUploadAgentImage}
+          />
         </PrintFlowAccordion>
       )}
 
@@ -403,6 +445,30 @@ export default function PrintEditorContent({
           ))}
         </div>
       </PrintFlowAccordion>
+
+      {lightboxSrc && (
+        <div
+          className="print-gallery-lightbox"
+          role="dialog"
+          aria-label="Photo preview"
+          onClick={() => setLightboxSrc(null)}
+        >
+          <button
+            type="button"
+            className="print-gallery-lightbox-close"
+            aria-label="Close preview"
+            onClick={() => setLightboxSrc(null)}
+          >
+            ×
+          </button>
+          <img
+            src={lightboxSrc}
+            alt="Preview"
+            className="print-gallery-lightbox-img"
+            onClick={(e) => e.stopPropagation()}
+          />
+        </div>
+      )}
     </div>
   );
 }
