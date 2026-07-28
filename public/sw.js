@@ -1,5 +1,5 @@
-// Service Worker for Teton County GIS
-const CACHE_NAME = 'teton-county-gis-v1';
+// Service Worker for CommunityView
+const CACHE_NAME = 'communityview-v1';
 const urlsToCache = [
   '/',
   '/static/css/main.css',

@@ -42,8 +42,8 @@ const Tutorial = () => {
       </button>
       <div className="tutorial-content-container">
       <div className="tutorial-content">
-            <h1>How to Use The Better Teton County GIS</h1>
-            <p>Welcome to the tutorial! Here you will learn how to explore spatial data in Teton County.</p>
+            <h1>How to Use CommunityView</h1>
+            <p>Welcome to the tutorial! Here you will learn how to explore parcel data, listing maps, and property tours.</p>
             <hr className="section-divider" />
             
             <h2>Controls and Layout Overview</h2>

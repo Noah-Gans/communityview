@@ -1,7 +1,7 @@
 {
-  "short_name": "Teton GIS",
-  "name": "Teton County GIS Hub",
-  "description": "Explore Teton County, WY's best GIS hub for property ownership, land data, and interactive mapping",
+  "short_name": "CommunityView",
+  "name": "CommunityView",
+  "description": "Nationwide parcel search, listing maps, and digital property tours for real estate agents",
   "icons": [
     {
       "src": "favicon.ico",
@@ -27,5 +27,5 @@
   "theme_color": "#ffffff",
   "background_color": "#000000",
   "scope": "./",
-  "categories": ["navigation", "maps"]
+  "categories": ["navigation", "maps", "business"]
 }

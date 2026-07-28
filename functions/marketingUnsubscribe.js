@@ -89,7 +89,7 @@ function htmlPage(title, message) {
   <div class="card">
     <h1>${title}</h1>
     <p>${message}</p>
-    <p><a href="https://www.communityview.ai">communityview.ai</a></p>
+    <p><a href="https://communityview.ai">communityview.ai</a></p>
   </div>
 </body>
 </html>`;

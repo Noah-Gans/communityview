@@ -5771,7 +5771,7 @@ useEffect(() => {
       if (error.code === 1 || (error.message && error.message.includes('permission'))) {
         markLocationPermissionDenied();
         errorMessage = isNative
-          ? 'Location permission denied.\n\nPlease enable location services:\nSettings > Privacy > Location Services > Teton County GIS'
+          ? 'Location permission denied.\n\nPlease enable location services:\nSettings > Privacy > Location Services > Community View'
           : 'Location permission denied. Please enable location services in your browser settings.';
       } else if (error.code === 2 || (error.message && error.message.includes('unavailable'))) {
         errorMessage = isNative
