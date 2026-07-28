@@ -1,66 +1,39 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
-  <!-- Home page -->
   <url>
     <loc>https://communityview.ai/</loc>
-    <lastmod>2025-01-27</lastmod>
+    <lastmod>2026-07-28</lastmod>
     <changefreq>weekly</changefreq>
     <priority>1</priority>
   </url>
-  
-  <!-- Map page -->
-  <url>
-    <loc>https://communityview.ai/map</loc>
-    <lastmod>2025-01-27</lastmod>
-    <changefreq>weekly</changefreq>
-    <priority>0.9</priority>
-  </url>
-  
-  <!-- Search page -->
-  <url>
-    <loc>https://communityview.ai/search</loc>
-    <lastmod>2025-01-27</lastmod>
-    <changefreq>weekly</changefreq>
-    <priority>0.7</priority>
-  </url>
-  
-  <!-- Print page -->
-  <url>
-    <loc>https://communityview.ai/print</loc>
-    <lastmod>2025-01-27</lastmod>
-    <changefreq>weekly</changefreq>
-    <priority>0.3</priority>
-  </url>
-
-  <!-- Features page -->
   <url>
     <loc>https://communityview.ai/features</loc>
-    <lastmod>2026-06-22</lastmod>
+    <lastmod>2026-07-28</lastmod>
     <changefreq>monthly</changefreq>
-    <priority>0.6</priority>
+    <priority>0.9</priority>
   </url>
-
-  <!-- Pricing page -->
   <url>
     <loc>https://communityview.ai/pricing</loc>
-    <lastmod>2026-06-22</lastmod>
+    <lastmod>2026-07-28</lastmod>
+    <changefreq>monthly</changefreq>
+    <priority>0.9</priority>
+  </url>
+  <url>
+    <loc>https://communityview.ai/faq</loc>
+    <lastmod>2026-07-28</lastmod>
+    <changefreq>monthly</changefreq>
+    <priority>0.8</priority>
+  </url>
+  <url>
+    <loc>https://communityview.ai/tutorial</loc>
+    <lastmod>2026-07-28</lastmod>
     <changefreq>monthly</changefreq>
     <priority>0.6</priority>
   </url>
-
-  <!-- FAQ page -->
   <url>
-    <loc>https://communityview.ai/faq</loc>
-    <lastmod>2026-06-22</lastmod>
-    <changefreq>monthly</changefreq>
-    <priority>0.5</priority>
-  </url>
-
-  <!-- Tutorial page -->
-  <url>
-    <loc>https://communityview.ai/tutorial</loc>
-    <lastmod>2025-01-27</lastmod>
+    <loc>https://communityview.ai/map</loc>
+    <lastmod>2026-07-28</lastmod>
     <changefreq>weekly</changefreq>
-    <priority>0.5</priority>
+    <priority>0.7</priority>
   </url>
 </urlset>

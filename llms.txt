@@ -14,18 +14,21 @@ Allow: /
 # Sitemap location
 Sitemap: https://communityview.ai/sitemap.xml
 
-# Main pages
+# Main public marketing pages
 Allow: /
 Allow: /map
-Allow: /search
 Allow: /tutorial
 Allow: /features
 Allow: /pricing
 Allow: /faq
 
-# Disallow private/protected pages
+# Disallow private / gated / auth pages
 Disallow: /report
 Disallow: /print
+Disallow: /search
 Disallow: /login
 Disallow: /signup
-
+Disallow: /manage-subscription
+Disallow: /create-account
+Disallow: /signup-success
+Disallow: /reset-password
