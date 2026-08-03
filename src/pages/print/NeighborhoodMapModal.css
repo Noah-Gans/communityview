@@ -1,0 +1,129 @@
+.nbhd-modal-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 12000;
+  background: rgba(15, 23, 42, 0.45);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1.25rem;
+}
+
+.nbhd-modal-panel {
+  width: min(440px, 100%);
+  background: #fff;
+  border-radius: 12px;
+  padding: 1.25rem 1.35rem 1.1rem;
+  box-shadow: 0 18px 50px rgba(15, 23, 42, 0.22);
+  border: 1px solid #e2e8f0;
+}
+
+.nbhd-modal-title {
+  margin: 0 0 0.35rem;
+  font-size: 1.25rem;
+  font-weight: 700;
+  color: #0f172a;
+}
+
+.nbhd-modal-lead {
+  margin: 0 0 0.75rem;
+  font-size: 0.9rem;
+  line-height: 1.45;
+  color: #475569;
+}
+
+.nbhd-modal-meta {
+  margin: 0 0 0.85rem;
+  font-size: 0.875rem;
+  color: #334155;
+}
+
+.nbhd-modal-field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: #334155;
+  margin-bottom: 0.85rem;
+}
+
+.nbhd-modal-optional {
+  font-weight: 500;
+  color: #94a3b8;
+}
+
+.nbhd-modal-field input {
+  font: inherit;
+  font-weight: 500;
+  padding: 0.55rem 0.65rem;
+  border: 1px solid #cbd5e1;
+  border-radius: 8px;
+  color: #0f172a;
+}
+
+.nbhd-modal-field input:focus {
+  outline: 2px solid #93c5fd;
+  border-color: #60a5fa;
+}
+
+.nbhd-modal-status {
+  margin: 0 0 0.65rem;
+  font-size: 0.85rem;
+  color: #0369a1;
+}
+
+.nbhd-modal-error {
+  margin: 0 0 0.65rem;
+  font-size: 0.85rem;
+  color: #b91c1c;
+}
+
+.nbhd-modal-result {
+  margin: 0 0 0.75rem;
+  font-size: 0.8rem;
+  color: #334155;
+  word-break: break-all;
+}
+
+.nbhd-modal-result a {
+  color: #1d4ed8;
+}
+
+.nbhd-modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.5rem;
+  margin-top: 0.35rem;
+}
+
+.nbhd-modal-btn {
+  border-radius: 8px;
+  padding: 0.5rem 0.9rem;
+  font-size: 0.875rem;
+  font-weight: 600;
+  cursor: pointer;
+  border: 1px solid transparent;
+}
+
+.nbhd-modal-btn:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.nbhd-modal-btn.ghost {
+  background: #fff;
+  border-color: #cbd5e1;
+  color: #334155;
+}
+
+.nbhd-modal-btn.primary {
+  background: #0f172a;
+  color: #fff;
+}
+
+.print-dashboard-create-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}

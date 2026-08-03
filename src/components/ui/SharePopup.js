@@ -15,8 +15,8 @@ const SharePopup = ({ onClose }) => {
   const handleShareClick = () => {
     if (navigator.share) {
       navigator.share({
-        title: 'Teton County GIS',
-        text: 'Check out this amazing spatial data platform: Teton County GIS!',
+        title: 'CommunityView',
+        text: 'Check out CommunityView — parcel maps and property tours for real estate agents.',
         url: window.location.href,
       })
         .then(() => console.log('Share successful!'))

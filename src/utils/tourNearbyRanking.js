@@ -8,7 +8,7 @@ export const TOUR_NEARBY_TARGET_MIN = 5;
 export const TOUR_NEARBY_MAX_RESULTS = 7;
 
 /** Bump when fetch/filter logic changes so tour caches refetch. */
-export const TOUR_NEARBY_DATA_VERSION = 28;
+export const TOUR_NEARBY_DATA_VERSION = 29;
 
 /** Edit tour: show as many Google results as we can (Places API nearby cap). */
 export const TOUR_NEARBY_EDITOR_MAX_RESULTS = 20;

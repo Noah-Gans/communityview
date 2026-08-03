@@ -1,6 +1,6 @@
 {
   "name": "teton-county-gis",
-  "homepage": "https://www.communityview.ai",
+  "homepage": "https://communityview.ai",
   "version": "0.1.0",
   "private": true,
   "dependencies": {
@@ -46,7 +46,7 @@
     "start": "craco start",
     "start:https": "env HTTPS=true HOST=127.0.0.1 craco start",
     "build": "craco build",
-    "postbuild": "bash scripts/prune-build-for-deploy.sh",
+    "postbuild": "bash scripts/prune-build-for-deploy.sh && node scripts/generateMarketingSeoShells.js",
     "test": "craco test",
     "eject": "react-scripts eject",
     "predeploy": "npm run build",

@@ -1,4 +1,12 @@
 User-agent: *
-Disallow:
+Allow: /
+Disallow: /search
+Disallow: /print
+Disallow: /report
+Disallow: /login
+Disallow: /signup
+Disallow: /manage-subscription
+Disallow: /create-account
+Disallow: /reset-password
 
 Sitemap: https://communityview.ai/sitemap.xml

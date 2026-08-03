@@ -57,7 +57,9 @@ export function measureTourEditRadiusFitPadding(options = {}) {
       top = Math.max(top, Math.ceil(topbar.getBoundingClientRect().bottom + 16));
     }
     if (options.amenitySlideEntry !== true) {
-      const editPanel = document.querySelector('.tour-edit-side-panel, .tour-edit-amenity-panel');
+      const editPanel = document.querySelector(
+        '.tour-edit-side-panel, .tour-edit-amenity-panel, .amenity-map-panel.is-open'
+      );
       if (editPanel) {
         left = Math.max(left, Math.ceil(editPanel.getBoundingClientRect().right + 28));
       }

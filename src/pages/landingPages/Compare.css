@@ -1,0 +1,84 @@
+.compare-page .compare-columns {
+  width: 100%;
+  max-width: var(--mkt-max-width);
+  margin: 0 auto 28px;
+  padding: 0 20px;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 20px;
+  box-sizing: border-box;
+}
+
+.compare-column {
+  border: 1px solid var(--mkt-border);
+  border-radius: 12px;
+  padding: 20px 22px;
+  background: rgba(255, 255, 255, 0.03);
+  text-align: left;
+}
+
+.compare-column h2 {
+  margin: 0 0 12px;
+  color: var(--mkt-text);
+  font-size: 1.2rem;
+}
+
+.compare-column ul {
+  margin: 0;
+  padding-left: 18px;
+  color: var(--mkt-text-muted);
+  line-height: 1.55;
+}
+
+.compare-column li + li {
+  margin-top: 8px;
+}
+
+.compare-table-wrap {
+  width: 100%;
+  max-width: var(--mkt-max-width);
+  margin: 0 auto 24px;
+  padding: 0 20px;
+  box-sizing: border-box;
+  overflow-x: auto;
+}
+
+.compare-table {
+  width: 100%;
+  border-collapse: collapse;
+  text-align: left;
+  font-size: 0.98rem;
+}
+
+.compare-table th,
+.compare-table td {
+  border-bottom: 1px solid var(--mkt-border);
+  padding: 14px 12px;
+  vertical-align: top;
+  color: var(--mkt-text-muted);
+}
+
+.compare-table thead th {
+  color: var(--mkt-text);
+  font-weight: 700;
+}
+
+.compare-table tbody th {
+  color: var(--mkt-text);
+  font-weight: 600;
+  width: 18%;
+}
+
+.compare-table td {
+  width: 41%;
+}
+
+@media (max-width: 800px) {
+  .compare-page .compare-columns {
+    grid-template-columns: 1fr;
+  }
+
+  .compare-table {
+    min-width: 640px;
+  }
+}

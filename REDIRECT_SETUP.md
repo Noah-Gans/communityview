@@ -1,5 +1,24 @@
 # Domain Redirect Setup Guide
 
+## Canonical host: `communityview.ai` (no www)
+
+Use the **apex** domain as the real site. Send `www` there with a permanent redirect.
+
+### Namecheap (Advanced DNS) — www → apex
+
+1. Open [Namecheap](https://ap.www.namecheap.com/) → Domain List → `communityview.ai` → **Advanced DNS**
+2. Find any existing `www` record (A / CNAME / URL Redirect)
+3. Set `www` to a **URL Redirect Record**:
+   - Host: `www`
+   - Value: `https://communityview.ai/`
+   - Prefer **Permanent (301)** if Namecheap offers it
+4. Keep apex (`@`) pointed at your live host (Firebase / GitHub Pages) — do **not** use the Domain tab “Redirect Domain” box for this; that forwards the whole domain elsewhere
+5. In Google Search Console, use `https://communityview.ai` as the primary property and request indexing after deploy
+
+The web app also soft-redirects `www.communityview.ai` → apex in the browser as a backup. DNS/hosting **301** is what transfers SEO.
+
+---
+
 ## Redirecting tetoncountygis.com → communityview.ai
 
 ### Option 1: DNS/Hosting Provider Redirect (RECOMMENDED - Best for SEO)
@@ -99,8 +118,8 @@ Your current Firebase config will work on `communityview.ai` once you:
 
 After setup, test:
 
-1. Visit `tetoncountygis.com` → should redirect to `communityview.ai`
-2. Visit `tetoncountygis.com/map` → should redirect to `communityview.ai/map`
-3. Test Firebase Auth login on `communityview.ai` → should work
-4. Check browser console for any Firebase errors
-
+1. Visit `www.communityview.ai` → should redirect to `communityview.ai`
+2. Visit `tetoncountygis.com` → should redirect to `communityview.ai`
+3. Visit `tetoncountygis.com/map` → should redirect to `communityview.ai/map`
+4. Test Firebase Auth login on `communityview.ai` → should work
+5. Check browser console for any Firebase errors

@@ -2,7 +2,7 @@ import type { CapacitorConfig } from '@capacitor/cli';
 
 const config: CapacitorConfig = {
   appId: 'com.tetoncounty.gis',
-  appName: 'Teton County GIS',
+  appName: 'Community View',
   webDir: 'build',
   // Development server config - COMMENTED OUT FOR PRODUCTION
   // WARNING: Keep this commented out for App Store builds!
