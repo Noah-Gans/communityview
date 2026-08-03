@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import MapLoadingOverlay from '../../components/loading/MapLoadingOverlay';
 import { mapService } from '../../services/mapService';
 import { autoGeneratePropertyTour } from '../../utils/tourAutoGenerate';
+import { getMapShareUrls } from '../../utils/mapShareLinks';
 
 /**
  * Floating right panel: shareable client link, raster PNG/PDF export, optional browser print.
@@ -32,6 +33,7 @@ export default function ShareMapPanel({
 }) {
   const [copied, setCopied] = useState(false);
   const [tourCopied, setTourCopied] = useState(false);
+  const [amenityCopied, setAmenityCopied] = useState(false);
   const [generatingTour, setGeneratingTour] = useState(false);
   const [embedCopied, setEmbedCopied] = useState(false);
   const [embedHeight, setEmbedHeight] = useState(500);
@@ -111,12 +113,15 @@ export default function ShareMapPanel({
     }
   }, [descriptionDraft, mapId, needsSave, onMapDescriptionChange, onMapsUpdated]);
 
-  const shareUrl = shareToken ? `${window.location.origin}/view/${shareToken}` : '';
-  const embedUrl = shareToken ? `${window.location.origin}/view/${shareToken}?embed=1` : '';
+  const shareUrls = getMapShareUrls(shareToken);
+  const shareUrl = shareUrls?.client || '';
+  const embedUrl = shareToken ? `${shareUrl}?embed=1` : '';
   /** Dedicated path + locked basemap so cold opens do not race map style init. */
   const tourUrl = shareToken
     ? `${window.location.origin}/tour/${shareToken}?basemap=imagery-3d`
     : '';
+  const amenityMapUrl = shareUrls?.amenities || '';
+  const amenityMapEditUrl = shareUrls?.amenitiesEdit || '';
 
   const embedSnippet = useMemo(() => {
     if (!embedUrl) return '';
@@ -193,6 +198,47 @@ export default function ShareMapPanel({
       window.open(editUrl, '_blank', 'noopener,noreferrer');
     } catch (e) {
       setErr(e?.message || 'Could not open tour editor');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const handleOpenAmenityEditor = async () => {
+    if (!amenityMapEditUrl) return;
+    setErr(null);
+    try {
+      await ensureMapIsPublic();
+      window.open(amenityMapEditUrl, '_blank', 'noopener,noreferrer');
+    } catch (e) {
+      setErr(e?.message || 'Could not open amenity map editor');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const handleCopyAmenityLink = async () => {
+    if (!amenityMapUrl) return;
+    setErr(null);
+    try {
+      await ensureMapIsPublic();
+      await navigator.clipboard.writeText(amenityMapUrl);
+      setAmenityCopied(true);
+      window.setTimeout(() => setAmenityCopied(false), 2200);
+    } catch (e) {
+      setErr(e?.message || 'Could not copy amenity map link');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const handleOpenAmenityMap = async () => {
+    if (!amenityMapUrl) return;
+    setErr(null);
+    try {
+      await ensureMapIsPublic();
+      window.open(amenityMapUrl, '_blank', 'noopener,noreferrer');
+    } catch (e) {
+      setErr(e?.message || 'Could not open amenity map');
     } finally {
       setBusy(false);
     }
@@ -525,6 +571,68 @@ export default function ShareMapPanel({
           </button>
         </section>
         )}
+
+        <section className="print-share-option print-share-option--amenities">
+          <h3 className="print-share-option-title">Neighborhood amenity map</h3>
+          <p className="print-share-option-desc">
+            Show parks, schools, cafés, restaurants, grocery stores, fire and police stations,
+            and libraries together on one calm map. Choose a radius and individual places for
+            each category.
+          </p>
+          {needsSave ? (
+            <p className="print-share-option-note">
+              Save this map first to build or share an amenity map.
+            </p>
+          ) : !shareToken ? (
+            <p className="print-share-option-note">
+              This map has no share token yet. Save again from the editor.
+            </p>
+          ) : (
+            <>
+              <button
+                type="button"
+                className="print-share-primary-btn print-share-amenity-create-btn"
+                onClick={() => void handleOpenAmenityEditor()}
+                disabled={busy}
+              >
+                Make / edit amenity map
+              </button>
+              <label className="print-share-url-label" htmlFor="print-amenity-map-url-input">
+                Client amenity map link
+              </label>
+              <div className="print-share-url-row">
+                <input
+                  id="print-amenity-map-url-input"
+                  type="text"
+                  readOnly
+                  value={amenityMapUrl}
+                  className="print-share-url-input"
+                />
+                <button
+                  type="button"
+                  className="print-share-primary-btn"
+                  onClick={() => void handleCopyAmenityLink()}
+                  disabled={busy}
+                >
+                  {amenityCopied ? 'Copied' : 'Copy link'}
+                </button>
+              </div>
+              <button
+                type="button"
+                className="print-share-secondary-btn"
+                onClick={() => void handleOpenAmenityMap()}
+                disabled={busy}
+              >
+                Preview amenity map
+              </button>
+            </>
+          )}
+          {needsSave && (
+            <button type="button" className="print-share-secondary-btn" onClick={onOpenSave}>
+              Open save
+            </button>
+          )}
+        </section>
 
         <section className="print-share-option">
           <h3 className="print-share-option-title">Digital property tour</h3>

@@ -20,7 +20,11 @@ const AMENITY_PLACE_TYPES = {
   fitness: ['gym'],
   trailheads: ['hiking_area', 'gym'],
   essentials: ['pharmacy', 'drugstore', 'hardware_store', 'bank'],
-  coffee: ['cafe', 'coffee_shop'],
+  coffee: ['cafe', 'coffee_shop', 'bakery'],
+  dining: ['restaurant', 'pizza_restaurant', 'seafood_restaurant', 'meal_takeaway'],
+  fire_station: ['fire_station'],
+  police_station: ['police'],
+  library: ['library'],
   transit: ['subway_station', 'train_station', 'bus_station', 'transit_station'],
   airport: ['airport'],
 };
@@ -62,6 +66,9 @@ function googlePlaceResultToFeature(r, amenityKey) {
   if (Array.isArray(r.types) && r.types.length) {
     props.googleTypes = r.types.map((t) => String(t));
   }
+  if (r.formattedAddress != null && String(r.formattedAddress).trim()) {
+    props.formattedAddress = String(r.formattedAddress).trim();
+  }
   if (r.photoUrl != null && String(r.photoUrl).trim()) {
     props.photoUrl = String(r.photoUrl).trim();
   }
@@ -73,7 +80,7 @@ function googlePlaceResultToFeature(r, amenityKey) {
 }
 
 /**
- * @param {{ lat: number, lng: number, radiusMeters?: number, amenityKey: string, apiKey: string, editorMode?: boolean }} params
+ * @param {{ lat: number, lng: number, radiusMeters?: number, amenityKey: string, apiKey: string, editorMode?: boolean, basicFields?: boolean }} params
  */
 export async function fetchNearbyTourAmenityGoogleMapsJs(params) {
   const lat = Number(params?.lat);
@@ -100,7 +107,9 @@ export async function fetchNearbyTourAmenityGoogleMapsJs(params) {
   let apiError = '';
 
   if (amenityKey === 'grocery') {
-    const groceryResult = await fetchTourGroceryPlacesNew(lat, lng, fetchRadiusMeters, apiKey);
+    const groceryResult = await fetchTourGroceryPlacesNew(lat, lng, fetchRadiusMeters, apiKey, {
+      basicFields: params?.basicFields === true,
+    });
     all = groceryResult.results;
     apiError = groceryResult.apiError || '';
   } else {
@@ -109,7 +118,8 @@ export async function fetchNearbyTourAmenityGoogleMapsJs(params) {
       lng,
       fetchRadiusMeters,
       apiKey,
-      types
+      types,
+      { basicFields: params?.basicFields === true }
     );
     all = nearbyResult.results;
     apiError = nearbyResult.apiError || '';

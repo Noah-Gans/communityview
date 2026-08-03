@@ -32,8 +32,14 @@ const MainHeader = () => {
   // Check if we're on a product page (map, search, report, print)
   const isProductPage = ['/map', '/search', '/report', '/print'].includes(location.pathname);
   
-  // `src/pages/landingPages/*` — home + FAQ, pricing, features, changelog
-  const isMarketingPage = location.pathname === '/' || location.pathname === '/pricing' || location.pathname === '/features' || location.pathname === '/faq';
+  const isMarketingPage =
+    location.pathname === '/' ||
+    location.pathname === '/pricing' ||
+    location.pathname === '/features' ||
+    location.pathname === '/faq' ||
+    location.pathname === '/use-cases' ||
+    location.pathname.startsWith('/use-cases/') ||
+    location.pathname.startsWith('/compare/');
   
   // Hide header on sales one-pager
   const isOnePage = location.pathname === '/onepage';
@@ -417,6 +423,9 @@ const MainHeader = () => {
           <div className="header-center">
             <button className="nav-button" onClick={() => navigate('/features')}>
               Features
+            </button>
+            <button className="nav-button" onClick={() => navigate('/use-cases')}>
+              Use cases
             </button>
             <button className="nav-button" onClick={() => navigate('/pricing')}>
               Pricing

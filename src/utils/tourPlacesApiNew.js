@@ -9,10 +9,23 @@ const FIELD_MASK = [
   'places.location',
   'places.types',
   'places.primaryType',
+  'places.formattedAddress',
   'places.rating',
   'places.userRatingCount',
   'places.businessStatus',
   'places.photos',
+].join(',');
+
+const BASIC_FIELD_MASK = [
+  'places.id',
+  'places.displayName',
+  'places.location',
+  'places.types',
+  'places.primaryType',
+  'places.formattedAddress',
+  'places.rating',
+  'places.userRatingCount',
+  'places.businessStatus',
 ].join(',');
 
 function placeIdFromNewPlace(place) {
@@ -54,6 +67,7 @@ function normalizeNewPlaceToLegacy(place, apiKey = '') {
       location: { lat, lng },
     },
   };
+  if (place?.formattedAddress) out.formattedAddress = String(place.formattedAddress);
   if (typeof place?.rating === 'number' && Number.isFinite(place.rating)) {
     out.rating = place.rating;
   }
@@ -105,7 +119,7 @@ async function searchNearbyNew(lat, lng, radiusMeters, apiKey, includedTypes, op
     headers: {
       'Content-Type': 'application/json',
       'X-Goog-Api-Key': apiKey,
-      'X-Goog-FieldMask': FIELD_MASK,
+      'X-Goog-FieldMask': options.basicFields ? BASIC_FIELD_MASK : FIELD_MASK,
     },
     body: JSON.stringify(body),
   });
@@ -181,9 +195,10 @@ const GROCERY_NEARBY_TYPES = ['supermarket', 'grocery_store', 'food_store'];
 /**
  * Grocery: one Nearby Search (same as other amenity categories).
  */
-export async function fetchTourGroceryPlacesNew(lat, lng, radiusMeters, apiKey) {
+export async function fetchTourGroceryPlacesNew(lat, lng, radiusMeters, apiKey, options = {}) {
   return searchNearbyNew(lat, lng, radiusMeters, apiKey, GROCERY_NEARBY_TYPES, {
     rankPreference: 'DISTANCE',
+    basicFields: options.basicFields === true,
   });
 }
 
@@ -191,8 +206,16 @@ export async function fetchTourGroceryPlacesNew(lat, lng, radiusMeters, apiKey) 
  * Tour nearby: exactly one Nearby Search per amenity (all types in one request).
  * @param {string[]} includedTypes
  */
-export async function fetchTourNearbyPlacesNew(lat, lng, radiusMeters, apiKey, includedTypes) {
+export async function fetchTourNearbyPlacesNew(
+  lat,
+  lng,
+  radiusMeters,
+  apiKey,
+  includedTypes,
+  options = {}
+) {
   return searchNearbyNew(lat, lng, radiusMeters, apiKey, includedTypes, {
     rankPreference: 'DISTANCE',
+    basicFields: options.basicFields === true,
   });
 }

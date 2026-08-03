@@ -17,6 +17,12 @@ export default function MarketingFooter() {
           <button type="button" className="footer-button" onClick={() => navigate('/pricing')}>
             Pricing
           </button>
+          <button type="button" className="footer-button" onClick={() => navigate('/use-cases')}>
+            Use cases
+          </button>
+          <button type="button" className="footer-button" onClick={() => navigate('/compare/land-id')}>
+            vs Land id
+          </button>
           <button type="button" className="footer-button" onClick={() => navigate('/faq')}>
             FAQ
           </button>

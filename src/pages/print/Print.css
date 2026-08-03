@@ -1925,6 +1925,12 @@ body.print-preview-active .print-scroll-wrapper {
   cursor: not-allowed;
 }
 
+.print-share-amenity-create-btn {
+  width: 100%;
+  margin-bottom: 12px;
+  background: #1d784f;
+}
+
 .print-share-tour-actions {
   display: flex;
   flex-wrap: wrap;

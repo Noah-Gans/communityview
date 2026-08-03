@@ -57,6 +57,62 @@ const PAGES = [
     description:
       'Open the CommunityView map to explore parcels, ownership, and land layers nationwide.',
   },
+  {
+    route: '/use-cases',
+    file: path.join('use-cases', 'index.html'),
+    title: 'Use Cases — Parcel Search, Maps & Property Tours | CommunityView',
+    description:
+      'How real estate agents use CommunityView for parcel search, ownership details, map layers, listing maps, property tours, and embeddable maps.',
+  },
+  {
+    route: '/use-cases/parcel-search',
+    file: path.join('use-cases', 'parcel-search', 'index.html'),
+    title: 'Nationwide Parcel Search for Real Estate Agents | CommunityView',
+    description:
+      'Search parcels nationwide by owner, address, or APN. Filter by county and open results on an interactive map built for real estate agents.',
+  },
+  {
+    route: '/use-cases/ownership-details',
+    file: path.join('use-cases', 'ownership-details', 'index.html'),
+    title: 'Property Ownership Details & Parcel Records | CommunityView',
+    description:
+      'See property ownership and parcel details on the map — owner, mailing address, APN, legal description, acreage, and assessed values for real estate research.',
+  },
+  {
+    route: '/use-cases/listing-maps',
+    file: path.join('use-cases', 'listing-maps', 'index.html'),
+    title: 'Listing Map Software for Real Estate Agents | CommunityView',
+    description:
+      'Create shareable listing maps for real estate marketing. Draw boundaries, add pins and photos, measure acreage, and send buyers a link.',
+  },
+  {
+    route: '/use-cases/property-tours',
+    file: path.join('use-cases', 'property-tours', 'index.html'),
+    title: 'Digital Property Tours for Real Estate Listings | CommunityView',
+    description:
+      'Create digital property tours for listings. Show the parcel, nearby amenities, and send buyers one shareable link on any device.',
+  },
+  {
+    route: '/use-cases/map-layers',
+    file: path.join('use-cases', 'map-layers', 'index.html'),
+    title: 'Real Estate Map Layers — Soil, Wetlands, Wildfire & More | CommunityView',
+    description:
+      'Toggle real estate map layers for land context: ownership boundaries, soil, wetlands, wildfire hazard, public land, and more on one interactive map.',
+  },
+  {
+    route: '/use-cases/embedded-maps',
+    file: path.join('use-cases', 'embedded-maps', 'index.html'),
+    title: 'Embed Listing Maps on Your Website | CommunityView',
+    description:
+      'Embed interactive listing maps on your real estate website. Copy an iframe snippet and let buyers explore the property map on your site.',
+  },
+  {
+    route: '/compare/land-id',
+    file: path.join('compare', 'land-id', 'index.html'),
+    title: 'CommunityView vs Land id — Parcel Maps & Property Tours for Agents',
+    description:
+      'Comparing CommunityView and Land id for real estate agents: parcel search, ownership details, listing maps, property tours, embeds, and pricing simplicity.',
+  },
 ];
 
 function escapeHtml(s) {

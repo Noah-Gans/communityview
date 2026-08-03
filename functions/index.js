@@ -1838,11 +1838,15 @@ const {
   AMENITIES_WITH_LENIENT_FALLBACK,
   isAllowedGooglePlaceForAmenity,
 } = require("./nearbyAmenityFilters");
+const {
+  readAmenityGridCache,
+  writeAmenityGridCache,
+} = require("./amenityGridCache");
 const { fetchTourNearbyPlacesNew, fetchTourGroceryPlacesNew } = require("./placesApiNew");
 
 /** Keep in sync with `src/utils/propertyTourSlides.js` / `tourNearbyRanking.js`. */
 const NEARBY_FETCH_RADIUS_METERS = 25000;
-const NEARBY_TOUR_DATA_VERSION = 28;
+const NEARBY_TOUR_DATA_VERSION = 29;
 
 /** Tour vicinity: Places API (New) `includedTypes` per amenity key. */
 const NEARBY_TYPES_BY_AMENITY = {
@@ -1852,7 +1856,11 @@ const NEARBY_TYPES_BY_AMENITY = {
   fitness: ["gym"],
   trailheads: ["hiking_area", "gym"],
   essentials: ["pharmacy", "drugstore", "hardware_store", "bank"],
-  coffee: ["cafe", "coffee_shop"],
+  coffee: ["cafe", "coffee_shop", "bakery"],
+  dining: ["restaurant", "pizza_restaurant", "seafood_restaurant", "meal_takeaway"],
+  fire_station: ["fire_station"],
+  police_station: ["police"],
+  library: ["library"],
   transit: ["subway_station", "train_station", "bus_station", "transit_station"],
   airport: ["airport"],
 };
@@ -1913,6 +1921,9 @@ function buildNearbyFeaturesFromGoogleResults(all, amenityKey, options = {}) {
     if (r.vicinity != null && String(r.vicinity).trim()) {
       props.vicinity = String(r.vicinity).trim();
     }
+    if (r.formattedAddress != null && String(r.formattedAddress).trim()) {
+      props.formattedAddress = String(r.formattedAddress).trim();
+    }
     if (r.business_status != null && String(r.business_status).trim()) {
       props.business_status = String(r.business_status).trim();
     }
@@ -1941,6 +1952,8 @@ exports.getNearbyGooglePlaces = functions.https.onCall(async (data) => {
   );
   const forceRefresh = data && data.forceRefresh === true;
   const editorMode = data && data.editorMode === true;
+  const basicFields = data && data.basicFields === true;
+  const useGridCache = data && data.gridCache === true;
   const amenityKey = data && data.amenityKey != null ? String(data.amenityKey).trim() : "";
   const shareToken =
     data && data.shareToken != null ? String(data.shareToken).trim() : "";
@@ -1970,6 +1983,19 @@ exports.getNearbyGooglePlaces = functions.https.onCall(async (data) => {
     }
   }
 
+  if (useGridCache && !forceRefresh) {
+    const cached = await readAmenityGridCache(
+      lat,
+      lng,
+      amenityKey,
+      fetchRadiusMeters
+    );
+    if (cached && Array.isArray(cached.features) && cached.features.length > 0) {
+      console.log("getNearbyGooglePlaces grid cache hit", { amenityKey, fetchRadiusMeters });
+      return { ...cached, fromAmenityGridCache: true };
+    }
+  }
+
   const key =
     (functions.config().google && functions.config().google.places_key) ||
     process.env.GOOGLE_PLACES_KEY ||
@@ -1993,15 +2019,25 @@ exports.getNearbyGooglePlaces = functions.https.onCall(async (data) => {
 
   const types = NEARBY_TYPES_BY_AMENITY[amenityKey];
   if (!Array.isArray(types) || !types.length) {
-    return { type: "FeatureCollection", features: [] };
+    console.warn("getNearbyGooglePlaces unknown amenityKey", { amenityKey });
+    return {
+      type: "FeatureCollection",
+      features: [],
+      nearbyDataVersion: NEARBY_TOUR_DATA_VERSION,
+      unknownAmenityKey: true,
+    };
   }
 
   let all = [];
   try {
     if (amenityKey === "grocery") {
-      all = await fetchTourGroceryPlacesNew(lat, lng, fetchRadiusMeters, key);
+      all = await fetchTourGroceryPlacesNew(lat, lng, fetchRadiusMeters, key, {
+        basicFields,
+      });
     } else {
-      all = await fetchTourNearbyPlacesNew(lat, lng, fetchRadiusMeters, key, types);
+      all = await fetchTourNearbyPlacesNew(lat, lng, fetchRadiusMeters, key, types, {
+        basicFields,
+      });
     }
   } catch (placesErr) {
     console.error("getNearbyGooglePlaces Places API (New) error:", placesErr);
@@ -2066,6 +2102,19 @@ exports.getNearbyGooglePlaces = functions.https.onCall(async (data) => {
 
   const response = { ...out, nearbyDataVersion: NEARBY_TOUR_DATA_VERSION };
 
+  // Never make an empty Places response sticky. A transient API/filter failure should
+  // be retried on the next request instead of poisoning this grid cell until expiry.
+  if (useGridCache && Array.isArray(response.features) && response.features.length > 0) {
+    await writeAmenityGridCache(
+      lat,
+      lng,
+      amenityKey,
+      fetchRadiusMeters,
+      response,
+      NEARBY_TOUR_DATA_VERSION
+    );
+  }
+
   if (mapRef && shareToken && !editorMode && !mapHasCuratedTourData(mapData)) {
     const payload = buildSingleAmenityCachePayload(searchCenter, amenityKey, response, fetchRadiusMeters);
     if (payload) {
@@ -2092,3 +2141,9 @@ exports.regridApi = regridApi;
 exports.regridTileProxy = require("./regridTileProxy").regridTileProxy;
 const { marketingUnsubscribe } = require("./marketingUnsubscribe");
 exports.marketingUnsubscribe = marketingUnsubscribe;
+exports.curateNeighborhoodAmenities =
+  require("./neighborhoodAmenityCurate").curateNeighborhoodAmenities;
+exports.generateNeighborhoodMapHttp =
+  require("./neighborhoodMapGenerate").generateNeighborhoodMapHttp;
+exports.generateNeighborhoodMapPreview =
+  require("./neighborhoodMapGenerate").generateNeighborhoodMapPreview;

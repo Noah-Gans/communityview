@@ -10,5 +10,6 @@ export function isMapBackedRoute(pathname = '') {
   if (pathname === '/report') return true;
   if (pathname.startsWith('/view/')) return true;
   if (pathname.startsWith('/tour/')) return true;
+  if (pathname.startsWith('/amenities/')) return true;
   return false;
 }

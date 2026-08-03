@@ -277,7 +277,9 @@ const MapPage = () => {
     useTutorialWalkthrough();
 
   const isClientShareMapRoute =
-    routerLocation.pathname.startsWith('/view/') || routerLocation.pathname.startsWith('/tour/');
+    routerLocation.pathname.startsWith('/view/') ||
+    routerLocation.pathname.startsWith('/tour/') ||
+    routerLocation.pathname.startsWith('/amenities/');
   const isPropertyTourRoute = routerLocation.pathname.startsWith('/tour/');
   const isBasemapTutorialStep = tourActive && tourMode === 'map' && tourStep?.id === 'basemap-control';
 
@@ -330,10 +332,16 @@ const MapPage = () => {
 
   useEffect(() => {
     const path = routerLocation.pathname || '';
-    const shareLike = path.startsWith('/view/') || path.startsWith('/tour/');
+    const shareLike =
+      path.startsWith('/view/') ||
+      path.startsWith('/tour/') ||
+      path.startsWith('/amenities/');
     setShareViewerReadOnly(shareLike);
     const prev = prevPathForShareRef.current;
-    const prevShareLike = prev.startsWith('/view/') || prev.startsWith('/tour/');
+    const prevShareLike =
+      prev.startsWith('/view/') ||
+      prev.startsWith('/tour/') ||
+      prev.startsWith('/amenities/');
     if (prevShareLike && !shareLike) {
       clearPrintElements();
       setSelectedPrintElement(null);
@@ -2422,7 +2430,11 @@ useEffect(() => {
   writeBasemapToUrlRef.current = (basemapId) => {
     try {
       const p = window.location?.pathname || '';
-      if (p.startsWith('/view/') || p.startsWith('/tour/')) return;
+      if (
+        p.startsWith('/view/') ||
+        p.startsWith('/tour/') ||
+        p.startsWith('/amenities/')
+      ) return;
     } catch {
       return;
     }
@@ -2438,7 +2450,11 @@ useEffect(() => {
     if (!mapRef.current) return;
     try {
       const p = window.location?.pathname || '';
-      if (p.startsWith('/view/') || p.startsWith('/tour/')) return;
+      if (
+        p.startsWith('/view/') ||
+        p.startsWith('/tour/') ||
+        p.startsWith('/amenities/')
+      ) return;
     } catch {
       /* ignore */
     }

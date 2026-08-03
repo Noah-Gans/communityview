@@ -17,6 +17,13 @@ export const LOADING_PHRASE_SETS = {
     'Lining up nearby amenities…',
     'Almost ready…',
   ],
+  amenities: [
+    'Your amenity map is loading…',
+    'Loading the neighborhood…',
+    'Placing nearby amenities…',
+    'Preparing category filters…',
+    'Almost ready…',
+  ],
   createTour: [
     'Building your property tour…',
     'Setting camera angles…',

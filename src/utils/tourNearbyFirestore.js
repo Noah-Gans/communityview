@@ -20,6 +20,18 @@ export const TOUR_NEARBY_AMENITY_KEYS = [
   'coffee',
   'transit',
   'airport',
+  'dining',
+];
+
+export const AMENITY_MAP_EXTRA_KEYS = [
+  'fire_station',
+  'police_station',
+  'library',
+];
+
+const PERSISTED_NEARBY_AMENITY_KEYS = [
+  ...TOUR_NEARBY_AMENITY_KEYS,
+  ...AMENITY_MAP_EXTRA_KEYS,
 ];
 
 function finiteCoord(value) {
@@ -79,6 +91,12 @@ function sanitizeFeature(feature) {
     props.straightLineMiles = raw.straightLineMiles;
   }
   if (raw.photoUrl != null && String(raw.photoUrl).trim()) props.photoUrl = String(raw.photoUrl).trim();
+  if (raw.formattedAddress != null && String(raw.formattedAddress).trim()) {
+    props.formattedAddress = String(raw.formattedAddress).trim();
+  }
+  if (raw.vicinity != null && String(raw.vicinity).trim()) {
+    props.vicinity = String(raw.vicinity).trim();
+  }
   if (Array.isArray(raw.googleTypes) && raw.googleTypes.length) {
     props.googleTypes = raw.googleTypes.map((t) => String(t));
   }
@@ -95,7 +113,19 @@ function sanitizeAmenityCollection(fc) {
   const features = Array.isArray(fc?.features)
     ? fc.features.map(sanitizeFeature).filter(Boolean)
     : [];
-  return { type: 'FeatureCollection', features, fetched: true };
+  const out = { type: 'FeatureCollection', features, fetched: true };
+  if (Number.isFinite(Number(fc?.searchRadiusMeters))) {
+    out.searchRadiusMeters = Number(fc.searchRadiusMeters);
+  }
+  return out;
+}
+
+function sanitizeHomeMarker(raw) {
+  if (!raw || typeof raw !== 'object') return null;
+  const lat = finiteCoord(raw.lat);
+  const lng = finiteCoord(raw.lng);
+  if (lat == null || lng == null) return null;
+  return { lat, lng };
 }
 
 /** Normalize Firestore `tourNearbyCache` for client state. */
@@ -108,7 +138,7 @@ export function normalizeTourNearbyCacheFromFirestore(raw) {
 
   const byAmenity = {};
   const src = raw.byAmenity && typeof raw.byAmenity === 'object' ? raw.byAmenity : {};
-  for (const key of TOUR_NEARBY_AMENITY_KEYS) {
+  for (const key of PERSISTED_NEARBY_AMENITY_KEYS) {
     if (!src[key]) continue;
     byAmenity[key] = sanitizeAmenityCollection(src[key]);
   }
@@ -116,13 +146,16 @@ export function normalizeTourNearbyCacheFromFirestore(raw) {
     raw.tourSettings && typeof raw.tourSettings === 'object' ? raw.tourSettings : null;
   if (!Object.keys(byAmenity).length && !tourSettings) return null;
 
-  return {
+  const out = {
     dataVersion: Number(raw.dataVersion) || 0,
     searchRadiusMeters: Number(raw.searchRadiusMeters) || TOUR_NEARBY_SEARCH_RADIUS_METERS,
     searchCenter: { lat, lng },
     byAmenity,
     tourSettings,
   };
+  const homeMarker = sanitizeHomeMarker(raw.homeMarker);
+  if (homeMarker) out.homeMarker = homeMarker;
+  return out;
 }
 
 /** Build React `nearbyContextByAmenity` from persisted tour cache. */
@@ -170,18 +203,18 @@ export function buildTourNearbyCacheForSave(
 
   const planKeys =
     Array.isArray(enabledAmenityKeys) && enabledAmenityKeys.length
-      ? enabledAmenityKeys.filter((k) => TOUR_NEARBY_AMENITY_KEYS.includes(k))
+      ? enabledAmenityKeys.filter((k) => PERSISTED_NEARBY_AMENITY_KEYS.includes(k))
       : [];
   const cacheKeys = Object.keys(nearbyContextByAmenity || {}).filter(
     (k) =>
-      TOUR_NEARBY_AMENITY_KEYS.includes(k) && nearbyContextByAmenity[k]?.fetched === true
+      PERSISTED_NEARBY_AMENITY_KEYS.includes(k) && nearbyContextByAmenity[k]?.fetched === true
   );
   const keys = [];
   for (const k of [...planKeys, ...cacheKeys]) {
     if (!keys.includes(k)) keys.push(k);
   }
   if (!keys.length) {
-    keys.push(...TOUR_NEARBY_AMENITY_KEYS);
+    keys.push(...PERSISTED_NEARBY_AMENITY_KEYS);
   }
 
   const byAmenity = {};
@@ -198,10 +231,14 @@ export function buildTourNearbyCacheForSave(
     searchCenter: { lat, lng },
     byAmenity,
   };
+  const homeMarker = sanitizeHomeMarker(options.homeMarker);
+  if (homeMarker) payload.homeMarker = homeMarker;
   if (options.replace) payload.replace = true;
   if (options.tourSettings && typeof options.tourSettings === 'object') {
     const enabledKeys = Array.isArray(options.tourSettings.enabledAmenityKeys)
-      ? options.tourSettings.enabledAmenityKeys.filter((k) => TOUR_NEARBY_AMENITY_KEYS.includes(k))
+      ? options.tourSettings.enabledAmenityKeys.filter((k) =>
+          PERSISTED_NEARBY_AMENITY_KEYS.includes(k)
+        )
       : keys;
     payload.tourSettings = {
       searchRadiusMeters: radius,

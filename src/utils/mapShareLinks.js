@@ -6,6 +6,8 @@ export function getMapShareUrls(shareToken) {
   return {
     client: `${origin}/view/${shareToken}`,
     tour: `${origin}/tour/${shareToken}?basemap=imagery-3d`,
+    amenities: `${origin}/amenities/${shareToken}`,
+    amenitiesEdit: `${origin}/amenities/${shareToken}?edit=1`,
   };
 }
 

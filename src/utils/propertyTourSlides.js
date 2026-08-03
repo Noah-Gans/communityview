@@ -409,6 +409,7 @@ export function getTourNearbySearchCenter(printElements, tourBounds, savedViewpo
 }
 
 export const TOUR_NEARBY_AMENITY_ORDER = [
+  { key: 'dining', label: 'Dining' },
   { key: 'parks_rec', label: 'Parks & recreation' },
   { key: 'grocery', label: 'Grocery stores' },
   { key: 'schools', label: 'Schools' },
@@ -423,6 +424,7 @@ export const TOUR_NEARBY_AMENITY_ORDER = [
 /** Pre-composited PNG markers (whole disc + stroke + glyph) under `/public/tour_nearby_badges/`. */
 const TOUR_VICINITY_FULL_BADGE_BASE = '/tour_nearby_badges/';
 const TOUR_VICINITY_FULL_BADGE_FILES = {
+  dining: 'dining-badge.png',
   parks_rec: 'parks-rec-badge.png',
   grocery: 'grocery-badge.png',
   schools: 'school-badge.png',
@@ -595,6 +597,7 @@ const TOUR_VICINITY_PRINT_LOGO_BASE_PATH = '/logos_for_print';
 
 /** Map each tour amenity key to a print-logo SVG (see `public/logos_for_print`). */
 const TOUR_VICINITY_AMENITY_LOGO_FILES = {
+  dining: 'restaurant.png',
   parks_rec: 'table-picnic.svg',
   grocery: 'shopping-cart.png',
   schools: 'school.svg',
@@ -674,6 +677,7 @@ async function ensureTourVicinityLogoImage(map, amenityKey, filename, imageIdOve
 export async function loadTourVicinityPrintLogoImages(map) {
   if (!map) return;
   if (tourVicinityNearbyUseMainHomeIconForAll()) {
+    await ensureTourVicinityFullBadgeImage(map, 'dining');
     await ensureTourVicinityFullBadgeImage(map, 'parks_rec');
     await ensureTourVicinityFullBadgeImage(map, 'grocery');
     await ensureTourVicinityFullBadgeImage(map, 'schools');
@@ -727,6 +731,8 @@ function tourVicinityNearbyIconImageLayout() {
     return [
       'match',
       k,
+      'dining',
+      tourVicinityFullBadgeImageId('dining'),
       'parks_rec',
       tourVicinityFullBadgeImageId('parks_rec'),
       'grocery',
@@ -751,6 +757,8 @@ function tourVicinityNearbyIconImageLayout() {
   return [
     'match',
     k,
+    'dining',
+    tourVicinityFullBadgeImageId('dining'),
     'parks_rec',
     tourVicinityFullBadgeImageId('parks_rec'),
     'grocery',

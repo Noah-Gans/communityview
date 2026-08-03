@@ -7,11 +7,15 @@ import { DataProvider } from './assets/DataContext';
 import Report from './pages/report/Report';
 import Print from './pages/print/Print';
 import SharedMapViewPage from './pages/print/SharedMapViewPage';
+import AmenityMapPage from './pages/print/AmenityMapPage';
 import MainHeader from './pages/MainHeader';
 import Tutorial from './components/ui/Tutorial'; // Import the new Tutorial page
 import Pricing from './pages/landingPages/Pricing';
 import Features from './pages/landingPages/Features';
 import FAQ from './pages/landingPages/FAQ';
+import UseCases from './pages/landingPages/UseCases';
+import UseCasePage from './pages/landingPages/UseCasePage';
+import CompareLandId from './pages/landingPages/CompareLandId';
 import OnePage from './pages/OnePage'; // Import the OnePage sales document
 import { MapProvider } from './pages/MapContext';
 import { UserProvider } from './contexts/UserContext'; // Import UserContext
@@ -103,8 +107,13 @@ function AppRoutes({ activeTab, setActiveTab }) {
                   <Route path="/pricing" element={<Pricing />} />
                   <Route path="/features" element={<Features />} />
                   <Route path="/faq" element={<FAQ />} />
+                  <Route path="/use-cases" element={<UseCases />} />
+                  <Route path="/use-cases/:slug" element={<UseCasePage />} />
+                  <Route path="/compare/land-id" element={<CompareLandId />} />
+                  <Route path="/compare/landid" element={<CompareLandId />} />
                   <Route path="/view/:shareToken" element={<SharedMapViewPage />} />
                   <Route path="/tour/:shareToken" element={<SharedMapViewPage />} />
+                  <Route path="/amenities/:shareToken" element={<AmenityMapPage />} />
                   <Route path="/onepage" element={<OnePage />} />
                   <Route path="/login" element={<Login />} /> {/* Add Login Route */}
                   <Route path="/reset-password" element={<ResetPassword />} /> {/* Add Reset Password Route */}

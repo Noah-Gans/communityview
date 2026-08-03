@@ -193,6 +193,8 @@ export const mapService = {
     const forceRefresh = params?.forceRefresh === true;
     const editorMode = params?.editorMode === true;
     const preferBrowser = params?.preferBrowser === true;
+    const basicFields = params?.basicFields === true;
+    const gridCache = params?.gridCache === true;
     const fetchRadiusMeters = resolveTourNearbyFetchRadiusMeters(params?.radiusMeters);
     if (!Number.isFinite(lat) || !Number.isFinite(lng) || !amenityKey) {
       return finalizeNearbyTourGeoJson(
@@ -210,7 +212,7 @@ export const mapService = {
 
     const tryBrowserPlaces = async () => {
       if (typeof window === 'undefined' || !googleBrowserKey) {
-        if (!googleBrowserKey) {
+        if (!googleBrowserKey && preferBrowser) {
           hints.push(
             'No browser key: set REACT_APP_GOOGLE_MAPS_API_KEY in .env.development and restart npm start to use your own Places quota.'
           );
@@ -225,6 +227,8 @@ export const mapService = {
           amenityKey,
           apiKey: googleBrowserKey,
           editorMode,
+          basicFields,
+          gridCache,
         });
         if (fc?.features?.length) {
           rawFc = fc;
@@ -240,16 +244,34 @@ export const mapService = {
 
     const tryCloudPlaces = async () => {
       try {
-        const result = await getNearbyGooglePlacesFunction({
-          lat,
-          lng,
-          radiusMeters: fetchRadiusMeters,
-          amenityKey,
-          forceRefresh,
-          editorMode,
-          ...(shareToken ? { shareToken } : {}),
-        });
-        const data = result?.data;
+        const invokeCloud = async (refresh) => {
+          const result = await getNearbyGooglePlacesFunction({
+            lat,
+            lng,
+            radiusMeters: fetchRadiusMeters,
+            amenityKey,
+            forceRefresh: refresh,
+            editorMode,
+            basicFields,
+            gridCache,
+            ...(shareToken ? { shareToken } : {}),
+          });
+          return result?.data;
+        };
+
+        let data = await invokeCloud(forceRefresh);
+        // Older deployed functions cached empty grid cells. Retry an explicit editor
+        // search once without cache so existing poisoned cells recover immediately.
+        if (
+          editorMode &&
+          gridCache &&
+          !forceRefresh &&
+          data?.type === 'FeatureCollection' &&
+          Array.isArray(data.features) &&
+          data.features.length === 0
+        ) {
+          data = await invokeCloud(true);
+        }
         const serverVersion = Number(data?.nearbyDataVersion);
         const serverFresh =
           !Number.isFinite(serverVersion) || serverVersion === TOUR_NEARBY_DATA_VERSION;

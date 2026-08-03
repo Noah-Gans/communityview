@@ -1,7 +1,9 @@
+import { getUseCaseBySlug, useCasesHub } from '../pages/landingPages/content/useCases';
+import { landIdCompare } from '../pages/landingPages/content/compare';
+
 /** Canonical site origin — always apex (no www). */
 export const SITE_ORIGIN = 'https://communityview.ai';
 export const DEFAULT_OG_IMAGE = `${SITE_ORIGIN}/logo_only.png`;
-
 /**
  * Marketing / public page SEO. Keep paths in sync with App routes + sitemap.
  * @typedef {{ title: string, description: string, path: string, noindex?: boolean }} PageSeo
@@ -68,6 +70,35 @@ export function absoluteUrl(path = '/') {
 export function getPageSeo(pathname) {
   const exact = PAGE_SEO[pathname];
   if (exact) return exact;
+
+  if (pathname === '/use-cases') {
+    return {
+      path: useCasesHub.path,
+      title: useCasesHub.seoTitle,
+      description: useCasesHub.seoDescription,
+    };
+  }
+
+  if (pathname.startsWith('/use-cases/')) {
+    const slug = pathname.replace('/use-cases/', '').replace(/\/$/, '');
+    const useCase = getUseCaseBySlug(slug);
+    if (useCase) {
+      return {
+        path: `/use-cases/${useCase.slug}`,
+        title: useCase.seoTitle,
+        description: useCase.seoDescription,
+      };
+    }
+  }
+
+  if (pathname === landIdCompare.path || pathname === '/compare/landid') {
+    return {
+      path: landIdCompare.path,
+      title: landIdCompare.seoTitle,
+      description: landIdCompare.seoDescription,
+    };
+  }
+
   // Tokenized share URLs — leave indexing decisions to the page; default soft meta
   if (pathname.startsWith('/tour/') || pathname.startsWith('/view/')) {
     return {
