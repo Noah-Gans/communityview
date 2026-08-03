@@ -10,6 +10,7 @@ import { isNativeApp } from "../utils/platformDetection";
 import { useTutorialWalkthrough } from "../contexts/TutorialWalkthroughContext";
 import { REGRID_BATCH_REPORTS_ENABLED } from "../config/featureFlags";
 import { STAY_ON_HOME_STATE } from "../utils/marketingNavigation";
+import { normalizePathname } from "../utils/mapBackedRoutes";
 
 const MainHeader = () => {
   const location = useLocation();
@@ -26,20 +27,21 @@ const MainHeader = () => {
 
   const { start: startWalkthrough, startPrint: startPrintWalkthrough, isActive: tourActive, stepIndex: tourStepIndex } =
     useTutorialWalkthrough();
-  const isMapPage = location.pathname.startsWith('/map');
-  const isMapRoute = location.pathname === '/map';
-  const isPrintEditMode = location.pathname === '/print' && isPrinting;
+  const pathname = normalizePathname(location.pathname);
+  const isMapPage = pathname.startsWith('/map');
+  const isMapRoute = pathname === '/map';
+  const isPrintEditMode = pathname === '/print' && isPrinting;
   // Check if we're on a product page (map, search, report, print)
-  const isProductPage = ['/map', '/search', '/report', '/print'].includes(location.pathname);
+  const isProductPage = ['/map', '/search', '/report', '/print'].includes(pathname);
   
   const isMarketingPage =
-    location.pathname === '/' ||
-    location.pathname === '/pricing' ||
-    location.pathname === '/features' ||
-    location.pathname === '/faq' ||
-    location.pathname === '/use-cases' ||
-    location.pathname.startsWith('/use-cases/') ||
-    location.pathname.startsWith('/compare/');
+    pathname === '/' ||
+    pathname === '/pricing' ||
+    pathname === '/features' ||
+    pathname === '/faq' ||
+    pathname === '/use-cases' ||
+    pathname.startsWith('/use-cases/') ||
+    pathname.startsWith('/compare/');
   
   // Hide header on sales one-pager
   const isOnePage = location.pathname === '/onepage';
@@ -353,7 +355,7 @@ const MainHeader = () => {
   const showMobileTourNavStrip =
     isMobile && isMapPage && tourActive && tourStepIndex === 1;
 
-  const isPrintDashboard = location.pathname === '/print';
+  const isPrintDashboard = pathname === '/print';
 
   if (isMobile) {
     if (isMapPage) {
