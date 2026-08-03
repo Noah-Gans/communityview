@@ -1,5 +1,5 @@
 import React from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { Link } from 'react-router-dom';
 import './UseCases.css';
 import './styles/marketing-layout.css';
 import MarketingLayout from './components/MarketingLayout';
@@ -7,8 +7,6 @@ import MarketingFooter from './components/MarketingFooter';
 import { useCases, useCasesHub } from './content/useCases';
 
 export default function UseCases() {
-  const navigate = useNavigate();
-
   return (
     <MarketingLayout className="use-cases-page">
       <header className="use-cases-hero">
@@ -17,7 +15,7 @@ export default function UseCases() {
         <p className="use-cases-lede">{useCasesHub.lede}</p>
       </header>
 
-      <section className="use-cases-grid" aria-label="CommunityView use cases">
+      <section className="use-cases-grid" aria-label="Community View use cases">
         {useCases.map((item) => (
           <Link
             key={item.slug}
@@ -43,17 +41,13 @@ export default function UseCases() {
         <h2>Ready to try it on a listing?</h2>
         <p>Start a free trial and run parcel search, maps, and tours in one place.</p>
         <div className="use-case-hero-actions" style={{ justifyContent: 'center' }}>
-          <button type="button" className="use-cases-cta-btn" onClick={() => navigate('/signup')}>
+          <Link className="use-cases-cta-btn" to="/signup">
             Start free trial
             <span aria-hidden="true"> →</span>
-          </button>
-          <button
-            type="button"
-            className="use-cases-secondary-btn"
-            onClick={() => navigate('/compare/land-id')}
-          >
+          </Link>
+          <Link className="use-cases-secondary-btn" to="/compare/land-id">
             Compare vs Land id
-          </button>
+          </Link>
         </div>
       </section>
 
