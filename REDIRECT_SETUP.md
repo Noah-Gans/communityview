@@ -4,18 +4,17 @@
 
 Use the **apex** domain as the real site. Send `www` there with a permanent redirect.
 
+### Trailing slashes (GitHub Pages)
+
+Marketing shells are directory URLs (`/features/index.html` → `/features/`). Sitemap and canonical tags use **trailing slashes** so Search Console does not report “Page with redirect” for the non-slash URL. After deploy, request indexing on the slash forms (e.g. `https://communityview.ai/use-cases/parcel-maps/`).
+
 ### Namecheap (Advanced DNS) — www → apex
 
-1. Open [Namecheap](https://ap.www.namecheap.com/) → Domain List → `communityview.ai` → **Advanced DNS**
-2. Find any existing `www` record (A / CNAME / URL Redirect)
-3. Set `www` to a **URL Redirect Record**:
-   - Host: `www`
-   - Value: `https://communityview.ai/`
-   - Prefer **Permanent (301)** if Namecheap offers it
-4. Keep apex (`@`) pointed at your live host (Firebase / GitHub Pages) — do **not** use the Domain tab “Redirect Domain” box for this; that forwards the whole domain elsewhere
-5. In Google Search Console, use `https://communityview.ai` as the primary property and request indexing after deploy
+For GitHub Pages, prefer a **CNAME** `www` → `noah-gans.github.io` (GitHub issues the HTTPS 301 to apex). Do **not** use Namecheap URL Redirect for `www` — it breaks HTTPS for long paths.
 
 The web app also soft-redirects `www.communityview.ai` → apex in the browser as a backup. DNS/hosting **301** is what transfers SEO.
+
+In Google Search Console, use `https://communityview.ai` as the primary property and request indexing after deploy.
 
 ---
 

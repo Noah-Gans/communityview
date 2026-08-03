@@ -1,5 +1,5 @@
 import React from 'react';
-import { Link, Navigate, useNavigate, useParams } from 'react-router-dom';
+import { Link, Navigate, useParams } from 'react-router-dom';
 import './UseCases.css';
 import './styles/marketing-layout.css';
 import MarketingLayout from './components/MarketingLayout';
@@ -8,7 +8,6 @@ import { getUseCaseBySlug, useCases } from './content/useCases';
 
 export default function UseCasePage() {
   const { slug } = useParams();
-  const navigate = useNavigate();
   const useCase = getUseCaseBySlug(slug);
 
   if (!useCase) {
@@ -16,6 +15,7 @@ export default function UseCasePage() {
   }
 
   const others = useCases.filter((item) => item.slug !== useCase.slug);
+  const faqs = useCase.faqs || [];
 
   return (
     <MarketingLayout className="use-cases-page use-case-detail">
@@ -29,21 +29,13 @@ export default function UseCasePage() {
         <h1 className="use-cases-title">{useCase.h1}</h1>
         <p className="use-cases-lede">{useCase.lede}</p>
         <div className="use-case-hero-actions">
-          <button
-            type="button"
-            className="use-cases-cta-btn"
-            onClick={() => navigate('/signup')}
-          >
+          <Link className="use-cases-cta-btn" to="/signup">
             {useCase.ctaLabel}
             <span aria-hidden="true"> →</span>
-          </button>
-          <button
-            type="button"
-            className="use-cases-secondary-btn"
-            onClick={() => navigate('/pricing')}
-          >
+          </Link>
+          <Link className="use-cases-secondary-btn" to="/pricing">
             View pricing
-          </button>
+          </Link>
         </div>
       </header>
 
@@ -58,32 +50,57 @@ export default function UseCasePage() {
       </ul>
 
       <article className="use-case-article">
-        {useCase.sections.map((section) => (
-          <section key={section.heading} className="use-case-section">
-            <h2>{section.heading}</h2>
-            <p>{section.body}</p>
-          </section>
+        {useCase.sections.map((section, index) => (
+          <React.Fragment key={section.heading}>
+            <section className="use-case-section">
+              <h2>{section.heading}</h2>
+              <p>{section.body}</p>
+            </section>
+            {index === 1 && (
+              <aside className="use-case-mid-cta" aria-label="Get started">
+                <p>Ready to try this on a live parcel?</p>
+                <Link className="use-cases-cta-btn" to="/signup">
+                  Start free trial
+                  <span aria-hidden="true"> →</span>
+                </Link>
+              </aside>
+            )}
+          </React.Fragment>
         ))}
       </article>
+
+      {faqs.length > 0 && (
+        <section className="use-case-faq" aria-labelledby="use-case-faq-heading">
+          <h2 id="use-case-faq-heading">Frequently asked questions</h2>
+          <dl className="use-case-faq-list">
+            {faqs.map((item) => (
+              <div key={item.question} className="use-case-faq-item">
+                <dt>{item.question}</dt>
+                <dd>{item.answer}</dd>
+              </div>
+            ))}
+          </dl>
+        </section>
+      )}
 
       <section className="use-cases-cta use-case-detail-cta">
         <h2>Try this on your next listing</h2>
         <p>Start a free trial and run it yourself.</p>
-        <button type="button" className="use-cases-cta-btn" onClick={() => navigate('/signup')}>
+        <Link className="use-cases-cta-btn" to="/signup">
           Start free trial
           <span aria-hidden="true"> →</span>
-        </button>
+        </Link>
       </section>
 
       <section className="use-case-more" aria-label="More use cases">
-        <h2>More ways agents use CommunityView</h2>
+        <h2>More ways agents use Community View</h2>
         <div className="use-case-more-links">
           {others.map((item) => (
             <Link key={item.slug} to={`/use-cases/${item.slug}`}>
               {item.cardTitle}
             </Link>
           ))}
-          <Link to="/compare/land-id">CommunityView vs Land id</Link>
+          <Link to="/compare/land-id">Community View vs Land id</Link>
         </div>
       </section>
 

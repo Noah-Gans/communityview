@@ -1,11 +1,9 @@
 import React from 'react';
-import { useNavigate } from 'react-router-dom';
+import { Link } from 'react-router-dom';
 import { mapBuilder } from '../../content/messaging';
 import './HomeSections.css';
 
 export default function MapBuilderSection() {
-  const navigate = useNavigate();
-
   return (
     <section id="listing-maps" className="marketing-section map-builder-section">
       <div className="map-builder-inner">
@@ -27,10 +25,20 @@ export default function MapBuilderSection() {
               ))}
             </ul>
           )}
-          <button type="button" className="cta-button map-builder-cta" onClick={() => navigate('/signup')}>
+          {mapBuilder.links?.length > 0 && (
+            <p className="marketing-section-links">
+              {mapBuilder.links.map((link, index) => (
+                <React.Fragment key={link.to}>
+                  {index > 0 ? <span aria-hidden="true"> · </span> : null}
+                  <Link to={link.to}>{link.label}</Link>
+                </React.Fragment>
+              ))}
+            </p>
+          )}
+          <Link className="cta-button map-builder-cta" to="/signup">
             Create a listing map
             <span aria-hidden="true">→</span>
-          </button>
+          </Link>
         </div>
       </div>
     </section>

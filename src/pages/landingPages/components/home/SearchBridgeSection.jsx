@@ -1,6 +1,21 @@
 import React from 'react';
+import { Link } from 'react-router-dom';
 import { nationwideTrust, ownershipDetails, searchBridge } from '../../content/messaging';
 import './HomeSections.css';
+
+function SectionLinks({ links }) {
+  if (!links?.length) return null;
+  return (
+    <p className="marketing-section-links">
+      {links.map((link, index) => (
+        <React.Fragment key={link.to}>
+          {index > 0 ? <span aria-hidden="true"> · </span> : null}
+          <Link to={link.to}>{link.label}</Link>
+        </React.Fragment>
+      ))}
+    </p>
+  );
+}
 
 export default function SearchBridgeSection() {
   return (
@@ -9,6 +24,7 @@ export default function SearchBridgeSection() {
         <div className="search-bridge-copy">
           <h2 className="marketing-section-title">{searchBridge.title}</h2>
           <p className="marketing-section-subtitle">{searchBridge.subtitle}</p>
+          <SectionLinks links={searchBridge.links} />
         </div>
         <div className="search-bridge-image-wrap">
           <img
@@ -37,6 +53,7 @@ export function OwnershipDetailsSection() {
               ))}
             </ul>
           )}
+          <SectionLinks links={ownershipDetails.links} />
         </div>
         <div className="ownership-details-image-wrap">
           <img

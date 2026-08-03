@@ -16,6 +16,8 @@ export const marketingFeatures = [
       'Instant results on the map',
       'Works on desktop and mobile',
     ],
+    learnMoreTo: '/use-cases/parcel-search',
+    learnMoreLabel: 'Parcel search use case',
   },
   {
     id: 'ownership',
@@ -35,6 +37,8 @@ export const marketingFeatures = [
       'Assessed values & building size',
       'Zoning, flood, and sale history when available',
     ],
+    learnMoreTo: '/use-cases/ownership-details',
+    learnMoreLabel: 'Ownership details use case',
   },
   {
     id: 'map',
@@ -54,6 +58,8 @@ export const marketingFeatures = [
       '3D terrain view',
       'Foundation for tours and listing maps',
     ],
+    learnMoreTo: '/use-cases/parcel-maps',
+    learnMoreLabel: 'Parcel maps use case',
   },
   {
     id: 'maps',
@@ -72,6 +78,8 @@ export const marketingFeatures = [
       'Annotations, arrows, and legends',
       'Share links and high-resolution export',
     ],
+    learnMoreTo: '/use-cases/listing-maps',
+    learnMoreLabel: 'Listing maps use case',
   },
   {
     id: 'tours',

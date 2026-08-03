@@ -316,6 +316,76 @@
   font-size: 1.08rem;
 }
 
+.use-case-mid-cta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin: 0 0 40px;
+  padding: 20px 22px;
+  border: 1px solid rgba(0, 212, 170, 0.35);
+  border-radius: 12px;
+  background: rgba(0, 212, 170, 0.06);
+}
+
+.use-case-mid-cta p {
+  margin: 0;
+  color: var(--mkt-text);
+  font-weight: 600;
+  font-size: 1.05rem;
+}
+
+.use-case-faq {
+  width: 100%;
+  max-width: var(--mkt-max-width);
+  margin: 0 auto;
+  padding: 12px 20px 24px;
+  box-sizing: border-box;
+}
+
+.use-case-faq h2 {
+  margin: 0 0 20px;
+  color: var(--mkt-text);
+  font-size: clamp(1.35rem, 2.4vw, 1.7rem);
+  letter-spacing: -0.02em;
+}
+
+.use-case-faq-list {
+  margin: 0;
+  padding: 0;
+}
+
+.use-case-faq-item {
+  margin: 0 0 20px;
+  padding: 0 0 20px;
+  border-bottom: 1px solid var(--mkt-border);
+}
+
+.use-case-faq-item:last-child {
+  margin-bottom: 0;
+  padding-bottom: 0;
+  border-bottom: none;
+}
+
+.use-case-faq-item dt {
+  margin: 0 0 8px;
+  color: var(--mkt-text);
+  font-weight: 600;
+  font-size: 1.05rem;
+}
+
+.use-case-faq-item dd {
+  margin: 0;
+  color: var(--mkt-text-muted);
+  line-height: 1.65;
+}
+
+.use-cases-cta-btn,
+.use-cases-secondary-btn {
+  text-decoration: none;
+}
+
 .use-case-detail-cta {
   margin-top: 12px;
 }
@@ -378,6 +448,7 @@
   .use-case-highlights,
   .use-case-article,
   .use-cases-cta,
+  .use-case-faq,
   .use-case-more {
     padding-left: 16px;
     padding-right: 16px;

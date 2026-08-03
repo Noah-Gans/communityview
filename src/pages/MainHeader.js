@@ -423,18 +423,18 @@ const MainHeader = () => {
 
           {/* Center - Navigation Links */}
           <div className="header-center">
-            <button className="nav-button" onClick={() => navigate('/features')}>
+            <Link className="nav-button" to="/features">
               Features
-            </button>
-            <button className="nav-button" onClick={() => navigate('/use-cases')}>
+            </Link>
+            <Link className="nav-button" to="/use-cases">
               Use cases
-            </button>
-            <button className="nav-button" onClick={() => navigate('/pricing')}>
+            </Link>
+            <Link className="nav-button" to="/pricing">
               Pricing
-            </button>
-            <button className="nav-button" onClick={() => navigate('/faq')}>
+            </Link>
+            <Link className="nav-button" to="/faq">
               FAQ
-            </button>
+            </Link>
             <a className="nav-button" href="mailto:noahgans@communityview.ai">
               Contact
             </a>
@@ -442,9 +442,9 @@ const MainHeader = () => {
 
           {/* Right - Map + Account */}
           <div className="header-right">
-            <button className="map-button" onClick={() => navigate('/map')}>
+            <Link className="map-button" to="/map">
               Map
-            </button>
+            </Link>
             {renderAccountControls()}
           </div>
         </div>

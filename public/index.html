@@ -9,20 +9,20 @@
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <meta name="apple-mobile-web-app-title" content="CommunityView">
-  <meta name="description" content="Nationwide parcel search, listing maps, and digital property tours for real estate agents. Build shareable maps and tours buyers actually open." />
+  <meta name="description" content="Community View (communityview.ai) is parcel map software for real estate agents: nationwide parcel search, listing maps, and digital property tours buyers actually open." />
   
   <!-- Open Graph / Facebook -->
   <meta property="og:type" content="website" />
   <meta property="og:url" content="https://communityview.ai/" />
-  <meta property="og:title" content="CommunityView — Parcel Maps & Property Tours for Agents" />
+  <meta property="og:title" content="Community View — Parcel Maps & Property Tours for Agents" />
   <meta property="og:description" content="Nationwide parcel search, listing maps, and digital property tours for real estate agents." />
   <meta property="og:image" content="https://communityview.ai/logo_only.png" />
-  <meta property="og:site_name" content="CommunityView" />
+  <meta property="og:site_name" content="Community View" />
   
   <!-- Twitter -->
   <meta name="twitter:card" content="summary_large_image" />
   <meta name="twitter:url" content="https://communityview.ai/" />
-  <meta name="twitter:title" content="CommunityView — Parcel Maps & Property Tours for Agents" />
+  <meta name="twitter:title" content="Community View — Parcel Maps & Property Tours for Agents" />
   <meta name="twitter:description" content="Nationwide parcel search, listing maps, and digital property tours for real estate agents." />
   <meta name="twitter:image" content="https://communityview.ai/logo_only.png" />
   
@@ -34,10 +34,10 @@
   {
     "@context": "https://schema.org",
     "@type": "WebApplication",
-    "name": "CommunityView",
-    "alternateName": "Community View",
-    "url": "https://communityview.ai",
-    "description": "Nationwide parcel search, listing maps, and digital property tours for real estate agents. Build shareable maps and tours buyers actually open.",
+    "name": "Community View",
+    "alternateName": ["CommunityView", "communityview.ai"],
+    "url": "https://communityview.ai/",
+    "description": "Community View is parcel map software for real estate agents: nationwide parcel search, listing maps, and digital property tours buyers actually open.",
     "applicationCategory": "BusinessApplication",
     "operatingSystem": "Web",
     "offers": {
@@ -45,7 +45,7 @@
       "price": "18",
       "priceCurrency": "USD",
       "priceValidUntil": "2027-12-31",
-      "url": "https://communityview.ai/pricing"
+      "url": "https://communityview.ai/pricing/"
     },
     "screenshot": "https://communityview.ai/logo_only.png",
     "softwareVersion": "1.0"
@@ -62,7 +62,7 @@
   <link rel="shortcut icon" href="%PUBLIC_URL%/logo_only.png" />
   <link rel="manifest" href="%PUBLIC_URL%/manifest.json">
   
-  <title>CommunityView — Parcel Maps & Property Tours for Agents</title>
+  <title>Community View — Parcel Maps & Property Tours for Agents</title>
   <link rel="preload" as="image" href="%PUBLIC_URL%/test.svg">
   
   <!-- Theme Color -->
@@ -95,8 +95,19 @@
 </head>
 <body>
   <noscript>You need to enable JavaScript to run this app.</noscript>
-  <!-- SEO: Hidden h1 for search engine crawlers -->
-  <h1 style="position: absolute; left: -9999px; width: 1px; height: 1px; overflow: hidden;">CommunityView — Parcel Maps & Property Tours for Real Estate Agents</h1>
+  <!-- SEO: crawlable summary for non-JS / first paint (shells replace per route) -->
+  <div id="cv-seo-static">
+    <h1>Community View — parcel maps and property tours for real estate agents</h1>
+    <p>Nationwide parcel search, ownership details, map layers, listing maps, and shareable digital property tours — built for agents.</p>
+    <nav aria-label="Site">
+      <a href="https://communityview.ai/features/">Features</a> ·
+      <a href="https://communityview.ai/use-cases/">Use cases</a> ·
+      <a href="https://communityview.ai/use-cases/ownership-details/">Ownership details</a> ·
+      <a href="https://communityview.ai/use-cases/parcel-maps/">Parcel maps</a> ·
+      <a href="https://communityview.ai/pricing/">Pricing</a> ·
+      <a href="https://communityview.ai/faq/">FAQ</a>
+    </nav>
+  </div>
   <div id="root"></div>
 </body>
 </html>
