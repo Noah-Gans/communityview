@@ -107,6 +107,7 @@ import {
 import { navigateToMarketingHome } from '../utils/marketingNavigation';
 import { mapDebug } from '../utils/mapDebug';
 import { safeMapResize } from '../utils/safeMapResize';
+import { normalizePathname } from '../utils/mapBackedRoutes';
 
 import {
   DEFAULT_BASEMAP_ID,
@@ -5810,7 +5811,7 @@ useEffect(() => {
   return (
     <div className="map-container">
       {isMapLoading ? <MapLoadingOverlay phraseSet="map" /> : null}
-      {routerLocation.pathname === '/map' && <MapReportBuilderBar />}
+      {normalizePathname(routerLocation.pathname) === '/map' && <MapReportBuilderBar />}
       <div className="map-floating-controls-stack">
         <div
           className="map-floating-control-container map-floating-control-3d-container"

@@ -8,6 +8,7 @@ import CountySearchScopeControls from '../search/CountySearchScopeControls';
 import SaveDefaultCountyPrompt from '../search/SaveDefaultCountyPrompt';
 import MobileAccountControls from '../account/MobileAccountControls';
 import { useUser } from '../../contexts/UserContext';
+import { normalizePathname } from '../../utils/mapBackedRoutes';
 
 const MOBILE_SEARCH_LIMIT = DEFAULT_PARCEL_SEARCH_LIMIT;
 
@@ -42,8 +43,9 @@ function EditorViewIcon() {
 export default function MobileTopBar() {
   const location = useLocation();
   const navigate = useNavigate();
-  const isDiscover = location.pathname === '/map';
-  const isMaps = location.pathname === '/print';
+  const pathname = normalizePathname(location.pathname);
+  const isDiscover = pathname === '/map';
+  const isMaps = pathname === '/print';
 
   const [parcelQuery, setParcelQuery] = useState('');
   const [isSearching, setIsSearching] = useState(false);

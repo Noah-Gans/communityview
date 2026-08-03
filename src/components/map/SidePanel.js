@@ -34,6 +34,7 @@ import { fetchRegridParcelDetailCached } from '../../utils/regridParcelApi';
 import { fetchSoilMapUnitByMukey } from '../../utils/soilMapUnitApi';
 import RegridParcelFeatureDetails from './RegridParcelFeatureDetails';
 import { REGRID_BATCH_REPORTS_ENABLED } from '../../config/featureFlags';
+import { normalizePathname } from '../../utils/mapBackedRoutes';
 
 const MOBILE_SHEET = {
   HIDDEN: 'hidden',
@@ -266,10 +267,11 @@ const SidePanel = memo(({
    * True when the full map (same Map instance) is the focus — includes /print (Maps / map builder),
    * not only /map. Otherwise parcel actions stay hidden on /print.
    */
+  const pathname = normalizePathname(location.pathname);
   const isMapAppView =
-    location.pathname === '/map' ||
-    location.pathname === '/' ||
-    location.pathname === '/print' ||
+    pathname === '/map' ||
+    pathname === '/' ||
+    pathname === '/print' ||
     activeTab === 'map' ||
     activeTab === 'print';
 
