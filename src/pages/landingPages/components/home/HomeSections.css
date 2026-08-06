@@ -2,6 +2,25 @@
   max-width: 100%;
 }
 
+.marketing-section-links {
+  margin: 12px 0 0;
+  color: rgba(255, 255, 255, 0.72);
+  font-size: 0.95rem;
+  line-height: 1.5;
+}
+
+.marketing-section-links a {
+  color: #00d4aa;
+  font-weight: 600;
+  text-decoration: none;
+}
+
+.marketing-section-links a:hover,
+.marketing-section-links a:focus-visible {
+  text-decoration: underline;
+  outline: none;
+}
+
 .how-it-works-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
@@ -176,6 +195,8 @@
 
 .map-builder-cta {
   margin-top: 4px;
+  text-decoration: none;
+  box-sizing: border-box;
 }
 
 .map-builder-image-wrap {

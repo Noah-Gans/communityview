@@ -6,10 +6,10 @@
 export const landIdCompare = {
   path: '/compare/land-id',
   competitorName: 'Land id',
-  seoTitle: 'CommunityView vs Land id — Parcel Maps & Property Tours for Agents',
+  seoTitle: 'Community View vs Land id — Parcel Maps & Property Tours for Agents',
   seoDescription:
-    'Comparing CommunityView and Land id for real estate agents: parcel search, ownership details, listing maps, property tours, embeds, and pricing simplicity.',
-  h1: 'CommunityView vs Land id',
+    'Comparing Community View and Land id for real estate agents: parcel search, ownership details, listing maps, property tours, embeds, and pricing simplicity.',
+  h1: 'Community View vs Land id',
   lede:
     'Both help agents work with parcels and maps. The better fit depends on whether you want a broad land platform or a focused agent workflow for search, listing maps, and buyer-ready tours.',
   whenCommunityView: [
