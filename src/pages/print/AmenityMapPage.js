@@ -1,11 +1,26 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import mapboxgl from 'mapbox-gl';
-import { Link, useLocation, useParams } from 'react-router-dom';
+import { useLocation, useParams } from 'react-router-dom';
 import { useMapContext } from '../MapContext';
+import { useUser } from '../../contexts/UserContext';
 import MapLoadingOverlay from '../../components/loading/MapLoadingOverlay';
 import { mapService } from '../../services/mapService';
 import { buildTourNearbyCacheForSave } from '../../utils/tourNearbyFirestore';
-import { getTourNearbySearchCenter } from '../../utils/propertyTourSlides';
+import {
+  buildAmenityMapSettingsForSave,
+  canEditAmenityMap,
+  isGuestEditAllowed,
+} from '../../utils/amenityMapSettings';
+import {
+  DEFAULT_BASEMAP_ID,
+  normalizeBasemapId,
+} from '../map/mapConstants';
+import {
+  getTourNearbySearchCenter,
+  TOUR_ORBIT_PRINT_FILTER_ATTR,
+  TOUR_ORBIT_PRINT_FILTER_VALUE,
+} from '../../utils/propertyTourSlides';
+import { runNeighborhoodMapFromAmenityEditor } from '../../utils/neighborhoodMap/runNeighborhoodMapFromAmenityEditor';
 import {
   AMENITY_MAP_CATEGORIES,
   AMENITY_MAP_CATEGORY_BY_KEY,
@@ -18,7 +33,7 @@ import {
   fitTourBuilderRadiusBounds,
   hideTourEditRadiusCircle,
   showTourEditRadiusCircle,
-  updateTourEditRadiusGeometry,
+  ensureTourEditRadiusLayersOnTop,
 } from '../../utils/tourBuilderMapLayers';
 import {
   AMENITY_HOME_LOGO_URL,
@@ -36,8 +51,8 @@ import './AmenityMapPage.css';
 
 const COMMUNITY_VIEW_HOME = '/';
 const COMMUNITY_VIEW_LOGO_SRC = '/logo.png';
-/** Amenity maps always use Satellite — matches share/print defaults and avoids a Discover flash. */
-const AMENITY_BASEMAP_ID = 'satellite-streets-v12';
+/** Default amenity map / neighborhood PDF basemap — Discover (outdoors). */
+const AMENITY_BASEMAP_ID = DEFAULT_BASEMAP_ID;
 
 const SOURCE_ID = 'cv-amenity-map-source';
 const POINT_LAYER_ID = 'cv-amenity-map-points';
@@ -142,6 +157,60 @@ function featureAddress(feature) {
   return String(p.formattedAddress || p.vicinity || '').trim();
 }
 
+function haversineMiles(aLat, aLng, bLat, bLng) {
+  const toRad = (d) => (d * Math.PI) / 180;
+  const R = 3958.7613;
+  const dLat = toRad(bLat - aLat);
+  const dLng = toRad(bLng - aLng);
+  const x =
+    Math.sin(dLat / 2) ** 2 +
+    Math.cos(toRad(aLat)) * Math.cos(toRad(bLat)) * Math.sin(dLng / 2) ** 2;
+  return 2 * R * Math.asin(Math.min(1, Math.sqrt(x)));
+}
+
+function buildCustomAmenityFeature({
+  categoryKey,
+  name,
+  address,
+  lat,
+  lng,
+  homePosition,
+}) {
+  const placeId = `custom-${categoryKey}-${Date.now().toString(36)}-${Math.random()
+    .toString(36)
+    .slice(2, 7)}`;
+  const props = {
+    name: String(name || '').trim(),
+    amenityKey: categoryKey,
+    placeId,
+    place_id: placeId,
+    isCustom: true,
+    amenityMapHidden: false,
+    tourHidden: false,
+  };
+  const addr = String(address || '').trim();
+  if (addr) {
+    props.formattedAddress = addr;
+    props.vicinity = addr;
+  }
+  if (
+    homePosition &&
+    Number.isFinite(Number(homePosition.lat)) &&
+    Number.isFinite(Number(homePosition.lng))
+  ) {
+    const miles = haversineMiles(homePosition.lat, homePosition.lng, lat, lng);
+    if (Number.isFinite(miles)) {
+      props.straightLineMiles = Math.round(miles * 10) / 10;
+      props.distanceText = `${props.straightLineMiles} mi`;
+    }
+  }
+  return {
+    type: 'Feature',
+    geometry: { type: 'Point', coordinates: [lng, lat] },
+    properties: props,
+  };
+}
+
 function amenityRating(properties) {
   const rating = Number(properties?.rating);
   if (!Number.isFinite(rating) || rating <= 0) return null;
@@ -214,11 +283,16 @@ function getMainHomeElementPosition(printElements) {
 }
 
 /**
- * Where the home badge sits. The amenity search center is only the camera the agent
- * happened to save, so prefer the property's own geometry: an explicit Main Home icon,
- * then the property boundary centroid (same rule the tour measures distances from).
+ * Where the home badge sits. Prefer amenityMapSettings (dedicated presentation field),
+ * then legacy tourNearbyCache.homeMarker, then print geometry fallbacks.
  */
 function getHomeMarkerPosition(data, map) {
+  const fromSettings = pointFrom(
+    data?.amenityMapSettings?.homeMarker?.lat,
+    data?.amenityMapSettings?.homeMarker?.lng
+  );
+  if (fromSettings) return fromSettings;
+
   const saved = pointFrom(data?.tourNearbyCache?.homeMarker?.lat, data?.tourNearbyCache?.homeMarker?.lng);
   if (saved) return saved;
 
@@ -231,6 +305,14 @@ function getHomeMarkerPosition(data, map) {
   if (fromBoundary) return fromBoundary;
 
   return getSearchCenter(data, map);
+}
+
+function getAmenityPreferredBasemap(data) {
+  return (
+    normalizeBasemapId(data?.amenityMapSettings?.basemap) ||
+    normalizeBasemapId(data?.tourNearbyCache?.amenityMapBasemap) ||
+    AMENITY_BASEMAP_ID
+  );
 }
 
 function waitForMap(mapRef, timeoutMs = 12000) {
@@ -564,7 +646,9 @@ function AmenityDetail({ feature, onClose }) {
 export default function AmenityMapPage() {
   const { shareToken } = useParams();
   const location = useLocation();
-  const editMode = new URLSearchParams(location.search).get('edit') === '1';
+  const wantEdit = new URLSearchParams(location.search).get('edit') === '1';
+  const fromNeighborhood =
+    new URLSearchParams(location.search).get('from') === 'neighborhood';
   const demoMode = process.env.NODE_ENV === 'development' && shareToken === 'demo';
   const {
     mapRef,
@@ -575,15 +659,23 @@ export default function AmenityMapPage() {
     setIsPrinting,
     setActivePrintTool,
     setSelectedPrintElement,
+    currentBasemapId,
     setCurrentBasemapId,
+    activeBasemapIdRef,
     setShareViewerReadOnly,
   } = useMapContext();
+  const { user, userProfile } = useUser();
 
   const [mapData, setMapData] = useState(null);
+  const [amenityEditAccess, setAmenityEditAccess] = useState(null);
+  const [guestEditEnabled, setGuestEditEnabled] = useState(false);
+  const canEdit = demoMode || canEditAmenityMap(amenityEditAccess);
+  const editMode = Boolean(wantEdit && canEdit);
+  const editLocked = Boolean(wantEdit && !demoMode && amenityEditAccess && !canEdit);
   const [meta, setMeta] = useState({ title: 'Neighborhood amenities', description: '' });
   const [entries, setEntries] = useState({});
   const [enabledSearchKeys, setEnabledSearchKeys] = useState(
-    () => new Set(editMode ? [] : AMENITY_MAP_CATEGORIES.map(({ key }) => key))
+    () => new Set(wantEdit ? [] : AMENITY_MAP_CATEGORIES.map(({ key }) => key))
   );
   const [visibleCategoryKeys, setVisibleCategoryKeys] = useState(
     () => new Set(AMENITY_MAP_CATEGORIES.map(({ key }) => key))
@@ -595,10 +687,28 @@ export default function AmenityMapPage() {
   const [searchState, setSearchState] = useState({});
   const [saveState, setSaveState] = useState('idle');
   const [saveError, setSaveError] = useState('');
+  const [pdfFramingMode, setPdfFramingMode] = useState('auto');
+  const [pdfBusy, setPdfBusy] = useState(false);
+  const [pdfStatus, setPdfStatus] = useState('');
+  const [pdfError, setPdfError] = useState('');
+  const [pdfAssets, setPdfAssets] = useState(null);
+  const [pdfPanelOpen, setPdfPanelOpen] = useState(() => fromNeighborhood);
   const [hoveredKey, setHoveredKey] = useState(null);
   const [activeFeature, setActiveFeature] = useState(null);
   const [activeEditorCategoryKey, setActiveEditorCategoryKey] = useState(null);
   const [choosingAmenity, setChoosingAmenity] = useState(false);
+  const [addingCustom, setAddingCustom] = useState(false);
+  const [customDraft, setCustomDraft] = useState({
+    name: '',
+    address: '',
+    placeId: '',
+    categoryKey: '',
+  });
+  const [customError, setCustomError] = useState('');
+  const [placingCustom, setPlacingCustom] = useState(false);
+  const [placeGhost, setPlaceGhost] = useState(null);
+  const [customScreenPoints, setCustomScreenPoints] = useState({});
+  const customDragRef = useRef(null);
   const [showHomeMarker, setShowHomeMarker] = useState(true);
   const [homePosition, setHomePosition] = useState(null);
   const [homeScreenPoint, setHomeScreenPoint] = useState(null);
@@ -610,7 +720,6 @@ export default function AmenityMapPage() {
   const amenityMapInstanceRef = useRef(null);
   const didInitialFitRef = useRef(false);
   const homeDragRef = useRef(null);
-  const homeMarkerRef = useRef(null);
   const panelBodyRef = useRef(null);
 
   const allFeatures = useMemo(
@@ -636,16 +745,38 @@ export default function AmenityMapPage() {
   const geojson = useMemo(
     () => ({
       type: 'FeatureCollection',
-      features: savedFeatures.map((feature) => sourceFeature(feature, hoveredKey)),
+      features: savedFeatures
+        .filter((feature) => !(editMode && feature?.properties?.isCustom === true))
+        .map((feature) => sourceFeature(feature, hoveredKey)),
     }),
-    [savedFeatures, hoveredKey]
+    [savedFeatures, hoveredKey, editMode]
   );
 
   useEffect(() => {
     document.documentElement.classList.add('shared-public-map', 'amenity-map-mode');
+    // Reuse tour orbit filter so Map.js only draws the property boundary (no pins/notes/photos).
+    document.documentElement.setAttribute(TOUR_ORBIT_PRINT_FILTER_ATTR, TOUR_ORBIT_PRINT_FILTER_VALUE);
     setShareViewerReadOnly(true);
+    const applyBoundaryOnlyFilter = () => {
+      window.dispatchEvent(
+        new CustomEvent('property-tour-slide', {
+          detail: {
+            slideId: 'amenity-map',
+            printFilterMode: 'boundary-only',
+            printElementIds: null,
+          },
+        })
+      );
+    };
+    applyBoundaryOnlyFilter();
     return () => {
       document.documentElement.classList.remove('shared-public-map', 'amenity-map-mode');
+      document.documentElement.removeAttribute(TOUR_ORBIT_PRINT_FILTER_ATTR);
+      window.dispatchEvent(
+        new CustomEvent('property-tour-slide', {
+          detail: { slideId: null, printFilterMode: 'all', printElementIds: null },
+        })
+      );
       setShareViewerReadOnly(false);
       popupRef.current?.remove?.();
       popupRef.current = null;
@@ -673,7 +804,25 @@ export default function AmenityMapPage() {
             : await mapService.getSharedMapByToken(shareToken);
         if (cancelled) return;
         setMapData(data);
+        const access =
+          data?.amenityEditAccess && typeof data.amenityEditAccess === 'object'
+            ? data.amenityEditAccess
+            : {
+                guestEdit: isGuestEditAllowed(data?.amenityMapSettings),
+                viewerIsOwner: false,
+                canEdit: isGuestEditAllowed(data?.amenityMapSettings),
+              };
+        if (demoMode) {
+          setAmenityEditAccess({ guestEdit: true, viewerIsOwner: true, canEdit: true });
+          setGuestEditEnabled(true);
+        } else {
+          setAmenityEditAccess(access);
+          setGuestEditEnabled(access.guestEdit === true);
+        }
         setHomePosition(getHomeMarkerPosition(data, mapRef?.current));
+        if (data?.neighborhoodMapAssets?.pdfUrl || data?.neighborhoodMapAssets?.pngUrl) {
+          setPdfAssets(data.neighborhoodMapAssets);
+        }
         setMeta({
           title: data.title || 'Neighborhood amenities',
           description: data.description || '',
@@ -698,23 +847,55 @@ export default function AmenityMapPage() {
         });
 
         setPrintElements(Array.isArray(data.printElements) ? data.printElements : []);
-        setLayerStatus(data.layers?.status || {});
-        setLayerOrder(data.layers?.order || []);
+        // Amenity map: basemap + boundary + home pin only — strip every GIS overlay.
+        setLayerStatus({});
+        setLayerOrder([]);
         setPaperSize(data.printSettings?.paperSize || 'full');
         setIsPrinting(true);
         setActivePrintTool('select');
         setSelectedPrintElement(null);
-        setCurrentBasemapId(AMENITY_BASEMAP_ID);
+        const preferredBasemap = getAmenityPreferredBasemap(data);
+        // Do not let loadMapState apply the listing `basemap` — that races and overwrites
+        // the amenity-specific style on the client view.
+        setCurrentBasemapId(preferredBasemap);
+        if (activeBasemapIdRef) activeBasemapIdRef.current = preferredBasemap;
+        try {
+          const params = new URLSearchParams(window.location.search);
+          if (params.get('basemap') !== preferredBasemap) {
+            params.set('basemap', preferredBasemap);
+            const qs = params.toString();
+            window.history.replaceState(
+              window.history.state,
+              '',
+              qs ? `${window.location.pathname}?${qs}` : window.location.pathname
+            );
+          }
+        } catch (_) {
+          /* ignore */
+        }
 
         const map = await waitForMap(mapRef);
         if (!map || cancelled) return;
         mapService.loadMapState(
           data,
-          { setLayerStatus, setLayerOrder, setPaperSize, setPrintElements, setCurrentBasemapId },
+          { setLayerStatus, setLayerOrder, setPaperSize, setPrintElements },
           mapRef
         );
-        // Keep Satellite selected even if the saved map was streets/discover.
-        setCurrentBasemapId(AMENITY_BASEMAP_ID);
+        // loadMapState restores listing layers — clear them again for this view.
+        setLayerStatus({});
+        setLayerOrder([]);
+        // Prefer saved amenity basemap, else Discover — never force satellite.
+        setCurrentBasemapId(preferredBasemap);
+        if (activeBasemapIdRef) activeBasemapIdRef.current = preferredBasemap;
+        window.dispatchEvent(
+          new CustomEvent('property-tour-slide', {
+            detail: {
+              slideId: 'amenity-map',
+              printFilterMode: 'boundary-only',
+              printElementIds: null,
+            },
+          })
+        );
 
         const applyBasemap =
           typeof window.applyBasemapById === 'function' ? window.applyBasemapById : null;
@@ -728,7 +909,7 @@ export default function AmenityMapPage() {
             };
             const apply = () => {
               try {
-                applyBasemap(AMENITY_BASEMAP_ID, finish);
+                applyBasemap(preferredBasemap, finish);
               } catch (_) {
                 finish();
               }
@@ -738,6 +919,19 @@ export default function AmenityMapPage() {
             // Don't block forever if Mapbox never calls onReady.
             window.setTimeout(finish, 4000);
           });
+          // Late nudge — Map.js URL/idle restore can finish after the first apply.
+          window.setTimeout(() => {
+            if (cancelled) return;
+            try {
+              if (typeof window.nudgeBasemapById === 'function') {
+                window.nudgeBasemapById(preferredBasemap);
+              } else if (typeof window.applyBasemapById === 'function') {
+                window.applyBasemapById(preferredBasemap);
+              }
+            } catch (_) {
+              /* ignore */
+            }
+          }, 450);
         }
         if (cancelled) return;
       } catch (err) {
@@ -750,6 +944,8 @@ export default function AmenityMapPage() {
       cancelled = true;
     };
   }, [
+    activeBasemapIdRef,
+    demoMode,
     mapRef,
     setActivePrintTool,
     setCurrentBasemapId,
@@ -760,6 +956,7 @@ export default function AmenityMapPage() {
     setPrintElements,
     setSelectedPrintElement,
     shareToken,
+    user?.uid,
   ]);
 
   useEffect(() => {
@@ -795,6 +992,22 @@ export default function AmenityMapPage() {
       map.off('idle', onIdle);
     };
   }, [mapRef, geojson, loading, error]);
+
+  // Keep radius circle above amenity layers when style/idle restacks.
+  useEffect(() => {
+    const map = mapRef?.current;
+    if (!map || !editMode || !activeEditorCategoryKey || loading || error) return undefined;
+    const bump = () => ensureTourEditRadiusLayersOnTop(map);
+    bump();
+    map.on('idle', bump);
+    map.on('moveend', bump);
+    map.on('zoomend', bump);
+    return () => {
+      map.off('idle', bump);
+      map.off('moveend', bump);
+      map.off('zoomend', bump);
+    };
+  }, [activeEditorCategoryKey, editMode, error, loading, mapRef, geojson]);
 
   // Keep the HTML home pin projected above print boundary overlays.
   useEffect(() => {
@@ -939,67 +1152,47 @@ export default function AmenityMapPage() {
     };
   }, [allFeatures, error, loading, mapRef]);
 
-  const homeMarkerReady = Boolean(showHomeMarker && homeScreenPoint);
-
-  // Editor-only: drag the HTML home pin so it can sit on the actual property.
+  // Project custom amenity pins (HTML overlays) and keep them in sync with the map.
   useEffect(() => {
     const map = mapRef?.current;
-    const marker = homeMarkerRef.current;
-    if (!map || !marker || !editMode || loading || error || !homeMarkerReady) return undefined;
+    if (!map || loading || error || !editMode) {
+      setCustomScreenPoints({});
+      return undefined;
+    }
 
-    const finishDrag = (event) => {
-      const drag = homeDragRef.current;
-      if (!drag) return;
-      homeDragRef.current = null;
-      map.dragPan.enable();
-      window.removeEventListener('pointermove', onPointerMove);
-      window.removeEventListener('pointerup', finishDrag);
-      window.removeEventListener('pointercancel', finishDrag);
-      const clientX = event?.clientX ?? drag.screen?.x;
-      const clientY = event?.clientY ?? drag.screen?.y;
-      if (!Number.isFinite(clientX) || !Number.isFinite(clientY)) return;
+    const project = () => {
       const canvas = map.getCanvas?.();
       const rect = canvas?.getBoundingClientRect?.();
       if (!rect) return;
-      const lngLat = map.unproject([clientX - rect.left, clientY - rect.top]);
-      if (!lngLat) return;
-      setHomePosition({ lat: lngLat.lat, lng: lngLat.lng });
+      const next = {};
+      (allFeatures || []).forEach((feature) => {
+        if (feature?.properties?.isCustom !== true || !visibleFeature(feature)) return;
+        const coords = feature?.geometry?.coordinates;
+        if (!Array.isArray(coords) || coords.length < 2) return;
+        try {
+          const point = map.project([coords[0], coords[1]]);
+          const id = String(feature.properties.placeId || amenityFeatureKey(feature));
+          next[id] = {
+            x: rect.left + point.x,
+            y: rect.top + point.y,
+            categoryKey: feature.properties.amenityKey,
+            name: feature.properties.name || 'Custom place',
+          };
+        } catch (_) {
+          /* ignore */
+        }
+      });
+      setCustomScreenPoints(next);
     };
 
-    const onPointerMove = (event) => {
-      const drag = homeDragRef.current;
-      if (!drag) return;
-      drag.screen = { x: event.clientX, y: event.clientY };
-      setHomeScreenPoint(drag.screen);
-    };
-
-    const onPointerDown = (event) => {
-      if (event.button != null && event.button !== 0) return;
-      event.preventDefault();
-      event.stopPropagation();
-      homeDragRef.current = {
-        screen: { x: event.clientX, y: event.clientY },
-      };
-      map.dragPan.disable();
-      popupRef.current?.remove?.();
-      popupRef.current = null;
-      window.addEventListener('pointermove', onPointerMove);
-      window.addEventListener('pointerup', finishDrag);
-      window.addEventListener('pointercancel', finishDrag);
-    };
-
-    marker.addEventListener('pointerdown', onPointerDown);
+    project();
+    map.on('move', project);
+    map.on('resize', project);
     return () => {
-      marker.removeEventListener('pointerdown', onPointerDown);
-      window.removeEventListener('pointermove', onPointerMove);
-      window.removeEventListener('pointerup', finishDrag);
-      window.removeEventListener('pointercancel', finishDrag);
-      if (homeDragRef.current) {
-        homeDragRef.current = null;
-        map.dragPan.enable();
-      }
+      map.off('move', project);
+      map.off('resize', project);
     };
-  }, [editMode, error, homeMarkerReady, loading, mapRef]);
+  }, [allFeatures, editMode, error, loading, mapRef]);
 
   // Fit the shared map so home + amenities clear the left rail and top-right brand.
   useEffect(() => {
@@ -1118,7 +1311,12 @@ export default function AmenityMapPage() {
     if (!center || !radiusMeters) return undefined;
     showTourEditRadiusCircle(map, center, radiusMeters);
     fitTourBuilderRadiusBounds(map, center, radiusMeters, { force: true, duration: 500 });
-    return () => hideTourEditRadiusCircle(map);
+    const keepOnTop = () => ensureTourEditRadiusLayersOnTop(map);
+    map.on('idle', keepOnTop);
+    return () => {
+      map.off('idle', keepOnTop);
+      hideTourEditRadiusCircle(map);
+    };
     // Radius changes update geometry directly so the slider does not repeatedly move the camera.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeEditorCategoryKey, editMode, mapData, mapRef]);
@@ -1132,15 +1330,23 @@ export default function AmenityMapPage() {
     const map = mapRef?.current;
     const center = getSearchCenter(mapData, map);
     if (map && center && activeEditorCategoryKey === key) {
-      updateTourEditRadiusGeometry(map, center, radiusMeters);
+      // Prefer show over update so a restacked/cleared overlay always comes back.
+      showTourEditRadiusCircle(map, center, radiusMeters);
+      ensureTourEditRadiusLayersOnTop(map);
     }
   }, [activeEditorCategoryKey, mapData, mapRef]);
 
   const openEditorCategory = useCallback((key) => {
+    setPdfPanelOpen(false);
     setEnabledSearchKeys((previous) => new Set([...previous, key]));
     setActiveEditorCategoryKey(key);
     setChoosingAmenity(false);
     setActiveFeature(null);
+    setAddingCustom(false);
+    setPlacingCustom(false);
+    setPlaceGhost(null);
+    setCustomError('');
+    setCustomDraft({ name: '', address: '', placeId: '', categoryKey: '' });
   }, []);
 
   const runCategorySearch = useCallback(
@@ -1169,24 +1375,51 @@ export default function AmenityMapPage() {
           gridCache: true,
           preferBrowser: false,
         });
-        const features = (result?.features || []).map((feature, index) =>
-          setFeatureVisible(feature, index < autoSelect)
-        );
-        setEntries((previous) => ({
-          ...previous,
-          [key]: {
-            type: 'FeatureCollection',
-            features,
-            fetched: true,
-            searchRadiusMeters: radiusMeters,
-          },
-        }));
+
+        let merged = [];
+        setEntries((previous) => {
+          const previousFeatures = Array.isArray(previous[key]?.features)
+            ? previous[key].features
+            : [];
+          const prevById = new Map(
+            previousFeatures.map((feature) => [amenityFeatureKey(feature), feature])
+          );
+          const customKept = previousFeatures.filter(
+            (feature) => feature?.properties?.isCustom === true
+          );
+          const hadPriorSearch = previousFeatures.some(
+            (feature) => feature?.properties?.isCustom !== true
+          );
+
+          const searched = (result?.features || []).map((feature, index) => {
+            const id = amenityFeatureKey(feature);
+            const prior = prevById.get(id);
+            if (prior) return setFeatureVisible(feature, visibleFeature(prior));
+            // First search: auto-select a few. Re-search: leave new finds off so picks aren’t reset.
+            return setFeatureVisible(feature, !hadPriorSearch && index < autoSelect);
+          });
+
+          const searchedIds = new Set(searched.map((feature) => amenityFeatureKey(feature)));
+          const customs = customKept.filter(
+            (feature) => !searchedIds.has(amenityFeatureKey(feature))
+          );
+          merged = [...customs, ...searched];
+          return {
+            ...previous,
+            [key]: {
+              type: 'FeatureCollection',
+              features: merged,
+              fetched: true,
+              searchRadiusMeters: radiusMeters,
+            },
+          };
+        });
         setVisibleCategoryKeys((previous) => new Set([...previous, key]));
         setSearchState((previous) => ({
           ...previous,
-          [key]: { status: 'success', error: '', count: features.length },
+          [key]: { status: 'success', error: '', count: merged.length },
         }));
-        return features;
+        return merged;
       } catch (err) {
         setSearchState((previous) => ({
           ...previous,
@@ -1239,6 +1472,391 @@ export default function AmenityMapPage() {
     });
   }, []);
 
+  const placeCustomAtLngLat = useCallback(
+    (lng, lat) => {
+      const categoryKey = activeEditorCategoryKey;
+      if (!categoryKey || !Number.isFinite(lat) || !Number.isFinite(lng)) return;
+      const feature = buildCustomAmenityFeature({
+        categoryKey,
+        name: 'Custom place',
+        address: '',
+        lat,
+        lng,
+        homePosition,
+      });
+      const placeId = feature.properties.placeId;
+      setEntries((previous) => {
+        const entry = previous[categoryKey];
+        const existing = Array.isArray(entry?.features) ? entry.features : [];
+        return {
+          ...previous,
+          [categoryKey]: {
+            type: 'FeatureCollection',
+            features: [feature, ...existing],
+            fetched: true,
+            searchRadiusMeters: entry?.searchRadiusMeters || radiusByKey[categoryKey],
+          },
+        };
+      });
+      setEnabledSearchKeys((previous) => new Set([...previous, categoryKey]));
+      setVisibleCategoryKeys((previous) => new Set([...previous, categoryKey]));
+      setCustomDraft({
+        name: 'Custom place',
+        address: '',
+        placeId,
+        categoryKey,
+      });
+      setAddingCustom(true);
+      setCustomError('');
+      setActiveFeature(feature);
+    },
+    [activeEditorCategoryKey, homePosition, radiusByKey]
+  );
+
+  const moveCustomPlace = useCallback((placeId, lat, lng, categoryKey) => {
+    if (!placeId || !categoryKey || !Number.isFinite(lat) || !Number.isFinite(lng)) return;
+    setEntries((previous) => {
+      const entry = previous[categoryKey];
+      if (!entry) return previous;
+      return {
+        ...previous,
+        [categoryKey]: {
+          ...entry,
+          features: (entry.features || []).map((feature) => {
+            if (amenityFeatureKey(feature) !== placeId && feature?.properties?.placeId !== placeId) {
+              return feature;
+            }
+            const nextProps = { ...(feature.properties || {}) };
+            if (
+              homePosition &&
+              Number.isFinite(Number(homePosition.lat)) &&
+              Number.isFinite(Number(homePosition.lng))
+            ) {
+              const miles = haversineMiles(homePosition.lat, homePosition.lng, lat, lng);
+              if (Number.isFinite(miles)) {
+                nextProps.straightLineMiles = Math.round(miles * 10) / 10;
+                nextProps.distanceText = `${nextProps.straightLineMiles} mi`;
+              }
+            }
+            return {
+              ...feature,
+              geometry: { type: 'Point', coordinates: [lng, lat] },
+              properties: nextProps,
+            };
+          }),
+        },
+      };
+    });
+  }, [homePosition]);
+
+  const saveCustomDraft = useCallback(() => {
+    const placeId = String(customDraft.placeId || '').trim();
+    const categoryKey =
+      String(customDraft.categoryKey || '').trim() ||
+      String(activeEditorCategoryKey || '').trim();
+    const name = String(customDraft.name || '').trim();
+    if (!placeId || !categoryKey) return;
+    if (!name) {
+      setCustomError('Enter a place name.');
+      return;
+    }
+    setEntries((previous) => {
+      const entry = previous[categoryKey];
+      if (!entry) return previous;
+      return {
+        ...previous,
+        [categoryKey]: {
+          ...entry,
+          features: (entry.features || []).map((feature) => {
+            if (String(feature?.properties?.placeId || '') !== placeId) return feature;
+            const addr = String(customDraft.address || '').trim();
+            return {
+              ...feature,
+              properties: {
+                ...(feature.properties || {}),
+                name,
+                formattedAddress: addr || undefined,
+                vicinity: addr || undefined,
+              },
+            };
+          }),
+        },
+      };
+    });
+    setCustomError('');
+    setAddingCustom(false);
+    setCustomDraft({ name: '', address: '', placeId: '', categoryKey: '' });
+  }, [activeEditorCategoryKey, customDraft]);
+
+  const openCustomEditor = useCallback((feature) => {
+    if (!feature?.properties?.isCustom) return;
+    const categoryKey = String(feature.properties.amenityKey || '').trim();
+    setPdfPanelOpen(false);
+    if (categoryKey) {
+      setChoosingAmenity(false);
+      setActiveEditorCategoryKey(categoryKey);
+    }
+    setCustomDraft({
+      name: String(feature.properties.name || ''),
+      address: featureAddress(feature),
+      placeId: String(feature.properties.placeId || amenityFeatureKey(feature)),
+      categoryKey,
+    });
+    setAddingCustom(true);
+    setCustomError('');
+    setActiveFeature(feature);
+  }, []);
+
+  const deleteCustomPlace = useCallback(
+    (placeId, categoryKey) => {
+      const id = String(placeId || '').trim();
+      const key = String(categoryKey || '').trim();
+      if (!id || !key) return;
+      setEntries((previous) => {
+        const entry = previous[key];
+        if (!entry) return previous;
+        return {
+          ...previous,
+          [key]: {
+            ...entry,
+            features: (entry.features || []).filter(
+              (feature) => String(feature?.properties?.placeId || '') !== id
+            ),
+          },
+        };
+      });
+      setCustomScreenPoints((previous) => {
+        if (!previous[id]) return previous;
+        const next = { ...previous };
+        delete next[id];
+        return next;
+      });
+      if (String(customDraft.placeId || '') === id) {
+        setAddingCustom(false);
+        setCustomDraft({ name: '', address: '', placeId: '', categoryKey: '' });
+      }
+      setActiveFeature((previous) =>
+        String(previous?.properties?.placeId || '') === id ? null : previous
+      );
+    },
+    [customDraft.placeId]
+  );
+
+  const startPlacingCustom = useCallback(
+    (event) => {
+      if (!editMode || !activeEditorCategoryKey) return;
+      event?.preventDefault?.();
+      event?.stopPropagation?.();
+      setPlacingCustom(true);
+      setAddingCustom(false);
+      setCustomError('');
+      const x = Number(event?.clientX);
+      const y = Number(event?.clientY);
+      setPlaceGhost({
+        x: Number.isFinite(x) ? x : window.innerWidth / 2,
+        y: Number.isFinite(y) ? y : window.innerHeight / 2,
+      });
+    },
+    [activeEditorCategoryKey, editMode]
+  );
+
+  const cancelPlacingCustom = useCallback(() => {
+    setPlacingCustom(false);
+    setPlaceGhost(null);
+  }, []);
+
+  // Click-to-place custom amenities — place only on a discrete click, never after a drag/pan.
+  useEffect(() => {
+    if (!placingCustom) return undefined;
+    const map = mapRef?.current;
+    const DRAG_THRESHOLD_PX = 6;
+    let pointerOrigin = null;
+    let pointerMoved = false;
+
+    const onMove = (e) => {
+      setPlaceGhost({ x: e.clientX, y: e.clientY });
+      if (!pointerOrigin) return;
+      const dx = e.clientX - pointerOrigin.x;
+      const dy = e.clientY - pointerOrigin.y;
+      if (dx * dx + dy * dy > DRAG_THRESHOLD_PX * DRAG_THRESHOLD_PX) {
+        pointerMoved = true;
+      }
+    };
+
+    const onPointerDown = (e) => {
+      if (e.button != null && e.button !== 0) return;
+      pointerOrigin = { x: e.clientX, y: e.clientY };
+      pointerMoved = false;
+    };
+
+    const onKeyDown = (e) => {
+      if (e.key === 'Escape') cancelPlacingCustom();
+    };
+
+    // Mapbox `click` does not fire after a pan/drag — preferred place path.
+    const onMapClick = (e) => {
+      if (pointerMoved) return;
+      const original = e.originalEvent;
+      if (original?.target?.closest?.('.amenity-map-add-custom-btn')) return;
+      e.preventDefault?.();
+      const { lng, lat } = e.lngLat || {};
+      if (!Number.isFinite(lng) || !Number.isFinite(lat)) return;
+      cancelPlacingCustom();
+      placeCustomAtLngLat(lng, lat);
+    };
+
+    // Outside-map clicks cancel; ignore drag-mouseup that browsers still emit as click.
+    const onWindowClick = (e) => {
+      if (e.button != null && e.button !== 0) return;
+      if (e.target?.closest?.('.amenity-map-add-custom-btn')) return;
+      if (pointerMoved) {
+        pointerOrigin = null;
+        pointerMoved = false;
+        return;
+      }
+      const canvas = map?.getCanvas?.();
+      const rect = canvas?.getBoundingClientRect?.();
+      if (map && rect) {
+        const { clientX, clientY } = e;
+        if (
+          clientX >= rect.left &&
+          clientX <= rect.right &&
+          clientY >= rect.top &&
+          clientY <= rect.bottom
+        ) {
+          // Map placement handled by map click; skip duplicate window place.
+          return;
+        }
+      }
+      cancelPlacingCustom();
+    };
+
+    const timer = window.setTimeout(() => {
+      window.addEventListener('click', onWindowClick, true);
+      map?.on?.('click', onMapClick);
+    }, 0);
+    window.addEventListener('pointerdown', onPointerDown, true);
+    window.addEventListener('pointermove', onMove);
+    window.addEventListener('keydown', onKeyDown);
+
+    return () => {
+      window.clearTimeout(timer);
+      window.removeEventListener('click', onWindowClick, true);
+      window.removeEventListener('pointerdown', onPointerDown, true);
+      window.removeEventListener('pointermove', onMove);
+      window.removeEventListener('keydown', onKeyDown);
+      map?.off?.('click', onMapClick);
+    };
+  }, [cancelPlacingCustom, mapRef, placeCustomAtLngLat, placingCustom]);
+
+  const beginHomeMarkerDrag = useCallback(
+    (event) => {
+      if (!editMode) return;
+      if (event.button != null && event.button !== 0) return;
+      event.preventDefault();
+      event.stopPropagation();
+      const map = mapRef?.current;
+      const target = event.currentTarget;
+      try {
+        target?.setPointerCapture?.(event.pointerId);
+      } catch (_) {
+        /* ignore */
+      }
+      homeDragRef.current = { screen: { x: event.clientX, y: event.clientY } };
+      map?.dragPan?.disable?.();
+      popupRef.current?.remove?.();
+      popupRef.current = null;
+
+      const onMove = (e) => {
+        if (!homeDragRef.current) return;
+        homeDragRef.current.screen = { x: e.clientX, y: e.clientY };
+        setHomeScreenPoint({ x: e.clientX, y: e.clientY });
+      };
+      const onUp = (e) => {
+        const drag = homeDragRef.current;
+        homeDragRef.current = null;
+        window.removeEventListener('pointermove', onMove);
+        window.removeEventListener('pointerup', onUp);
+        window.removeEventListener('pointercancel', onUp);
+        try {
+          target?.releasePointerCapture?.(e.pointerId);
+        } catch (_) {
+          /* ignore */
+        }
+        map?.dragPan?.enable?.();
+        if (!drag || !map) return;
+        const clientX = e?.clientX ?? drag.screen?.x;
+        const clientY = e?.clientY ?? drag.screen?.y;
+        if (!Number.isFinite(clientX) || !Number.isFinite(clientY)) return;
+        const canvas = map.getCanvas?.();
+        const rect = canvas?.getBoundingClientRect?.();
+        if (!rect) return;
+        const lngLat = map.unproject([clientX - rect.left, clientY - rect.top]);
+        if (!lngLat) return;
+        setHomePosition({ lat: lngLat.lat, lng: lngLat.lng });
+      };
+      window.addEventListener('pointermove', onMove);
+      window.addEventListener('pointerup', onUp);
+      window.addEventListener('pointercancel', onUp);
+    },
+    [editMode, mapRef]
+  );
+
+  const beginCustomMarkerDrag = useCallback(
+    (event, placeId, categoryKey) => {
+      if (!editMode || !placeId || !categoryKey) return;
+      if (event.button != null && event.button !== 0) return;
+      event.preventDefault();
+      event.stopPropagation();
+      const map = mapRef?.current;
+      let moved = false;
+      customDragRef.current = { placeId, categoryKey };
+      map?.dragPan?.disable?.();
+      popupRef.current?.remove?.();
+      popupRef.current = null;
+
+      const onMove = (e) => {
+        if (!customDragRef.current) return;
+        moved = true;
+        setCustomScreenPoints((previous) => ({
+          ...previous,
+          [placeId]: {
+            ...(previous[placeId] || {}),
+            x: e.clientX,
+            y: e.clientY,
+            categoryKey,
+          },
+        }));
+      };
+      const onUp = (e) => {
+        const drag = customDragRef.current;
+        customDragRef.current = null;
+        window.removeEventListener('pointermove', onMove);
+        window.removeEventListener('pointerup', onUp);
+        window.removeEventListener('pointercancel', onUp);
+        map?.dragPan?.enable?.();
+        if (!drag || !map) return;
+        if (!moved) {
+          const feature = allFeatures.find(
+            (candidate) => String(candidate?.properties?.placeId || '') === placeId
+          );
+          if (feature) openCustomEditor(feature);
+          return;
+        }
+        const canvas = map.getCanvas?.();
+        const rect = canvas?.getBoundingClientRect?.();
+        if (!rect) return;
+        const lngLat = map.unproject([e.clientX - rect.left, e.clientY - rect.top]);
+        if (!lngLat) return;
+        moveCustomPlace(drag.placeId, lngLat.lat, lngLat.lng, drag.categoryKey);
+      };
+      window.addEventListener('pointermove', onMove);
+      window.addEventListener('pointerup', onUp);
+      window.addEventListener('pointercancel', onUp);
+    },
+    [allFeatures, editMode, mapRef, moveCustomPlace, openCustomEditor]
+  );
+
   const saveMap = useCallback(async () => {
     if (demoMode) {
       setSaveError('Demo mode previews the editor but does not write to a saved map.');
@@ -1257,19 +1875,161 @@ export default function AmenityMapPage() {
       );
       const maxRadius = Math.max(500, ...keys.map((key) => Number(radiusByKey[key]) || 0));
       const selectedEntries = Object.fromEntries(keys.map((key) => [key, entries[key]]));
+      const basemapToSave =
+        normalizeBasemapId(activeBasemapIdRef?.current || currentBasemapId) ||
+        AMENITY_BASEMAP_ID;
+      const homeToSave = homePosition || center;
+      const amenityMapSettings = buildAmenityMapSettingsForSave(
+        {
+          basemap: basemapToSave,
+          homeMarker: homeToSave,
+          guestEdit: amenityEditAccess?.viewerIsOwner ? guestEditEnabled : undefined,
+        },
+        { allowAccessFlags: amenityEditAccess?.viewerIsOwner === true }
+      );
+      // Merge (no replace): preserve tour-only categories (trailheads, airport, …)
+      // that amenity-map saves do not include.
       const payload = buildTourNearbyCacheForSave(center, selectedEntries, maxRadius, keys, {
-        replace: true,
         allowEmpty: true,
-        homeMarker: homePosition || center,
+        homeMarker: homeToSave,
+        amenityMapBasemap: basemapToSave,
       });
-      await mapService.saveTourNearbyCache(shareToken, payload);
+      const result = await mapService.saveTourNearbyCache(
+        shareToken,
+        payload,
+        undefined,
+        amenityMapSettings,
+        { amenityEditor: true }
+      );
+      if (result?.amenityEditAccess) {
+        setAmenityEditAccess(result.amenityEditAccess);
+        setGuestEditEnabled(result.amenityEditAccess.guestEdit === true);
+      }
+      setMapData((previous) =>
+        previous
+          ? {
+              ...previous,
+              amenityMapSettings:
+                result?.amenityMapSettings ||
+                amenityMapSettings ||
+                previous.amenityMapSettings ||
+                null,
+              amenityEditAccess: result?.amenityEditAccess || previous.amenityEditAccess,
+              tourNearbyCache: {
+                ...(previous.tourNearbyCache || {}),
+                ...(payload || {}),
+                homeMarker: homeToSave,
+                amenityMapBasemap: basemapToSave,
+              },
+            }
+          : previous
+      );
       setSaveState('saved');
       window.setTimeout(() => setSaveState('idle'), 1800);
     } catch (err) {
       setSaveState('error');
       setSaveError(err?.message || 'Could not save this amenity map.');
     }
-  }, [demoMode, enabledSearchKeys, entries, homePosition, mapData, mapRef, radiusByKey, shareToken]);
+  }, [
+    activeBasemapIdRef,
+    amenityEditAccess,
+    demoMode,
+    enabledSearchKeys,
+    entries,
+    guestEditEnabled,
+    homePosition,
+    mapData,
+    mapRef,
+    radiusByKey,
+    shareToken,
+    currentBasemapId,
+  ]);
+
+  const generateNeighborhoodPdf = useCallback(async () => {
+    if (demoMode) {
+      setPdfError('Demo mode cannot generate a neighborhood PDF.');
+      return;
+    }
+    if (!user) {
+      setPdfError('Sign in to generate the neighborhood PDF.');
+      return;
+    }
+    const map = mapRef?.current;
+    if (!map) {
+      setPdfError('Map is still loading — try again in a moment.');
+      return;
+    }
+    const visible = (savedFeatures || []).filter(visibleFeature);
+    if (!visible.length) {
+      setPdfError('Select at least one amenity place, then generate.');
+      return;
+    }
+
+    setPdfBusy(true);
+    setPdfError('');
+    setPdfStatus('Saving amenities…');
+    try {
+      await saveMap();
+      const keys = AMENITY_MAP_CATEGORIES.map(({ key }) => key).filter(
+        (key) => enabledSearchKeys.has(key) && entries[key]?.fetched
+      );
+      const selectedEntries = Object.fromEntries(keys.map((key) => [key, entries[key]]));
+      const result = await runNeighborhoodMapFromAmenityEditor({
+        map,
+        mapRef,
+        mapData,
+        visibleFeatures: visible,
+        byAmenityEntries: selectedEntries,
+        homePosition,
+        title: meta.title,
+        user,
+        userProfile,
+        framingMode: pdfFramingMode,
+        download: true,
+        persistAssets: true,
+        onStatus: setPdfStatus,
+        basemapId:
+          normalizeBasemapId(activeBasemapIdRef?.current || currentBasemapId) ||
+          AMENITY_BASEMAP_ID,
+        restoreBasemapId:
+          normalizeBasemapId(activeBasemapIdRef?.current || currentBasemapId) ||
+          AMENITY_BASEMAP_ID,
+      });
+      if (result?.neighborhoodMapAssets) {
+        setPdfAssets(result.neighborhoodMapAssets);
+      } else if (result?.pdfDataUrl) {
+        setPdfAssets({
+          pdfUrl: result.pdfDataUrl,
+          pngUrl: result.pngDataUrl,
+          title: result.title,
+          generatedAt: Date.now(),
+        });
+      }
+      setPdfStatus('PDF ready');
+      window.setTimeout(() => setPdfStatus(''), 4000);
+    } catch (err) {
+      console.error('Neighborhood PDF from amenity editor failed:', err);
+      setPdfError(err?.message || 'Could not generate neighborhood PDF.');
+      setPdfStatus('');
+    } finally {
+      setPdfBusy(false);
+    }
+  }, [
+    demoMode,
+    user,
+    userProfile,
+    mapRef,
+    savedFeatures,
+    saveMap,
+    enabledSearchKeys,
+    entries,
+    mapData,
+    homePosition,
+    meta.title,
+    pdfFramingMode,
+    activeBasemapIdRef,
+    currentBasemapId,
+  ]);
 
   /** Opens the detail card (with photo) and eases the map onto the place. */
   const showFeatureDetail = useCallback(
@@ -1366,9 +2126,15 @@ export default function AmenityMapPage() {
         isNarrowViewport ? ' is-narrow' : ''
       }`}
     >
+      {pdfBusy ? (
+        <MapLoadingOverlay
+          phraseSet="map"
+          mapTitle={pdfStatus || 'Generating neighborhood PDF'}
+          className="map-loading-overlay--share-create"
+        />
+      ) : null}
       {showHomeMarker && homeScreenPoint ? (
         <button
-          ref={homeMarkerRef}
           type="button"
           className={`amenity-map-home-marker${editMode ? ' is-draggable' : ''}`}
           style={{
@@ -1379,9 +2145,42 @@ export default function AmenityMapPage() {
           }}
           aria-label={editMode ? 'Home — drag to reposition' : 'Home'}
           title={editMode ? 'Drag to reposition' : 'Home'}
+          onPointerDownCapture={editMode ? beginHomeMarkerDrag : undefined}
+          onClick={editMode ? (event) => event.preventDefault() : undefined}
         >
-          <img src={AMENITY_HOME_LOGO_URL} alt="" aria-hidden />
+          <img src={AMENITY_HOME_LOGO_URL} alt="" aria-hidden draggable={false} />
         </button>
+      ) : null}
+
+      {editMode
+        ? Object.entries(customScreenPoints).map(([placeId, point]) => (
+            <button
+              key={placeId}
+              type="button"
+              className="amenity-map-custom-marker is-draggable"
+              style={{ left: point.x, top: point.y }}
+              title={`${point.name || 'Custom place'} — drag to move`}
+              aria-label={`${point.name || 'Custom place'} — drag to reposition`}
+              onPointerDown={(event) =>
+                beginCustomMarkerDrag(event, placeId, point.categoryKey)
+              }
+            >
+              <AmenityIcon amenityKey={point.categoryKey} />
+            </button>
+          ))
+        : null}
+
+      {placingCustom && placeGhost ? (
+        <div
+          className="amenity-map-place-ghost"
+          style={{ left: placeGhost.x, top: placeGhost.y }}
+          aria-hidden
+        >
+          <span className="amenity-map-place-ghost-tip">Click to place</span>
+          <span className="amenity-map-place-ghost-pin">
+            <AmenityIcon amenityKey={activeEditorCategoryKey} />
+          </span>
+        </div>
       ) : null}
 
       <a
@@ -1397,18 +2196,48 @@ export default function AmenityMapPage() {
       <div className="amenity-map-rail">
         {showAgentCard ? <AmenityAgentCard meta={meta} compact={editMode} /> : null}
 
-        <aside className={`amenity-map-panel${editMode ? '' : ' amenity-map-panel--viewer'}`}>
+        <aside
+          ref={panelBodyRef}
+          className={`amenity-map-panel${editMode ? '' : ' amenity-map-panel--viewer'}`}
+        >
           <header className="amenity-map-panel-header">
-            {editMode ? <span className="amenity-map-eyebrow">Amenity map editor</span> : null}
+            {editMode ? (
+              <span className="amenity-map-eyebrow">
+                {fromNeighborhood ? 'Shared amenities · neighborhood map' : 'Amenity map editor'}
+              </span>
+            ) : null}
             <h1>{meta.title}</h1>
             {meta.description ? <p>{meta.description}</p> : null}
+            {editLocked ? (
+              <div className="amenity-map-edit-lock" role="status">
+                <p>
+                  {user
+                    ? 'Only the map owner can edit this amenity map.'
+                    : 'Sign in as the map owner to edit amenities.'}
+                </p>
+                {!user ? (
+                  <a
+                    className="amenity-map-save"
+                    href={`/login?returnTo=${encodeURIComponent(
+                      `${location.pathname}${location.search}`
+                    )}`}
+                  >
+                    Sign in to edit
+                  </a>
+                ) : (
+                  <a className="amenity-map-preview-link" href={`/amenities/${shareToken}`}>
+                    View amenity map
+                  </a>
+                )}
+              </div>
+            ) : null}
             {editMode ? (
-              <div className="amenity-map-edit-actions">
+              <div className="amenity-map-edit-actions amenity-map-edit-actions--stack">
                 <button
                   type="button"
                   className="amenity-map-save"
                   onClick={saveMap}
-                  disabled={demoMode || saveState === 'saving' || saveState === 'building'}
+                  disabled={demoMode || saveState === 'saving' || saveState === 'building' || pdfBusy}
                 >
                   {saveState === 'saving'
                     ? 'Saving…'
@@ -1416,15 +2245,102 @@ export default function AmenityMapPage() {
                       ? 'Saved'
                       : 'Save map'}
                 </button>
-                <Link className="amenity-map-preview-link" to={`/amenities/${shareToken}`}>
+                {amenityEditAccess?.viewerIsOwner ? (
+                  <label className="amenity-map-guest-edit">
+                    <input
+                      type="checkbox"
+                      checked={guestEditEnabled}
+                      onChange={(e) => setGuestEditEnabled(e.target.checked)}
+                    />
+                    <span>
+                      Allow editing without signing in
+                      <small>For sales / try-it links. Save to apply.</small>
+                    </span>
+                  </label>
+                ) : guestEditEnabled ? (
+                  <p className="amenity-map-guest-edit-note">Guest editing is on for this map.</p>
+                ) : null}
+                <a
+                  className="amenity-map-preview-link"
+                  href={`/amenities/${shareToken}`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                >
                   View client map
-                </Link>
+                </a>
+                <button
+                  type="button"
+                  className={`amenity-map-pdf-toggle${pdfPanelOpen ? ' is-open' : ''}`}
+                  onClick={() => setPdfPanelOpen((open) => !open)}
+                  aria-expanded={pdfPanelOpen}
+                  disabled={pdfBusy}
+                >
+                  {pdfPanelOpen ? 'Hide neighborhood PDF' : 'Generate as neighborhood PDF'}
+                </button>
+              </div>
+            ) : null}
+            {editMode && pdfPanelOpen ? (
+              <div className="amenity-map-pdf-block">
+                <p className="amenity-map-pdf-title">Neighborhood PDF</p>
+                <div className="amenity-map-framing" role="group" aria-label="Map framing">
+                  <button
+                    type="button"
+                    className={`amenity-map-framing-btn${pdfFramingMode === 'auto' ? ' is-active' : ''}`}
+                    onClick={() => setPdfFramingMode('auto')}
+                    disabled={pdfBusy}
+                  >
+                    Auto frame
+                  </button>
+                  <button
+                    type="button"
+                    className={`amenity-map-framing-btn${pdfFramingMode === 'custom' ? ' is-active' : ''}`}
+                    onClick={() => setPdfFramingMode('custom')}
+                    disabled={pdfBusy}
+                  >
+                    Custom frame
+                  </button>
+                </div>
+                <p className="amenity-map-pdf-help">
+                  {pdfFramingMode === 'custom'
+                    ? 'Pan and zoom the map to the frame you want, then generate.'
+                    : 'Fits the home pin and selected amenities automatically.'}
+                </p>
+                <button
+                  type="button"
+                  className="amenity-map-pdf-generate"
+                  onClick={() => void generateNeighborhoodPdf()}
+                  disabled={demoMode || pdfBusy || saveState === 'saving'}
+                >
+                  {pdfBusy ? 'Generating PDF…' : 'Generate PDF'}
+                </button>
+                {pdfStatus ? <p className="amenity-map-pdf-status">{pdfStatus}</p> : null}
+                {pdfError ? <p className="amenity-map-error">{pdfError}</p> : null}
+                {pdfAssets?.pdfUrl ? (
+                  <div className="amenity-map-pdf-ready">
+                    <button
+                      type="button"
+                      className="amenity-map-preview-link amenity-map-pdf-link"
+                      onClick={() => window.open(pdfAssets.pdfUrl, '_blank', 'noopener,noreferrer')}
+                    >
+                      Open PDF
+                    </button>
+                    {pdfAssets.pngUrl ? (
+                      <button
+                        type="button"
+                        className="amenity-map-preview-link amenity-map-pdf-link"
+                        onClick={() => window.open(pdfAssets.pngUrl, '_blank', 'noopener,noreferrer')}
+                      >
+                        Open PNG
+                      </button>
+                    ) : null}
+                  </div>
+                ) : null}
               </div>
             ) : null}
             {saveError ? <p className="amenity-map-error">{saveError}</p> : null}
           </header>
 
-          <div className="amenity-map-panel-body" ref={panelBodyRef}>
+          <div className="amenity-map-panel-body">
             {activeFeature ? (
               <AmenityDetail feature={activeFeature} onClose={() => setActiveFeature(null)} />
             ) : null}
@@ -1434,10 +2350,11 @@ export default function AmenityMapPage() {
             <div className="amenity-map-editor-step">
               <button
                 type="button"
-                className="amenity-map-step-back"
+                className="amenity-map-step-back amenity-map-step-back--strong"
                 onClick={() => setChoosingAmenity(false)}
               >
-                ← Back
+                <span aria-hidden>←</span>
+                Back
               </button>
               <h2>Choose an amenity</h2>
               <p className="amenity-map-help">Add one category at a time to this map.</p>
@@ -1459,19 +2376,27 @@ export default function AmenityMapPage() {
             </div>
           ) : editMode && activeEditorCategory ? (
             <div className="amenity-map-editor-step">
-              <button
-                type="button"
-                className="amenity-map-step-back"
-                onClick={() => {
-                  setActiveEditorCategoryKey(null);
-                  setActiveFeature(null);
-                }}
-              >
-                ← All amenities
-              </button>
-              <div className="amenity-map-active-category-title">
-                <AmenityIcon amenityKey={activeEditorCategory.key} />
-                <h2>{activeEditorCategory.label}</h2>
+              <div className="amenity-map-active-category-row">
+                <button
+                  type="button"
+                  className="amenity-map-step-back amenity-map-step-back--inline"
+                  onClick={() => {
+                    setActiveEditorCategoryKey(null);
+                    setActiveFeature(null);
+                    setAddingCustom(false);
+                    setPlacingCustom(false);
+                    setPlaceGhost(null);
+                    setCustomError('');
+                  }}
+                  aria-label="Back to all amenities"
+                  title="All amenities"
+                >
+                  ←
+                </button>
+                <div className="amenity-map-active-category-title">
+                  <AmenityIcon amenityKey={activeEditorCategory.key} />
+                  <h2>{activeEditorCategory.label}</h2>
+                </div>
               </div>
               <div className="amenity-map-radius-control">
                 <div className="amenity-map-radius-heading">
@@ -1508,81 +2433,193 @@ export default function AmenityMapPage() {
               >
                 {activeEditorSearchState.status === 'loading'
                   ? `Searching for ${activeEditorCategory.label.toLowerCase()}…`
-                  : activeEditorFeatures.length
+                  : activeEditorFeatures.some((f) => f?.properties?.isCustom !== true)
                     ? 'Search this radius again'
                     : `Search for ${activeEditorCategory.label}`}
               </button>
+              <p className="amenity-map-search-note">
+                Searching again refreshes Google results for this radius. Custom places you added
+                stay, and places you already selected stay selected when they still appear. New
+                finds start unchecked.
+              </p>
               {activeEditorSearchState.error ? (
                 <p className="amenity-map-error">{activeEditorSearchState.error}</p>
               ) : null}
+
+              <div className="amenity-map-results-heading">
+                <h3>Choose places to show</h3>
+                <span>
+                  {activeEditorFeatures.filter(visibleFeature).length} of{' '}
+                  {activeEditorFeatures.length}
+                </span>
+              </div>
+              <div className="amenity-map-results-actions">
+                <button
+                  type="button"
+                  onClick={() => setAllPlacesVisible(activeEditorCategory.key, true)}
+                  disabled={!activeEditorFeatures.length}
+                >
+                  Select all
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setAllPlacesVisible(activeEditorCategory.key, false)}
+                  disabled={!activeEditorFeatures.length}
+                >
+                  Clear
+                </button>
+                <button
+                  type="button"
+                  className={`amenity-map-add-custom-btn${placingCustom ? ' is-open' : ''}`}
+                  onClick={placingCustom ? cancelPlacingCustom : startPlacingCustom}
+                  title={
+                    placingCustom
+                      ? 'Cancel placing'
+                      : 'Click, then click the map to place a custom amenity'
+                  }
+                >
+                  {placingCustom ? 'Cancel' : 'Add custom'}
+                </button>
+              </div>
+              {placingCustom ? (
+                <p className="amenity-map-search-note">
+                  Move the cursor, then click the map to place. Press Esc or Cancel to stop.
+                </p>
+              ) : null}
+
+              {addingCustom ? (
+                <div className="amenity-map-custom-form">
+                  <p className="amenity-map-custom-lead">
+                    Edit this custom place. Drag its pin on the map to move it.
+                  </p>
+                  <label className="amenity-map-custom-field">
+                    Name
+                    <input
+                      type="text"
+                      value={customDraft.name}
+                      onChange={(e) =>
+                        setCustomDraft((d) => ({ ...d, name: e.target.value }))
+                      }
+                      placeholder="e.g. Riverside Trailhead"
+                      autoFocus
+                    />
+                  </label>
+                  <label className="amenity-map-custom-field">
+                    Address <span>(optional)</span>
+                    <input
+                      type="text"
+                      value={customDraft.address}
+                      onChange={(e) =>
+                        setCustomDraft((d) => ({ ...d, address: e.target.value }))
+                      }
+                      placeholder="Street or short note"
+                    />
+                  </label>
+                  {customError ? <p className="amenity-map-error">{customError}</p> : null}
+                  <div className="amenity-map-custom-actions">
+                    <button
+                      type="button"
+                      className="amenity-map-custom-save"
+                      onClick={saveCustomDraft}
+                    >
+                      Save place
+                    </button>
+                    <button
+                      type="button"
+                      className="amenity-map-custom-cancel"
+                      onClick={() => {
+                        setAddingCustom(false);
+                        setCustomError('');
+                      }}
+                    >
+                      Done
+                    </button>
+                    {customDraft.placeId ? (
+                      <button
+                        type="button"
+                        className="amenity-map-custom-delete"
+                        onClick={() =>
+                          deleteCustomPlace(
+                            customDraft.placeId,
+                            customDraft.categoryKey || activeEditorCategory.key
+                          )
+                        }
+                      >
+                        Delete
+                      </button>
+                    ) : null}
+                  </div>
+                </div>
+              ) : null}
+
               {activeEditorFeatures.length ? (
-                <>
-                  <div className="amenity-map-results-heading">
-                    <h3>Choose places to show</h3>
-                    <span>
-                      {activeEditorFeatures.filter(visibleFeature).length} of{' '}
-                      {activeEditorFeatures.length}
-                    </span>
-                  </div>
-                  <div className="amenity-map-results-actions">
-                    <button
-                      type="button"
-                      onClick={() => setAllPlacesVisible(activeEditorCategory.key, true)}
-                    >
-                      Select all
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setAllPlacesVisible(activeEditorCategory.key, false)}
-                    >
-                      Clear
-                    </button>
-                  </div>
-                  <ul className="amenity-map-result-list">
-                    {activeEditorFeatures.map((feature) => {
-                      const p = feature.properties || {};
-                      const key = amenityFeatureKey(feature);
-                      const selected = visibleFeature(feature);
-                      return (
-                        <li
-                          key={key}
-                          className={selected ? 'is-selected' : ''}
-                          onMouseEnter={() => setHoveredKey(key)}
-                          onMouseLeave={() => setHoveredKey(null)}
-                        >
-                          <label>
-                            <input
-                              type="checkbox"
-                              checked={selected}
-                              onChange={() => togglePlace(activeEditorCategory.key, key)}
-                            />
-                            <AmenityIcon amenityKey={activeEditorCategory.key} />
-                            <span className="amenity-map-result-text">
-                              <strong>{p.name}</strong>
-                              <AmenityRating properties={p} />
-                              <small>
-                                {[p.distanceText, featureAddress(feature)]
-                                  .filter(Boolean)
-                                  .join(' · ')}
-                              </small>
-                            </span>
-                          </label>
+                <ul className="amenity-map-result-list">
+                  {activeEditorFeatures.map((feature) => {
+                    const p = feature.properties || {};
+                    const key = amenityFeatureKey(feature);
+                    const selected = visibleFeature(feature);
+                    return (
+                      <li
+                        key={key}
+                        className={selected ? 'is-selected' : ''}
+                        onMouseEnter={() => setHoveredKey(key)}
+                        onMouseLeave={() => setHoveredKey(null)}
+                      >
+                        <label>
+                          <input
+                            type="checkbox"
+                            checked={selected}
+                            onChange={() => togglePlace(activeEditorCategory.key, key)}
+                          />
+                          <AmenityIcon amenityKey={activeEditorCategory.key} />
+                          <span className="amenity-map-result-text">
+                            <strong>
+                              {p.name}
+                              {p.isCustom ? (
+                                <span className="amenity-map-custom-badge">Custom</span>
+                              ) : null}
+                            </strong>
+                            <AmenityRating properties={p} />
+                            <small>
+                              {[p.distanceText, featureAddress(feature)]
+                                .filter(Boolean)
+                                .join(' · ')}
+                            </small>
+                          </span>
+                        </label>
+                        {p.isCustom ? (
                           <button
                             type="button"
-                            className="amenity-map-result-details"
-                            onClick={() => setActiveFeature(feature)}
-                            aria-label={`Details for ${p.name || 'this place'}`}
+                            className="amenity-map-result-delete"
+                            onClick={() =>
+                              deleteCustomPlace(
+                                String(p.placeId || key),
+                                String(p.amenityKey || activeEditorCategory.key)
+                              )
+                            }
+                            aria-label={`Delete ${p.name || 'custom place'}`}
+                            title="Delete"
                           >
-                            Details
+                            ×
                           </button>
-                        </li>
-                      );
-                    })}
-                  </ul>
-                </>
+                        ) : null}
+                        <button
+                          type="button"
+                          className="amenity-map-result-details"
+                          onClick={() =>
+                            p.isCustom ? openCustomEditor(feature) : setActiveFeature(feature)
+                          }
+                          aria-label={`Details for ${p.name || 'this place'}`}
+                        >
+                          {p.isCustom ? 'Edit' : 'Details'}
+                        </button>
+                      </li>
+                    );
+                  })}
+                </ul>
               ) : (
                 <p className="amenity-map-empty-results">
-                  Choose a radius, then search to find nearby places.
+                  Search for nearby places, or click Add custom and click the map to place one.
                 </p>
               )}
             </div>
@@ -1591,7 +2628,10 @@ export default function AmenityMapPage() {
               <button
                 type="button"
                 className="amenity-map-add-btn"
-                onClick={() => setChoosingAmenity(true)}
+                onClick={() => {
+                  setPdfPanelOpen(false);
+                  setChoosingAmenity(true);
+                }}
               >
                 <span aria-hidden>＋</span>
                 Add Amenity

@@ -22,7 +22,7 @@ export const MAP_ELEMENT_CATEGORY = {
 
 export const MAP_ELEMENT_ITEMS = [
   // Points
-  { id: 'note', tool: 'note', label: 'Text', category: 'point', icon: '📝' },
+  { id: 'note', tool: 'note', label: 'Text', category: 'point' },
   // Lines (ranching / map markup)
   { id: 'arrow', tool: 'arrow', label: 'Arrow', category: 'line', icon: '→' },
   {

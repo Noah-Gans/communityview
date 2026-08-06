@@ -29,12 +29,12 @@ import {
   extractImageUrlsFromDataTransfer,
   fetchImageUrlAsFile,
 } from '../../utils/listingPhotoDrop';
-import { accountAgentDefaults } from '../../utils/agentProfile';
 import { fetchRegridParcelDetailCached } from '../../utils/regridParcelApi';
 import { fetchSoilMapUnitByMukey } from '../../utils/soilMapUnitApi';
 import RegridParcelFeatureDetails from './RegridParcelFeatureDetails';
 import { REGRID_BATCH_REPORTS_ENABLED } from '../../config/featureFlags';
 import { normalizePathname } from '../../utils/mapBackedRoutes';
+import { normalizeToGeoJsonFeature } from '../../utils/normalizeMapFeature';
 
 const MOBILE_SHEET = {
   HIDDEN: 'hidden',
@@ -59,8 +59,6 @@ const SidePanel = memo(({
   onCreateBoundaryFromRegridParcel,
   onZoomToPrintElement = () => {},
 }) => {
-  console.log("SideTab is: ", activeSidePanelTab)
-  // States to manage expanded/collapsed sections
   const {
     activeTab,
     setActiveTab,
@@ -86,7 +84,8 @@ const SidePanel = memo(({
   const soilMapUnitFetchStartedRef = useRef(new Set());
   const [collapsedCategories, setCollapsedCategories] = useState({}); // Track collapsed state for detail categories
   const {setHoveredFeatureId, setGlobalActiveTab, setIsFilterTriggered, layerOrder, setLayerOrder, layerLabels, toggleLayerLabels } = useMapContext();
-  const { isActive: tutorialActive, currentStep: tutorialStep, next: goToNextTutorialStep } = useTutorialWalkthrough();
+  const { isActive: tutorialActive, currentStep: tutorialStep, next: goToNextTutorialStep, mode: tutorialMode } =
+    useTutorialWalkthrough();
   const collapsedByInteractionRef = useRef(false);
   const lastSelectedFeatureRef = useRef(null);
   const prevIsOpenRef = useRef(isOpen);
@@ -96,6 +95,7 @@ const SidePanel = memo(({
   const activeScrollContainerRef = useRef(null);
   const autoAdvancedLayersTabRef = useRef(false);
   const autoAdvancedPublicLandRef = useRef(false);
+  const forcedLegendCollapseRef = useRef(false);
   const navigate = useNavigate();
   const location = useLocation();
   const {
@@ -107,10 +107,8 @@ const SidePanel = memo(({
     setSelectedPrintElement,
     deletePrintElement,
     printMapId,
-    agentProfile,
-    setAgentProfile,
   } = useMapContext();
-  const { user, userProfile } = useUser();
+  const { user } = useUser();
   const [printGalleryItems, setPrintGalleryItems] = useState([]);
   const [printGalleryUploading, setPrintGalleryUploading] = useState(false);
   const printGalleryItemsWithFeaturePhotos = useMemo(() => {
@@ -244,25 +242,6 @@ const SidePanel = memo(({
     }
   }, []);
 
-  // Account profile defaults the per-map agent card falls back to.
-  const agentAccountDefaults = useMemo(
-    () => accountAgentDefaults(userProfile, user),
-    [userProfile, user]
-  );
-
-  // Upload a headshot / firm logo for the per-map agent card and return its
-  // hosted URL + storage path (reused from the gallery upload plumbing).
-  const handleUploadAgentImage = useCallback(
-    async (file) => {
-      if (!file) throw new Error('No file provided.');
-      if (!user?.uid) throw new Error('Sign in to upload images.');
-      const err = validateMapPhotoFile(file);
-      if (err) throw new Error(err);
-      return uploadMapPhoto(user.uid, file, { mapId: printMapId });
-    },
-    [user, printMapId]
-  );
-
   /**
    * True when the full map (same Map instance) is the focus — includes /print (Maps / map builder),
    * not only /map. Otherwise parcel actions stay hidden on /print.
@@ -277,10 +256,14 @@ const SidePanel = memo(({
 
   const showPrintTab = isPrinting;
 
+  // State to manage legend visibility for each layer
+  const [isLegendOpen, setIsLegendOpen] = useState({});
+
   useEffect(() => {
     if (!tutorialActive || !tutorialStep) {
       autoAdvancedLayersTabRef.current = false;
       autoAdvancedPublicLandRef.current = false;
+      forcedLegendCollapseRef.current = false;
       return;
     }
 
@@ -294,31 +277,50 @@ const SidePanel = memo(({
     if (tutorialStep.id !== 'public-land-layer') {
       autoAdvancedPublicLandRef.current = false;
     } else {
-      if (!isOwnershipOpen) setIsOwnershipOpen(true);
       if (!isEnvironmentOpen) setIsEnvironmentOpen(true);
-      if (
-        !!layerStatus.public_land &&
-        !!layerLabels.ownership &&
-        !autoAdvancedPublicLandRef.current
-      ) {
+      if (!!layerStatus.public_land && !autoAdvancedPublicLandRef.current) {
         autoAdvancedPublicLandRef.current = true;
         goToNextTutorialStep();
       }
+    }
+
+    if (tutorialStep.id === 'layers-explore') {
+      if (!isEnvironmentOpen) setIsEnvironmentOpen(true);
+      if (!isOwnershipOpen) setIsOwnershipOpen(true);
+      if (!forcedLegendCollapseRef.current) {
+        forcedLegendCollapseRef.current = true;
+        setIsLegendOpen((prev) => ({ ...prev, public_land: false }));
+      }
+    } else {
+      forcedLegendCollapseRef.current = false;
     }
   }, [
     tutorialActive,
     tutorialStep,
     activeSidePanelTab,
-    isOwnershipOpen,
     isEnvironmentOpen,
+    isOwnershipOpen,
     layerStatus.public_land,
-    layerLabels.ownership,
     goToNextTutorialStep,
   ]);
 
-  // State to manage legend visibility for each layer
-  const [isLegendOpen, setIsLegendOpen] = useState({});
-  
+  // Print / map-maker tour: keep the right side-panel tab open for each step.
+  useEffect(() => {
+    if (!tutorialActive || tutorialMode !== 'print-map' || !tutorialStep) return;
+    const id = tutorialStep.id;
+    if (
+      id === 'print-editor-sections' ||
+      id === 'print-elements' ||
+      id === 'print-feature-editor' ||
+      id === 'print-save' ||
+      id === 'print-save-dialog' ||
+      id === 'print-share-click' ||
+      id === 'print-share'
+    ) {
+      setActiveSidePanelTab('print');
+    }
+  }, [tutorialActive, tutorialMode, tutorialStep, setActiveSidePanelTab]);
+
   // State for property details data (mobile only)
 
   // Fetch detailed Regrid parcel data from API
@@ -608,7 +610,15 @@ const SidePanel = memo(({
     fetchRegridParcelDetails,
   ]);
   
-  const renderFeatureDetails = (feature, index) => {
+  const renderFeatureDetails = (rawFeature, index) => {
+    // Search / Map It can pass flat rows without a properties bag — normalize first.
+    const feature =
+      normalizeToGeoJsonFeature(rawFeature) || {
+        type: 'Feature',
+        properties: {},
+        geometry: rawFeature?.geometry,
+      };
+
     // Parse the description HTML if it exists to extract the attributes
     const parsedDescription = feature.properties.description ? parseDescription(feature.properties.description) : {};
 
@@ -659,13 +669,11 @@ const SidePanel = memo(({
         parsedDescription.sma_id);
     const isPrecinct = feature.properties.objectid || feature.pollingpla
     const isFEMA = feature.properties.FLD_AR_ID || feature.properties.FLD_ZONE
-    const featureId = parsedDescription.pidn || feature.properties.pidn || feature.properties.parcelnumb || feature.properties.ll_uuid; // Use the unique ID from the feature
+    const featureId = parsedDescription.pidn || feature.properties.pidn || feature.properties.parcelnumb || feature.properties.ll_uuid;
     const soilMukey =
       hostedMapLayer === 'soil' ? getProp(feature, ['MUKEY', 'mukey']) : null;
     const soilDetails = soilMukey ? soilMapUnitDetails[soilMukey] : null;
     const soilLoading = soilMukey ? Boolean(soilMapUnitLoading[soilMukey]) : false;
-    console.log(isPublicLandFeature)
-    console.log(feature.properties)
     
     // Helper function to copy value to clipboard
     const copyToClipboard = async (text, fieldId) => {
@@ -1076,6 +1084,7 @@ const SidePanel = memo(({
           className="legend-toggle"
           aria-expanded={isExpanded}
           aria-controls={`legend-list-${layerName}`}
+          data-tour={layerName === 'public_land' ? 'public-land-legend-toggle' : undefined}
         >
           <span className="legend-toggle-chevron" aria-hidden="true">
             {isExpanded ? '▾' : '▸'}
@@ -1528,7 +1537,7 @@ const SidePanel = memo(({
           </div>
         )}
         {shouldRenderContent && (
-        <div className={`content ${activeSidePanelTab === 'print' && showPrintTab ? 'print-content-with-footer' : ''}`}>
+        <div className="content">
           <div
             className={`tab-buttons${showPrintTab ? ' tab-buttons--map-maker' : ''}`}
             data-tour="side-panel-tabs"
@@ -1624,10 +1633,6 @@ const SidePanel = memo(({
                   onPrintGalleryTransfer={handlePrintGalleryTransfer}
                   onRemovePrintGalleryItem={handleRemovePrintGalleryItem}
                   printGalleryUploading={printGalleryUploading}
-                  agentProfile={agentProfile}
-                  onAgentProfileChange={setAgentProfile}
-                  agentAccountDefaults={agentAccountDefaults}
-                  onUploadAgentImage={handleUploadAgentImage}
                 />
               </div>
             )}

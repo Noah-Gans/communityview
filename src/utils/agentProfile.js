@@ -1,9 +1,9 @@
-// Per-map agent/contact-card override stored on the map doc as `agentProfile`.
+// Per-map agent/contact-card stored on the map doc as `agentProfile`.
 //
-// mode: 'account' → use the owner's account profile (Account settings) as-is.
-// mode: 'custom'  → use the per-map fields below; any blank field falls back to
-//                   the account value (per-field fallback), so agents only fill
-//                   in what differs for this particular map.
+// The map builder stamps this from the owner's account profile on save (mode:
+// 'account' + field snapshot) for backend/share consumers. Display resolves
+// through account defaults; per-map custom overrides are no longer edited in
+// the product UI (backend may still set mode: 'custom' when needed).
 
 const str = (v) => String(v == null ? '' : v).trim();
 

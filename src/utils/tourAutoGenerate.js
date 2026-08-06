@@ -8,10 +8,14 @@ import {
 } from './tourSlidePlan';
 import {
   buildTourNearbyCacheForSave,
+  normalizeTourNearbyCacheFromFirestore,
   TOUR_NEARBY_AMENITY_KEYS,
 } from './tourNearbyFirestore';
 import { TOUR_NEARBY_DATA_VERSION } from './tourNearbyRanking';
-import { getAmenitySearchRadiusMeters, normalizeTourSettings } from './tourSettings';
+import {
+  getAmenitySearchRadiusMeters,
+  normalizeTourSettings,
+} from './tourSettings';
 
 function summarizeFetchErrors(messages) {
   const unique = [...new Set((messages || []).map((m) => String(m || '').trim()).filter(Boolean))];
@@ -23,7 +27,7 @@ function summarizeFetchErrors(messages) {
   if (quotaHit) {
     return (
       `${unique[0]} ` +
-      'Create tour uses one Nearby Search per amenity category (9 total). ' +
+      'Create tour uses one Nearby Search per amenity category. ' +
       'Add REACT_APP_GOOGLE_MAPS_API_KEY in .env.development to use browser Places quota, or wait for the daily Cloud Function limit to reset.'
     );
   }
@@ -37,6 +41,11 @@ function countNamedNearbyFeatures(nearbyContextByAmenity) {
     count += features.filter((f) => String(f?.properties?.name || '').trim()).length;
   }
   return count;
+}
+
+function amenityEntryHasNamedPlaces(entry) {
+  const features = Array.isArray(entry?.features) ? entry.features : [];
+  return features.some((f) => String(f?.properties?.name || '').trim());
 }
 
 /**
@@ -67,49 +76,75 @@ export async function autoGeneratePropertyTour({ shareToken, mapData }) {
     slidePlan,
   });
 
-  const nearbyContextByAmenity = {};
+  const existingRoot = normalizeTourNearbyCacheFromFirestore(mapData?.tourNearbyCache);
+  const planKeys = enabledAmenityKeysFromPlan(slidePlan);
+
+  let nearbyContextByAmenity = {};
+
+  // Reuse categories already populated (e.g. from amenity map); still fetch tour-only gaps.
+  if (existingRoot?.byAmenity) {
+    for (const [key, entry] of Object.entries(existingRoot.byAmenity)) {
+      nearbyContextByAmenity[key] = {
+        type: 'FeatureCollection',
+        features: Array.isArray(entry?.features) ? entry.features : [],
+        searchRadiusMeters: entry?.searchRadiusMeters || existingRoot.searchRadiusMeters,
+        dataVersion: existingRoot.dataVersion || TOUR_NEARBY_DATA_VERSION,
+        fetched: true,
+      };
+    }
+  }
+
+  const keysToFetch = planKeys.filter((key) => !amenityEntryHasNamedPlaces(nearbyContextByAmenity[key]));
+  const reusedExistingCache = keysToFetch.length < planKeys.length;
   const fetchErrors = [];
 
-  // One Nearby Search per amenity category (9). Prefer browser key to spare Cloud Function quota.
-  await Promise.all(
-    TOUR_NEARBY_AMENITY_KEYS.map(async (amenityKey) => {
-      const radiusMeters = getAmenitySearchRadiusMeters(tourSettings, amenityKey);
-      try {
-        const geojson = await mapService.getNearbyGooglePlaces({
-          lat: searchCenter.lat,
-          lng: searchCenter.lng,
-          radiusMeters,
-          amenityKey,
-          forceRefresh: true,
-          preferBrowser: true,
-        });
-        const features = Array.isArray(geojson?.features) ? geojson.features : [];
-        nearbyContextByAmenity[amenityKey] = {
-          type: 'FeatureCollection',
-          features,
-          searchRadiusMeters: radiusMeters,
-          dataVersion: TOUR_NEARBY_DATA_VERSION,
-          fetched: true,
-        };
-      } catch (err) {
-        fetchErrors.push(
-          err?.message ? String(err.message) : `Could not load ${amenityKey.replace(/_/g, ' ')}.`
-        );
-      }
-    })
-  );
+  if (keysToFetch.length) {
+    // One Nearby Search per missing amenity category. Prefer browser key to spare CF quota.
+    await Promise.all(
+      keysToFetch.map(async (amenityKey) => {
+        const radiusMeters = getAmenitySearchRadiusMeters(tourSettings, amenityKey);
+        try {
+          const geojson = await mapService.getNearbyGooglePlaces({
+            lat: searchCenter.lat,
+            lng: searchCenter.lng,
+            radiusMeters,
+            amenityKey,
+            forceRefresh: true,
+            preferBrowser: true,
+          });
+          const features = Array.isArray(geojson?.features) ? geojson.features : [];
+          nearbyContextByAmenity[amenityKey] = {
+            type: 'FeatureCollection',
+            features,
+            searchRadiusMeters: radiusMeters,
+            dataVersion: TOUR_NEARBY_DATA_VERSION,
+            fetched: true,
+          };
+        } catch (err) {
+          fetchErrors.push(
+            err?.message ? String(err.message) : `Could not load ${amenityKey.replace(/_/g, ' ')}.`
+          );
+        }
+      })
+    );
+  }
 
   const namedFeatureCount = countNamedNearbyFeatures(nearbyContextByAmenity);
   if (namedFeatureCount === 0) {
     throw new Error(summarizeFetchErrors(fetchErrors));
   }
 
+  // Merge save: keep amenity-map-only categories (fire/police/library) already on the listing.
   const payload = buildTourNearbyCacheForSave(
-    searchCenter,
+    existingRoot?.searchCenter || searchCenter,
     nearbyContextByAmenity,
-    tourSettings.searchRadiusMeters,
-    enabledAmenityKeysFromPlan(slidePlan),
-    { tourSettings, replace: true }
+    existingRoot?.searchRadiusMeters || tourSettings.searchRadiusMeters,
+    planKeys,
+    {
+      tourSettings,
+      allowEmpty: false,
+      homeMarker: existingRoot?.homeMarker || searchCenter,
+    }
   );
 
   if (!payload) {
@@ -124,5 +159,6 @@ export async function autoGeneratePropertyTour({ shareToken, mapData }) {
     tourSlidePlan: saveResult?.tourSlidePlan || slidePlan,
     namedFeatureCount,
     fetchErrors,
+    reusedExistingCache,
   };
 }

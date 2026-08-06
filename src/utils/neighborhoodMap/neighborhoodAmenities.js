@@ -119,6 +119,35 @@ function toNumbered(rows) {
 }
 
 /**
+ * Number visible amenity-map features for the neighborhood PDF (same places the agent curated).
+ */
+export function numberedAmenitiesFromFeatures(features, options = {}) {
+  const maxTotal = Number(options.maxTotal) || 40;
+  const allowed = new Set(
+    Array.isArray(options.keys) && options.keys.length
+      ? options.keys
+      : NEIGHBORHOOD_AMENITY_KEYS
+  );
+  const rows = [];
+  const seenPlaceIds = new Set();
+  for (const f of features || []) {
+    if (rows.length >= maxTotal) break;
+    const key = String(f?.properties?.amenityKey || '').trim();
+    if (!allowed.has(key)) continue;
+    const cat =
+      NEIGHBORHOOD_AMENITY_CATEGORIES.find((c) => c.key === key) || {
+        key,
+        label: key.replace(/_/g, ' '),
+      };
+    const row = featureToRow(f, cat);
+    if (!row || seenPlaceIds.has(row.placeId)) continue;
+    seenPlaceIds.add(row.placeId);
+    rows.push(row);
+  }
+  return toNumbered(rows);
+}
+
+/**
  * Heuristic pick: guarantee mins per category, then fill up to max.
  */
 export function selectNeighborhoodAmenities(byAmenity, options = {}) {
@@ -295,4 +324,24 @@ export function groupAmenitiesByCategory(amenities) {
     if (g) g.items.push(a);
   }
   return groups.filter((g) => g.items.length > 0);
+}
+
+/**
+ * When the agent curated amenities on the amenity map / tour, use that visible set
+ * as the neighborhood PDF pin list (same places across all three).
+ */
+export function selectedAmenitiesFromVisibleByAmenity(byAmenity, options = {}) {
+  const maxTotal = Number(options.maxTotal) || 40;
+  const rows = [];
+  const seenPlaceIds = new Set();
+  for (const cat of NEIGHBORHOOD_AMENITY_CATEGORIES) {
+    if (rows.length >= maxTotal) break;
+    for (const row of rankedForCategory(byAmenity, cat)) {
+      if (rows.length >= maxTotal) break;
+      if (seenPlaceIds.has(row.placeId)) continue;
+      seenPlaceIds.add(row.placeId);
+      rows.push(row);
+    }
+  }
+  return toNumbered(rows);
 }

@@ -44,13 +44,6 @@ const PAGES = [
       'Answers about nationwide parcel research, listing maps, property tours, sharing with buyers, trials, and billing on CommunityView.',
   },
   {
-    route: '/tutorial',
-    file: path.join('tutorial', 'index.html'),
-    title: 'Tutorial — How to Use CommunityView',
-    description:
-      'Learn how to explore parcels, map layers, listing maps, and property tours in CommunityView.',
-  },
-  {
     route: '/map',
     file: path.join('map', 'index.html'),
     title: 'Interactive Parcel Map | CommunityView',

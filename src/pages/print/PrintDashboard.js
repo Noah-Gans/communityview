@@ -223,9 +223,9 @@ export default function PrintDashboard({
     <div className="maps-dashboard">
       <div className="print-dashboard-inner">
         <div className="print-dashboard-heading">
-          {!isMobile && <h1 className="print-dashboard-title">Saved Maps</h1>}
+          {!isMobile && <h1 className="print-dashboard-title">Listing content</h1>}
           {isMobile && (
-            <p className="print-dashboard-mobile-lead">Edit maps on desktop.</p>
+            <p className="print-dashboard-mobile-lead">Edit maps on desktop. Share tours &amp; links here.</p>
           )}
         </div>
 
@@ -248,7 +248,7 @@ export default function PrintDashboard({
         {!isMobile && (
           <div className="print-dashboard-create-row">
             <button type="button" className="header-print-action-btn" onClick={onCreateNewMap}>
-              + Create New Map
+              + Create listing content
             </button>
           </div>
         )}
@@ -270,8 +270,8 @@ export default function PrintDashboard({
             {searchQuery
               ? 'No maps found matching your search.'
               : isMobile
-                ? 'No saved maps yet. Create maps on desktop, then share them here.'
-                : 'No saved maps yet. Create your first map!'}
+                ? 'No listings yet. Create on desktop, then share here.'
+                : 'No listings yet. Create your first listing content!'}
           </p>
         ) : (
           <ul className={`print-dashboard-list${isMobile ? ' print-dashboard-list--mobile' : ''}`}>
@@ -335,7 +335,7 @@ export default function PrintDashboard({
                           })
                         }
                       >
-                        Share Map
+                        Share &amp; generate
                       </button>
                       <button
                         type="button"

@@ -73,9 +73,14 @@ export const MapProvider = ({ children }) => {
   const [propertyMapWizardActive, setPropertyMapWizardActive] = useState(false);
   /** Set when starting property wizard from Print: single parcel vs multi (copy + UX). */
   const [propertyMapWizardIntent, setPropertyMapWizardIntent] = useState(null);
+  /**
+   * Parcel FeatureJSON features selected when the listing kit was created.
+   * Persisted on save so report / market content can re-fetch Regrid detail.
+   */
+  const [listingParcelRefs, setListingParcelRefs] = useState([]);
 
   const [printElements, setPrintElements] = useState([]);
-  /** Per-map agent/contact-card override (null = not loaded). See utils/agentProfile.js. */
+  /** Per-map agent snapshot (stamped from account on save). Not edited in the map builder. */
   const [agentProfile, setAgentProfile] = useState(null);
   const [selectedPrintElement, setSelectedPrintElement] = useState(null);
   const [activePrintTool, setActivePrintTool] = useState('select');
@@ -316,6 +321,8 @@ export const MapProvider = ({ children }) => {
     setPropertyMapWizardActive,
     propertyMapWizardIntent,
     setPropertyMapWizardIntent,
+    listingParcelRefs,
+    setListingParcelRefs,
      // ✅ Add these missing ones:
     addNote,
     addLegend,    

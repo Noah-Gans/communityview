@@ -12,14 +12,16 @@ const ToolPanel = ({
   return (
       <div className="tool-panel" data-tour="tool-panel">
             <div className="tool-container">
-              <div className="tooltip-container">
-                <button className="tool-btn" onClick={onZoomIn} data-tour="tool-zoom-in">+</button>
-                <span className="tooltip-text">Zoom In</span>
-              </div>
+              <div className="tool-zoom-group" data-tour="tool-zoom">
+                <div className="tooltip-container">
+                  <button className="tool-btn" onClick={onZoomIn} data-tour="tool-zoom-in">+</button>
+                  <span className="tooltip-text">Zoom In</span>
+                </div>
 
-              <div className="tooltip-container">
-                <button className="tool-btn" onClick={onZoomOut} data-tour="tool-zoom-out">-</button>
-                <span className="tooltip-text">Zoom Out</span>
+                <div className="tooltip-container">
+                  <button className="tool-btn" onClick={onZoomOut} data-tour="tool-zoom-out">-</button>
+                  <span className="tooltip-text">Zoom Out</span>
+                </div>
               </div>
 
               <div className="tooltip-container">
@@ -44,7 +46,16 @@ const ToolPanel = ({
               </div>
 
               <div className="tooltip-container">
-                <button className="tool-btn" onClick={onClear} data-tour="tool-clear-all">❌</button>
+                <button
+                  className="tool-btn"
+                  onClick={() => {
+                    onClear?.();
+                    window.dispatchEvent(new CustomEvent('cv-tutorial-tools-clear'));
+                  }}
+                  data-tour="tool-clear-all"
+                >
+                  ❌
+                </button>
                 <span className="tooltip-text">Clear All Drawings</span>
               </div>
 

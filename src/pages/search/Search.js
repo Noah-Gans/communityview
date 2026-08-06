@@ -5,9 +5,12 @@ import { useMapContext } from '../MapContext';
 import { regridRestGet } from '../../services/regridService';
 import {
   buildRegridParcelQueryParams,
+  fetchParcelGeoJsonFeatureByLlUuid,
 } from '../../utils/regridParcelApi';
 import { DEFAULT_PARCEL_SEARCH_LIMIT, searchParcels } from '../../utils/parcelSearch';
 import { mapRegridToLegacy } from '../../utils/parcelSearchMapper';
+import { normalizeToGeoJsonFeatures } from '../../utils/normalizeMapFeature';
+import * as turf from '@turf/turf';
 import { useSearchCountyScope } from '../../hooks/useSearchCountyScope';
 import CountySearchScopeControls from '../../components/search/CountySearchScopeControls';
 import SaveDefaultCountyPrompt from '../../components/search/SaveDefaultCountyPrompt';
@@ -28,7 +31,20 @@ const Search = () => {
   const [activeSearchRequest, setActiveSearchRequest] = useState(null);
   const countyBootstrapRef = useRef(false);
 
-  const { focusFeatures, setFocusFeatures, searchResults, setSearchResults, setIsMapTriggeredFromSearch, setActiveTab, mapRef } = useMapContext();
+  const {
+    focusFeatures,
+    setFocusFeatures,
+    searchResults,
+    setSearchResults,
+    setIsMapTriggeredFromSearch,
+    setActiveTab,
+    mapRef,
+    setLayerStatus,
+    propertyMapWizardActive,
+    setPropertyMapWizardActive,
+    setPropertyMapWizardIntent,
+    setIsPrinting,
+  } = useMapContext();
   const { loading: userLoading, user } = useUser();
 
   const {
@@ -179,6 +195,44 @@ const Search = () => {
   };
 
   const handleMapClick = async (result) => {
+    const llUuid = result.ll_uuid || result.global_parcel_uid || result.GFI;
+
+    // Listing wizard needs a full polygon outline — prefer Regrid geometry by id.
+    if (propertyMapWizardActive && llUuid) {
+      try {
+        const apiFeat = await fetchParcelGeoJsonFeatureByLlUuid(llUuid);
+        if (apiFeat?.geometry) {
+          const feature = {
+            type: 'Feature',
+            geometry: apiFeat.geometry,
+            properties: {
+              ...(apiFeat.properties || {}),
+              ...result,
+              ll_uuid: llUuid,
+              GFI: llUuid,
+              global_parcel_uid: llUuid,
+            },
+            layer: { id: 'regrid-parcels-layer' },
+            bbox: turf.bbox(apiFeat),
+          };
+          const parcelPath = feature.properties?.path || result?.path;
+          if (parcelPath) {
+            applyMapCountyFromParcelPath(parcelPath);
+          }
+          setLayerStatus((prev) => ({ ...prev, ownership: true }));
+          setFocusFeatures([feature]);
+          setIsMapTriggeredFromSearch((prev) => !prev);
+          setTimeout(() => {
+            setActiveTab('print');
+            navigate('/print');
+          }, 200);
+          return;
+        }
+      } catch (error) {
+        console.warn('⚠️ Wizard Map It geometry fetch failed, using standard path:', error);
+      }
+    }
+
     const hasGeometry =
       result?.geometry &&
       (result.geometry.type === 'Polygon' ||
@@ -199,20 +253,44 @@ const Search = () => {
       }
     }
 
-    const features = Array.isArray(featureToMap) ? featureToMap.flat() : [featureToMap];
+    const features = normalizeToGeoJsonFeatures(
+      Array.isArray(featureToMap) ? featureToMap.flat() : [featureToMap]
+    );
     const parcelPath = featureToMap?.path || result?.path;
     if (parcelPath) {
       applyMapCountyFromParcelPath(parcelPath);
     }
+    // Ownership must be on so Regrid tiles exist for zoom/highlight + SidePanel.
+    setLayerStatus((prev) => ({ ...prev, ownership: true }));
     setFocusFeatures(features);
-
     setIsMapTriggeredFromSearch((prev) => !prev);
 
     setTimeout(() => {
-      setActiveTab('map');
-      navigate('/map');
+      if (propertyMapWizardActive) {
+        setActiveTab('print');
+        navigate('/print');
+      } else {
+        setActiveTab('map');
+        navigate('/map');
+      }
     }, 200);
   };
+
+  // Print leaves wizard/print flags on when hopping here for a parcel. If the user
+  // leaves Search without returning to /print (Map It), clear so Map isn't stuck.
+  useEffect(() => {
+    return () => {
+      try {
+        const path = (window.location.pathname || '').replace(/\/+$/, '') || '/';
+        if (path === '/search' || path === '/print') return;
+      } catch (_) {
+        /* ignore */
+      }
+      setIsPrinting(false);
+      setPropertyMapWizardActive(false);
+      setPropertyMapWizardIntent(null);
+    };
+  }, [setIsPrinting, setPropertyMapWizardActive, setPropertyMapWizardIntent]);
 
   useEffect(() => {
     const handleKeyDown = (event) => {

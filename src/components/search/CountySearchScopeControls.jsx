@@ -62,6 +62,7 @@ export default function CountySearchScopeControls({
           className={`county-scope-option${mode === 'nationwide' ? ' county-scope-option--active' : ''}`}
           onClick={() => setMode('nationwide')}
           disabled={busy}
+          data-tour="county-scope-nationwide"
         >
           Nationwide
         </button>
@@ -125,6 +126,7 @@ export default function CountySearchScopeControls({
           }`}
           onClick={() => void onSelectMapCenter()}
           disabled={busy || !mapAvailable}
+          data-tour="county-scope-map-center"
           title={
             isRefreshing
               ? 'Looking up county at map center'

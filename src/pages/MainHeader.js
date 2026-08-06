@@ -16,7 +16,15 @@ const MainHeader = () => {
   const location = useLocation();
   const navigate = useNavigate();
   const [isContactFormOpen, setIsContactFormOpen] = useState(false);
-  const { activeTab, setActiveTab, isPrinting } = useMapContext();
+  const {
+    activeTab,
+    setActiveTab,
+    isPrinting,
+    propertyMapWizardActive,
+    setPropertyMapWizardActive,
+    setPropertyMapWizardIntent,
+    setIsPrinting,
+  } = useMapContext();
   const { user, logout, deleteAccount, subscriptionStatus } = useUser();
   const [isDropdownOpen, setIsDropdownOpen] = useState(false);
   const [showAccountSettings, setShowAccountSettings] = useState(false);
@@ -25,7 +33,7 @@ const MainHeader = () => {
   const [isDeletingAccount, setIsDeletingAccount] = useState(false);
   const [isMobile, setIsMobile] = useState(window.innerWidth <= 768);
 
-  const { start: startWalkthrough, startPrint: startPrintWalkthrough, isActive: tourActive, stepIndex: tourStepIndex } =
+  const { start: startWalkthrough, startPrint: startPrintWalkthrough, isActive: tourActive, stepIndex: tourStepIndex, currentStep: tourStep } =
     useTutorialWalkthrough();
   const pathname = normalizePathname(location.pathname);
   const isMapPage = pathname.startsWith('/map');
@@ -33,6 +41,10 @@ const MainHeader = () => {
   const isPrintEditMode = pathname === '/print' && isPrinting;
   // Check if we're on a product page (map, search, report, print)
   const isProductPage = ['/map', '/search', '/report', '/print'].includes(pathname);
+  const inListingWizard = Boolean(propertyMapWizardActive);
+  const showProductTabs = isProductPage && (!isPrintEditMode || inListingWizard);
+  const showPrintEditorActions = isPrintEditMode && !inListingWizard;
+  const showWizardExit = inListingWizard || isPrintEditMode;
   
   const isMarketingPage =
     pathname === '/' ||
@@ -259,6 +271,18 @@ const MainHeader = () => {
   };
 
   const handlePrintBackToMaps = () => {
+    if (propertyMapWizardActive) {
+      setPropertyMapWizardActive(false);
+      setPropertyMapWizardIntent(null);
+      setIsPrinting(false);
+      setActiveTab('print');
+      if (pathname !== '/print') {
+        navigate('/print');
+      } else {
+        window.dispatchEvent(new CustomEvent('print-exit-edit'));
+      }
+      return;
+    }
     window.dispatchEvent(new CustomEvent('print-exit-edit'));
   };
 
@@ -352,8 +376,12 @@ const MainHeader = () => {
     };
   }, [isMapPage, isDropdownOpen]);
 
+  // Show Map/Search strip when the tour needs those targets (header step + open-Search step).
   const showMobileTourNavStrip =
-    isMobile && isMapPage && tourActive && tourStepIndex === 1;
+    isMobile &&
+    isMapPage &&
+    tourActive &&
+    (tourStepIndex === 1 || tourStep?.id === 'search-nav');
 
   const isPrintDashboard = pathname === '/print';
 
@@ -366,7 +394,12 @@ const MainHeader = () => {
               <button type="button" className="mobile-tutorial-nav-btn" onClick={() => navigate('/map')}>
                 Map
               </button>
-              <button type="button" className="mobile-tutorial-nav-btn" onClick={() => navigate('/search')}>
+              <button
+                type="button"
+                className="mobile-tutorial-nav-btn"
+                data-tour="header-tab-search"
+                onClick={() => navigate('/search')}
+              >
                 Search
               </button>
               <span className="mobile-tutorial-nav-hint">More tabs on wider screens</span>
@@ -465,12 +498,12 @@ const MainHeader = () => {
                 <img src="/logo.png" alt="Community View Logo" className="logo-image" />
               )}
             </Link>
-            {isPrintEditMode && (
+            {showWizardExit && (
               <button
                 type="button"
-                className="header-print-exit-btn"
+                className={`header-print-exit-btn${inListingWizard ? ' header-print-exit-btn--strong' : ''}`}
                 onClick={handlePrintBackToMaps}
-                title="Exit map editing"
+                title={inListingWizard ? 'Exit listing setup' : 'Exit map editing'}
               >
                 Exit
               </button>
@@ -478,65 +511,91 @@ const MainHeader = () => {
           </div>
 
           {/* Center - Navigation Tabs (only on product pages) */}
-          {isProductPage && !isPrintEditMode && (
+          {showProductTabs && (
             <div className="header-center">
               <Link
-                className={`header-tab ${currentActiveTab === "map" ? "active" : ""}`}
-                onClick={() => handleTabChange("map")}
-                to={{ pathname: "/map", search: location.search }}
+                className={`header-tab ${
+                  inListingWizard
+                    ? pathname === '/print'
+                      ? 'active'
+                      : ''
+                    : currentActiveTab === 'map'
+                      ? 'active'
+                      : ''
+                }`}
+                onClick={() => handleTabChange(inListingWizard ? 'print' : 'map')}
+                to={{
+                  pathname: inListingWizard ? '/print' : '/map',
+                  search: location.search,
+                }}
               >
                 Map
               </Link>
               <Link
-                className={`header-tab ${currentActiveTab === "search" ? "active" : ""}`}
-                onClick={() => handleTabChange("search")}
+                className={`header-tab ${currentActiveTab === 'search' ? 'active' : ''}`}
+                onClick={() => handleTabChange('search')}
                 to="/search"
                 data-tour="header-tab-search"
               >
                 Search
               </Link>
-              {!isMobile && REGRID_BATCH_REPORTS_ENABLED && (
+              {!inListingWizard && !isMobile && REGRID_BATCH_REPORTS_ENABLED && (
                 <Link
-                  className={`header-tab ${currentActiveTab === "report" ? "active" : ""}`}
-                  onClick={() => handleTabChange("report")}
+                  className={`header-tab ${currentActiveTab === 'report' ? 'active' : ''}`}
+                  onClick={() => handleTabChange('report')}
                   to="/report"
                 >
                   Reports
                 </Link>
               )}
-              <Link
-                className={`header-tab ${currentActiveTab === "print" ? "active" : ""}`}
-                onClick={() => handleTabChange("print")}
-                to={{ pathname: "/print", search: location.search }}
-              >
-                Maps
-              </Link>
+              {!inListingWizard && (
+                <Link
+                  className={`header-tab ${currentActiveTab === 'print' ? 'active' : ''}`}
+                  onClick={() => handleTabChange('print')}
+                  to={{ pathname: '/print', search: location.search }}
+                >
+                  Maps
+                </Link>
+              )}
             </div>
           )}
 
           {/* Right Side - Tutorial help (map only) + Account */}
           <div className="header-right">
-            {isPrintEditMode && (
+            {!inListingWizard && isPrintEditMode && (
               <>
-                {renderTutorialHelpButton('print-header-help', startPrintWalkthrough)}
-                <div className="header-print-actions" data-tour="print-header-actions">
-                  <button type="button" className="header-print-action-btn" onClick={handlePrintOpenSave}>
-                    Save Map
-                  </button>
-                  <button
-                    type="button"
-                    className="header-print-action-btn header-print-action-btn-secondary"
-                    onClick={handlePrintBackToMaps}
-                  >
-                    Back to Maps
-                  </button>
-                  <button type="button" className="header-print-action-btn" onClick={handlePrintShareMap}>
-                    Share Map
-                  </button>
-                </div>
+                {showPrintEditorActions &&
+                  renderTutorialHelpButton('print-header-help', startPrintWalkthrough)}
+                {showPrintEditorActions && (
+                  <div className="header-print-actions" data-tour="print-header-actions">
+                    <button
+                      type="button"
+                      className="header-print-action-btn"
+                      data-tour="print-save-button"
+                      onClick={handlePrintOpenSave}
+                    >
+                      Save Map
+                    </button>
+                    <button
+                      type="button"
+                      className="header-print-action-btn header-print-action-btn-secondary"
+                      onClick={handlePrintBackToMaps}
+                    >
+                      Back to Maps
+                    </button>
+                    <button
+                      type="button"
+                      className="header-print-action-btn"
+                      data-tour="print-share-button"
+                      onClick={handlePrintShareMap}
+                    >
+                      Share &amp; generate
+                    </button>
+                  </div>
+                )}
               </>
             )}
-            {!isPrintEditMode && isMapRoute && renderTutorialHelpButton()}
+            {!inListingWizard && !isPrintEditMode && isMapRoute && renderTutorialHelpButton()}
             {renderAccountControls()}
           </div>
         </div>

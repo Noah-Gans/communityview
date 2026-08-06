@@ -34,7 +34,7 @@ export function isPrintParcelBoundaryPolygon(el) {
 
 /** Catalog point tools: follow cursor before click to place. */
 export function isPrintShapeIconPlacingTool(tool) {
-  return typeof tool === 'string' && tool.startsWith('shape_');
+  return typeof tool === 'string' && (tool === 'note' || tool.startsWith('shape_'));
 }
 
 /** Scale on-screen print controls when zoomed out so they stay readable. */

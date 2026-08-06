@@ -8,7 +8,7 @@ import { hasActiveSubscription } from '../../utils/subscriptionAccess';
  * AuthGuard:
  * - Logged-in users opening / → /map immediately (no landing flash)
  * - Logged-in users with stayOnHome state → can view marketing home
- * - Subscribed users on /login → /map
+ * - Subscribed users on /login → returnTo (or /map)
  */
 function AuthGuard({ children }) {
   const { user, subscriptionStatus, loading } = useUser();
@@ -22,7 +22,11 @@ function AuthGuard({ children }) {
 
   if (user) {
     if (hasActiveSubscription(subscriptionStatus) && location.pathname === '/login') {
-      return <Navigate to="/map" replace />;
+      const params = new URLSearchParams(location.search);
+      const raw = String(params.get('returnTo') || '').trim();
+      const returnTo =
+        raw.startsWith('/') && !raw.startsWith('//') && !raw.includes('://') ? raw : null;
+      return <Navigate to={returnTo || '/map'} replace />;
     }
 
     if (location.pathname === '/' && !stayOnHome) {

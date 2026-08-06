@@ -187,7 +187,7 @@ async function composeLetterPageCanvas({
     headerTop + (photoImg ? photoSize : inch(0.55)) + inch(0.08)
   );
 
-  // --- Map with black border ---
+  // --- Map with black border (cover — fill slot, never stretch) ---
   const mapTop = headerBottom + inch(0.06);
   const mapH = inch(MAP_H);
   const mapW = inch(CONTENT_W);
@@ -195,7 +195,21 @@ async function composeLetterPageCanvas({
   await new Promise((resolve) => {
     const img = new Image();
     img.onload = () => {
-      ctx.drawImage(img, mapX, mapTop, mapW, mapH);
+      const iw = img.naturalWidth || img.width || 1;
+      const ih = img.naturalHeight || img.height || 1;
+      const scale = Math.max(mapW / iw, mapH / ih);
+      const dw = iw * scale;
+      const dh = ih * scale;
+      const dx = mapX + (mapW - dw) / 2;
+      const dy = mapTop + (mapH - dh) / 2;
+      ctx.fillStyle = '#e2e8f0';
+      ctx.fillRect(mapX, mapTop, mapW, mapH);
+      ctx.save();
+      ctx.beginPath();
+      ctx.rect(mapX, mapTop, mapW, mapH);
+      ctx.clip();
+      ctx.drawImage(img, dx, dy, dw, dh);
+      ctx.restore();
       resolve();
     };
     img.onerror = () => {

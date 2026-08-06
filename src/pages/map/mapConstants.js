@@ -62,6 +62,13 @@ export function parseBasemapFromSearch(search) {
   return { id, enable3D, raw };
 }
 
+/** URL value for basemap — keeps `imagery-3d` when terrain/3D is on with Imagery. */
+export function basemapIdForUrl(basemapId, enable3D = false) {
+  const id = normalizeBasemapId(basemapId);
+  if (id === 'imagery' && enable3D) return 'imagery-3d';
+  return id;
+}
+
 /** Parse `?layers=ownership,…` into a layerStatus-shaped object (for load sequencing). */
 export function getLayerStatusFromSearch(search) {
   const params = queryString.parse(search || '');

@@ -3,12 +3,15 @@ import app from '../firebase/firebaseConfig';
 import {
   normalizePrintElementsFromFirestore,
   sanitizePrintElementsForFirestore,
+  sanitizeListingParcelRefsForFirestore,
+  normalizeListingParcelRefsFromFirestore,
 } from '../utils/printElementsFirestore';
 import { enrichNearbyTourFeatureCollection } from '../utils/tourNearbyFeatureEnrichment';
 import { fetchNearbyTourAmenityGoogleMapsJs } from '../utils/tourNearbyGoogleClient';
 import { TOUR_NEARBY_SEARCH_RADIUS_METERS } from '../utils/propertyTourSlides';
 import { TOUR_NEARBY_DATA_VERSION } from '../utils/tourNearbyRanking';
 import { normalizeTourNearbyCacheFromFirestore } from '../utils/tourNearbyFirestore';
+import { normalizeAmenityMapSettings } from '../utils/amenityMapSettings';
 
 function resolveTourNearbyFetchRadiusMeters(requested) {
   return Math.min(
@@ -113,16 +116,16 @@ export const mapService = {
     try {
       const result = await getMapByIdFunction({ mapId });
       const data = result.data;
-      if (data && Array.isArray(data.printElements)) {
-        return {
-          ...data,
-          printElements: normalizePrintElementsFromFirestore(data.printElements),
-          tourNearbyCache: normalizeTourNearbyCacheFromFirestore(data.tourNearbyCache),
-        };
-      }
       return {
         ...data,
+        printElements: normalizePrintElementsFromFirestore(data?.printElements),
+        listingParcelRefs: normalizeListingParcelRefsFromFirestore(data?.listingParcelRefs),
         tourNearbyCache: normalizeTourNearbyCacheFromFirestore(data?.tourNearbyCache),
+        amenityMapSettings: normalizeAmenityMapSettings(data?.amenityMapSettings),
+        neighborhoodMapAssets:
+          data?.neighborhoodMapAssets && typeof data.neighborhoodMapAssets === 'object'
+            ? data.neighborhoodMapAssets
+            : null,
       };
     } catch (error) {
       console.error('Error loading map by id:', error);
@@ -152,16 +155,24 @@ export const mapService = {
     try {
       const result = await getSharedMapByTokenFunction({ shareToken });
       const data = result.data;
-      if (data && Array.isArray(data.printElements)) {
-        return {
-          ...data,
-          printElements: normalizePrintElementsFromFirestore(data.printElements),
-          tourNearbyCache: normalizeTourNearbyCacheFromFirestore(data.tourNearbyCache),
-        };
-      }
       return {
         ...data,
+        printElements: normalizePrintElementsFromFirestore(data?.printElements),
+        listingParcelRefs: normalizeListingParcelRefsFromFirestore(data?.listingParcelRefs),
         tourNearbyCache: normalizeTourNearbyCacheFromFirestore(data?.tourNearbyCache),
+        amenityMapSettings: normalizeAmenityMapSettings(data?.amenityMapSettings),
+        amenityEditAccess:
+          data?.amenityEditAccess && typeof data.amenityEditAccess === 'object'
+            ? {
+                guestEdit: data.amenityEditAccess.guestEdit === true,
+                viewerIsOwner: data.amenityEditAccess.viewerIsOwner === true,
+                canEdit: data.amenityEditAccess.canEdit === true,
+              }
+            : null,
+        neighborhoodMapAssets:
+          data?.neighborhoodMapAssets && typeof data.neighborhoodMapAssets === 'object'
+            ? data.neighborhoodMapAssets
+            : null,
       };
     } catch (error) {
       console.error('Error loading shared map:', error);
@@ -333,11 +344,20 @@ export const mapService = {
 
   /**
    * Persist tour nearby amenities on the shared map (Firestore `tourNearbyCache`).
+   * Pass `options.amenityEditor: true` from the amenity map editor (enforces owner or guestEdit).
    * @param {string} shareToken
    * @param {object} tourNearbyCache
    * @param {object} [tourSettings] Enabled amenity slides + search radius
+   * @param {object} [amenityMapSettings] { basemap, homeMarker, guestEdit? }
+   * @param {{ amenityEditor?: boolean }} [options]
    */
-  async saveTourNearbyCache(shareToken, tourNearbyCache, tourSettings) {
+  async saveTourNearbyCache(
+    shareToken,
+    tourNearbyCache,
+    tourSettings,
+    amenityMapSettings,
+    options = {}
+  ) {
     const token = String(shareToken || '').trim();
     if (!token || !tourNearbyCache) {
       return { success: false };
@@ -347,6 +367,8 @@ export const mapService = {
         shareToken: token,
         tourNearbyCache,
         tourSettings: tourSettings || undefined,
+        amenityMapSettings: amenityMapSettings || undefined,
+        amenityEditor: options.amenityEditor === true,
       });
       const data = result?.data;
       if (data && data.success === false) {
@@ -402,6 +424,9 @@ export const mapService = {
       },
       printElements: sanitizePrintElementsForFirestore(
         Array.isArray(mapContext.printElements) ? mapContext.printElements : []
+      ),
+      listingParcelRefs: sanitizeListingParcelRefsForFirestore(
+        Array.isArray(mapContext.listingParcelRefs) ? mapContext.listingParcelRefs : []
       ),
     };
   },
@@ -465,6 +490,12 @@ export const mapService = {
 
     if (Array.isArray(mapData.printElements) && typeof mapContext.setPrintElements === 'function') {
       mapContext.setPrintElements(normalizePrintElementsFromFirestore(mapData.printElements));
+    }
+
+    if (typeof mapContext.setListingParcelRefs === 'function') {
+      mapContext.setListingParcelRefs(
+        normalizeListingParcelRefsFromFirestore(mapData.listingParcelRefs)
+      );
     }
   },
 };

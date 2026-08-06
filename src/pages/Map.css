@@ -317,6 +317,10 @@
   display: block;
 }
 
+.layer-selector-container.tutorial-await-click:hover .layer-selector-popup {
+  display: none;
+}
+
 .layer-selector-container.tutorial-force-open .layer-selector-popup {
   display: block;
 }

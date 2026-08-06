@@ -286,6 +286,12 @@ export function createAnnotationFromTool(tool, lngLat, options = {}) {
       areaSqMeters: options.metrics?.areaSqMeters ?? null,
       perimeterMeters: options.metrics?.perimeterMeters ?? null,
       zIndex: 0,
+      // Parcel identity for report / amenity generation from saved maps
+      ...(options.parcelProperties
+        ? { parcelProperties: options.parcelProperties }
+        : {}),
+      ...(options.ll_uuid ? { ll_uuid: options.ll_uuid } : {}),
+      ...(options.path ? { path: options.path } : {}),
       ...DEFAULT_MAP_LABEL_PROPS,
     };
   }

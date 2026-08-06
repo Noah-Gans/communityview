@@ -162,11 +162,10 @@ function whenMapReady(map, fn, epoch = radiusOverlayEpoch) {
 }
 
 function isTourEditRadiusActive() {
-  return (
-    typeof document !== 'undefined' &&
-    document.documentElement.classList.contains('shared-tour-edit-mode') &&
-    Boolean(activeRadiusState)
-  );
+  // activeRadiusState is set only while an editor has shown the overlay; hide() clears it.
+  // Do not require shared-tour-edit-mode — Amenity Map edit uses amenity-map-mode instead,
+  // and without this check pan/zoom restacks never re-pin the circle after basemap labels.
+  return Boolean(activeRadiusState);
 }
 
 function isRadiusEpochCurrent(epoch) {
@@ -193,7 +192,8 @@ function installLayerMaintainer(map) {
   if (!map || !activeRadiusState) return;
 
   layerMaintainerMap = map;
-  const bump = () => {
+  let rafPending = 0;
+  const bumpNow = () => {
     if (!isTourEditRadiusActive()) return;
     if (!map.getLayer?.(TOUR_BUILDER_RADIUS_LINE_LAYER_ID)) {
       redrawFromActiveState(map);
@@ -211,9 +211,17 @@ function installLayerMaintainer(map) {
     }
     moveRadiusLayersToTop(map);
   };
+  const bump = () => {
+    if (rafPending) return;
+    rafPending = window.requestAnimationFrame(() => {
+      rafPending = 0;
+      bumpNow();
+    });
+  };
 
   bump();
-  const events = ['idle', 'moveend', 'sourcedata', 'styledata', 'style.load'];
+  // Include move/zoom so basemap label restacks during pan don't bury the circle until idle.
+  const events = ['idle', 'move', 'zoom', 'moveend', 'zoomend', 'sourcedata', 'styledata', 'style.load'];
   for (const eventName of events) {
     map.on(eventName, bump);
   }
@@ -225,6 +233,8 @@ function installLayerMaintainer(map) {
   const intervalId = window.setInterval(bump, 250);
 
   layerMaintainerStop = () => {
+    if (rafPending) window.cancelAnimationFrame(rafPending);
+    rafPending = 0;
     window.clearInterval(intervalId);
     for (const eventName of events) {
       try {
@@ -296,12 +306,17 @@ export function showTourEditRadiusCircle(map, center, radiusMeters) {
 
 /**
  * Update circle size/position without touching the camera (amenity radius slider).
+ * Recovers if the overlay was cleared or restacked away.
  * @param {import('mapbox-gl').Map|null|undefined} map
  * @param {{ lat: number, lng: number }|null|undefined} center
  * @param {number} radiusMeters
  */
 export function updateTourEditRadiusGeometry(map, center, radiusMeters) {
-  if (!map || !center || !radiusMeters || !activeRadiusState) return;
+  if (!map || !center || !radiusMeters) return;
+  if (!activeRadiusState) {
+    showTourEditRadiusCircle(map, center, radiusMeters);
+    return;
+  }
   activeRadiusState = {
     center: { lat: Number(center.lat), lng: Number(center.lng) },
     radiusMeters: clampTourSearchRadiusMeters(radiusMeters),

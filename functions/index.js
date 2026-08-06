@@ -22,6 +22,9 @@ const {
   normalizeTourSettings,
   resolveTourSettingsFromMapData,
   mapHasCuratedTourData,
+  normalizeAmenityMapSettings,
+  mergeAmenityMapSettings,
+  buildAmenityEditAccess,
 } = require("./tourNearbyCache");
 
 // Helper function to get amount for plan (in cents)
@@ -1280,6 +1283,9 @@ exports.saveMap = functions.https.onCall(async (data, context) => {
         orientation: "full",
       },
       printElements: Array.isArray(mapData.printElements) ? mapData.printElements : [],
+      listingParcelRefs: Array.isArray(mapData.listingParcelRefs)
+        ? mapData.listingParcelRefs.slice(0, 40)
+        : [],
       isPublic: false,
       shareToken: shareToken,
       createdAt: admin.firestore.FieldValue.serverTimestamp(),
@@ -1361,6 +1367,11 @@ exports.updateMap = functions.https.onCall(async (data, context) => {
     if (mapData.printElements !== undefined) {
       updateData.printElements = Array.isArray(mapData.printElements) ? mapData.printElements : [];
     }
+    if (mapData.listingParcelRefs !== undefined) {
+      updateData.listingParcelRefs = Array.isArray(mapData.listingParcelRefs)
+        ? mapData.listingParcelRefs.slice(0, 40)
+        : [];
+    }
     if (mapData.tourSettings !== undefined && mapData.tourSettings && typeof mapData.tourSettings === "object") {
       updateData.tourSettings = normalizeTourSettings(mapData.tourSettings);
     }
@@ -1393,6 +1404,21 @@ exports.updateMap = functions.https.onCall(async (data, context) => {
       if (mapData.isPublic === true) {
         updateData.listingAgent = await getOwnerListingAgent(userId);
       }
+    }
+    if (
+      mapData.neighborhoodMapAssets !== undefined &&
+      mapData.neighborhoodMapAssets &&
+      typeof mapData.neighborhoodMapAssets === "object"
+    ) {
+      const a = mapData.neighborhoodMapAssets;
+      updateData.neighborhoodMapAssets = {
+        pdfUrl: typeof a.pdfUrl === "string" ? a.pdfUrl : "",
+        pngUrl: typeof a.pngUrl === "string" ? a.pngUrl : "",
+        pdfPath: typeof a.pdfPath === "string" ? a.pdfPath : "",
+        pngPath: typeof a.pngPath === "string" ? a.pngPath : "",
+        title: typeof a.title === "string" ? a.title.slice(0, 200) : "",
+        generatedAt: typeof a.generatedAt === "number" ? a.generatedAt : Date.now(),
+      };
     }
 
     await admin.firestore().collection("maps").doc(mapId).update(updateData);
@@ -1566,12 +1592,30 @@ function mapDetailFromDoc(doc) {
     layers: m.layers || { status: {}, order: [], labels: {} },
     printSettings: m.printSettings || { paperSize: "full", orientation: "full" },
     printElements: Array.isArray(m.printElements) ? m.printElements : [],
+    listingParcelRefs: Array.isArray(m.listingParcelRefs) ? m.listingParcelRefs : [],
     agentProfile: m.agentProfile || null,
     isPublic: !!m.isPublic,
     shareToken: m.shareToken || null,
     tourSlidePlan: Array.isArray(m.tourSlidePlan) ? m.tourSlidePlan : null,
     tourNearbyCache,
     tourSettings,
+    amenityMapSettings: normalizeAmenityMapSettings(m.amenityMapSettings),
+    amenityEditAccess: {
+      guestEdit: false,
+      viewerIsOwner: true,
+      canEdit: true,
+    },
+    neighborhoodMapAssets:
+      m.neighborhoodMapAssets && typeof m.neighborhoodMapAssets === "object"
+        ? {
+            pdfUrl: m.neighborhoodMapAssets.pdfUrl || "",
+            pngUrl: m.neighborhoodMapAssets.pngUrl || "",
+            pdfPath: m.neighborhoodMapAssets.pdfPath || "",
+            pngPath: m.neighborhoodMapAssets.pngPath || "",
+            title: m.neighborhoodMapAssets.title || "",
+            generatedAt: m.neighborhoodMapAssets.generatedAt || null,
+          }
+        : null,
     updatedAt: timestampToMillis(m.updatedAt),
     createdAt: timestampToMillis(m.createdAt),
   };
@@ -1657,7 +1701,7 @@ async function findPublicMapDocByShareToken(token) {
  * Public read: load a map by share token (must be isPublic).
  * Callable without sign-in for client share links.
  */
-exports.getSharedMapByToken = functions.https.onCall(async (data) => {
+exports.getSharedMapByToken = functions.https.onCall(async (data, context) => {
   const token = data && data.shareToken;
   if (!token || typeof token !== "string") {
     throw new functions.https.HttpsError(
@@ -1681,6 +1725,8 @@ exports.getSharedMapByToken = functions.https.onCall(async (data) => {
     const liveAgent = await getOwnerListingAgent(m.userId);
     const baseAgent = mergeListingAgent(liveAgent, m.listingAgent);
     const listingAgent = applyAgentProfileOverride(m.agentProfile, baseAgent);
+    const authUid = context && context.auth ? context.auth.uid : null;
+    const amenityEditAccess = buildAmenityEditAccess(m, authUid);
     return {
       id: found.id,
       title: m.title || "",
@@ -1695,6 +1741,19 @@ exports.getSharedMapByToken = functions.https.onCall(async (data) => {
       tourSlidePlan: Array.isArray(m.tourSlidePlan) ? m.tourSlidePlan : null,
       tourNearbyCache,
       tourSettings,
+      amenityMapSettings: normalizeAmenityMapSettings(m.amenityMapSettings),
+      amenityEditAccess,
+      neighborhoodMapAssets:
+        m.neighborhoodMapAssets && typeof m.neighborhoodMapAssets === "object"
+          ? {
+              pdfUrl: m.neighborhoodMapAssets.pdfUrl || "",
+              pngUrl: m.neighborhoodMapAssets.pngUrl || "",
+              pdfPath: m.neighborhoodMapAssets.pdfPath || "",
+              pngPath: m.neighborhoodMapAssets.pngPath || "",
+              title: m.neighborhoodMapAssets.title || "",
+              generatedAt: m.neighborhoodMapAssets.generatedAt || null,
+            }
+          : null,
       updatedAt: m.updatedAt && m.updatedAt.toMillis ? m.updatedAt.toMillis() : null,
       ...listingAgentResponseFields(listingAgent),
     };
@@ -1709,12 +1768,16 @@ exports.getSharedMapByToken = functions.https.onCall(async (data) => {
 
 /**
  * Persist tour nearby amenity GeoJSON on the shared map (public tours).
- * Callable without sign-in; only updates `tourNearbyCache` on a public map.
+ * Tour editor saves remain callable without sign-in.
+ * Amenity-editor saves (`amenityEditor: true` or amenityMapSettings body) require
+ * the map owner OR amenityMapSettings.guestEdit.
  */
-exports.saveTourNearbyCache = functions.https.onCall(async (data) => {
+exports.saveTourNearbyCache = functions.https.onCall(async (data, context) => {
   const token = data && data.shareToken;
   const incoming = data && data.tourNearbyCache;
   const incomingTourSettings = data && data.tourSettings;
+  const incomingAmenityMapSettings = data && data.amenityMapSettings;
+  const amenityEditor = data && data.amenityEditor === true;
   if (!token || typeof token !== "string") {
     throw new functions.https.HttpsError("invalid-argument", "shareToken is required.");
   }
@@ -1726,6 +1789,16 @@ exports.saveTourNearbyCache = functions.https.onCall(async (data) => {
     const found = await findPublicMapDocByShareToken(token);
     if (!found) {
       throw new functions.https.HttpsError("not-found", "Map not found or not shared.");
+    }
+
+    const authUid = context && context.auth ? context.auth.uid : null;
+    const amenityEditAccess = buildAmenityEditAccess(found.data, authUid);
+    const isAmenityWrite = amenityEditor === true;
+    if (isAmenityWrite && !amenityEditAccess.canEdit) {
+      throw new functions.https.HttpsError(
+        "permission-denied",
+        "Sign in as the map owner to edit amenities, or use a guest-edit sales link."
+      );
     }
 
     const merged = mergeTourNearbyCachePayload(found.data.tourNearbyCache, incoming);
@@ -1750,11 +1823,33 @@ exports.saveTourNearbyCache = functions.https.onCall(async (data) => {
       }
     }
 
+    let amenityMapSettings = null;
+    // Only the amenity editor updates presentation / guest-edit settings.
+    if (isAmenityWrite) {
+      const fromCacheHints = {
+        basemap: incoming.amenityMapBasemap || merged.amenityMapBasemap,
+        homeMarker: incoming.homeMarker || merged.homeMarker,
+      };
+      amenityMapSettings = mergeAmenityMapSettings(
+        found.data.amenityMapSettings,
+        incomingAmenityMapSettings || fromCacheHints,
+        { allowAccessFlags: amenityEditAccess.viewerIsOwner }
+      );
+      if (amenityMapSettings) {
+        updateData.amenityMapSettings = amenityMapSettings;
+        if (amenityMapSettings.basemap) merged.amenityMapBasemap = amenityMapSettings.basemap;
+        if (amenityMapSettings.homeMarker) merged.homeMarker = amenityMapSettings.homeMarker;
+        updateData.tourNearbyCache = merged;
+      }
+    }
+
     await found.ref.update(updateData);
 
     console.log("saveTourNearbyCache", {
       mapId: found.id,
       amenityKeys: Object.keys(merged.byAmenity || {}),
+      amenityEditor: isAmenityWrite,
+      amenityMapSettings: amenityMapSettings || null,
       slidePlan: updateData.tourSettings ? updateData.tourSettings.slidePlan : null,
       tourSettings: updateData.tourSettings ? updateData.tourSettings.enabledAmenityKeys : null,
     });
@@ -1762,6 +1857,16 @@ exports.saveTourNearbyCache = functions.https.onCall(async (data) => {
     return {
       success: true,
       tourNearbyCache: merged,
+      amenityMapSettings:
+        amenityMapSettings || normalizeAmenityMapSettings(found.data.amenityMapSettings),
+      amenityEditAccess: buildAmenityEditAccess(
+        {
+          ...found.data,
+          amenityMapSettings:
+            amenityMapSettings || found.data.amenityMapSettings,
+        },
+        authUid
+      ),
       tourSettings: updateData.tourSettings || null,
       tourSlidePlan: updateData.tourSlidePlan || null,
     };

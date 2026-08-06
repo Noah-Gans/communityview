@@ -575,6 +575,37 @@ const catalogImageIcon = (file, alt = '') => (
 
 /** Sidebar catalog icons sourced from /public/logos_for_print. */
 export const printCatalogToolIcons = {
+  note: (
+    <span
+      style={{
+        display: 'inline-flex',
+        width: '100%',
+        height: '100%',
+        alignItems: 'center',
+        justifyContent: 'center',
+      }}
+      aria-hidden
+    >
+      <svg viewBox="0 0 24 24" width="100%" height="100%" fill="none">
+        <rect
+          x="3.5"
+          y="4.5"
+          width="17"
+          height="15"
+          rx="2.5"
+          stroke="#111827"
+          strokeWidth="1.75"
+          fill="#fff"
+        />
+        <path
+          d="M7 9.5h10M7 12.5h10M7 15.5h6.5"
+          stroke="#111827"
+          strokeWidth="1.75"
+          strokeLinecap="round"
+        />
+      </svg>
+    </span>
+  ),
   // Direction tool uses compass artwork.
   arrow: catalogImageIcon('location-pin-parking.svg', 'Direction'),
   // Keep logos for point icon tools only.
