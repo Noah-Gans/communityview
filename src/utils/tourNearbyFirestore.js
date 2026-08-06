@@ -101,6 +101,8 @@ function sanitizeFeature(feature) {
     props.googleTypes = raw.googleTypes.map((t) => String(t));
   }
   if (raw.tourHidden === true) props.tourHidden = true;
+  if (raw.amenityMapHidden === true) props.amenityMapHidden = true;
+  if (raw.isCustom === true) props.isCustom = true;
 
   return {
     type: 'Feature',
@@ -128,6 +130,28 @@ function sanitizeHomeMarker(raw) {
   return { lat, lng };
 }
 
+function sanitizeAmenityMapBasemap(raw) {
+  const id = String(raw || '').trim();
+  if (
+    id === 'outdoors-v12' ||
+    id === 'imagery' ||
+    id === 'satellite-streets-v12' ||
+    id === 'streets-v11'
+  ) {
+    return id;
+  }
+  // Accept common aliases used elsewhere in the app (e.g. satellite → satellite-streets-v12).
+  const aliases = {
+    discover: 'outdoors-v12',
+    outdoors: 'outdoors-v12',
+    satellite: 'satellite-streets-v12',
+    streets: 'streets-v11',
+    'imagery-3d': 'imagery',
+  };
+  const lower = id.toLowerCase();
+  return aliases[lower] || null;
+}
+
 /** Normalize Firestore `tourNearbyCache` for client state. */
 export function normalizeTourNearbyCacheFromFirestore(raw) {
   if (!raw || typeof raw !== 'object') return null;
@@ -144,7 +168,11 @@ export function normalizeTourNearbyCacheFromFirestore(raw) {
   }
   const tourSettings =
     raw.tourSettings && typeof raw.tourSettings === 'object' ? raw.tourSettings : null;
-  if (!Object.keys(byAmenity).length && !tourSettings) return null;
+  const homeMarker = sanitizeHomeMarker(raw.homeMarker);
+  const amenityMapBasemap = sanitizeAmenityMapBasemap(raw.amenityMapBasemap);
+  if (!Object.keys(byAmenity).length && !tourSettings && !homeMarker && !amenityMapBasemap) {
+    return null;
+  }
 
   const out = {
     dataVersion: Number(raw.dataVersion) || 0,
@@ -153,8 +181,8 @@ export function normalizeTourNearbyCacheFromFirestore(raw) {
     byAmenity,
     tourSettings,
   };
-  const homeMarker = sanitizeHomeMarker(raw.homeMarker);
   if (homeMarker) out.homeMarker = homeMarker;
+  if (amenityMapBasemap) out.amenityMapBasemap = amenityMapBasemap;
   return out;
 }
 
@@ -233,6 +261,8 @@ export function buildTourNearbyCacheForSave(
   };
   const homeMarker = sanitizeHomeMarker(options.homeMarker);
   if (homeMarker) payload.homeMarker = homeMarker;
+  const amenityMapBasemap = sanitizeAmenityMapBasemap(options.amenityMapBasemap);
+  if (amenityMapBasemap) payload.amenityMapBasemap = amenityMapBasemap;
   if (options.replace) payload.replace = true;
   if (options.tourSettings && typeof options.tourSettings === 'object') {
     const enabledKeys = Array.isArray(options.tourSettings.enabledAmenityKeys)

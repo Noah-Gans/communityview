@@ -47,8 +47,10 @@ exports.regridApi = functions.https.onCall(async (data, context) => {
   const token = requireRegridToken();
   const operation = data && data.operation ? String(data.operation) : "";
 
-  const requiresAuth = operation === "batch" || operation === "parcelTileJson";
-  if (requiresAuth && !context.auth) {
+  // Batch is expensive/account-scoped. TileJSON only returns public proxy URLs
+  // (regridTileProxy is already unauthenticated) — required for shared maps and
+  // Safari sessions where auth restore can lag or fail.
+  if (operation === "batch" && !context.auth) {
     throw new functions.https.HttpsError(
       "unauthenticated",
       "Sign in required for this Regrid operation."

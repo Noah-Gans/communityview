@@ -3,6 +3,7 @@ import { getPointIconDefaultStyle } from '../pages/print/pointIconDefaultStyles'
 import { getPhotoSrcListFromElement } from './mapPhotoStorage';
 import { ensureTourEditRadiusLayersOnTop } from './tourBuilderMapLayers';
 import { isTourImagery3DActive } from '../pages/map/mapBasemapUtils';
+import { isPropertyBoundaryElement } from './printPropertyBoundary';
 
 /**
  * Property tour: each slide is a distinct map state (camera + optional layer patch).
@@ -318,12 +319,9 @@ export const TOUR_ORBIT_PRINT_FILTER_VALUE = 'boundary-only';
 export const TOUR_VICINITY_ACTIVE_SLIDE_ATTR = 'data-property-tour-active-slide';
 export const TOUR_VICINITY_ACTIVE_SLIDE_VALUE = 'vicinity';
 
-/** Saved-map polygon with `mapStyleVariant: 'boundary'` or label “Property Boundary”. */
+/** Saved-map property outline (polygon boundary / Property Boundary label). */
 export function isPropertyBoundaryPrintElement(el) {
-  return (
-    el?.type === 'polygon' &&
-    (el?.mapStyleVariant === 'boundary' || el?.label === 'Property Boundary')
-  );
+  return isPropertyBoundaryElement(el);
 }
 
 /**

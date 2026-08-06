@@ -21,6 +21,12 @@
     gap: 5px;
     margin: 0;
   }
+
+  .tool-zoom-group {
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+  }
   .tool-btn {
     margin: 0;
     background-color: #d2d2d2;

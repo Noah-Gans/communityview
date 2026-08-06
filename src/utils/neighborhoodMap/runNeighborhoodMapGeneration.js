@@ -1,8 +1,10 @@
 /**
  * Neighborhood map generation pipeline.
- * Parcel → amenities (tour Places path) → streets capture → PDF/PNG → share map + QR.
+ * Parcel → amenities (shared listing cache / Places) → streets capture → PDF/PNG.
+ * Batch tooling stays sales-only; Content kit uses existingMapId to attach assets to the listing.
  */
 import { isRegridParcelPolygonFeature } from '../regridParcelBoundary';
+import { featuresFromPrintElements } from '../featuresFromPrintElements';
 import { mapService } from '../../services/mapService';
 import { getMapShareUrls } from '../mapShareLinks';
 import { buildTourNearbyCacheForSave } from '../tourNearbyFirestore';
@@ -11,6 +13,7 @@ import { fetchNeighborhoodAmenities } from './fetchNeighborhoodAmenities';
 import { captureNeighborhoodMapFrame } from './captureNeighborhoodMap';
 import { composeNeighborhoodMapOutputs } from './composeNeighborhoodMapPdf';
 import { buildNeighborhoodPrintElements } from './buildNeighborhoodPrintElements';
+import { uploadNeighborhoodMapAssets } from './uploadNeighborhoodMapAssets';
 
 const str = (v) => String(v == null ? '' : v).trim();
 
@@ -82,6 +85,7 @@ function defaultTitleFromSnapshots(snapshots) {
  */
 export async function runNeighborhoodMapGeneration({
   features,
+  printElements,
   title,
   map,
   mapRef,
@@ -89,14 +93,26 @@ export async function runNeighborhoodMapGeneration({
   userProfile,
   setLayerStatus,
   onStatus,
+  existingTourNearbyCache = null,
+  existingMapId = '',
+  existingShareToken = '',
+  download = true,
+  saveNewShareMap = true,
+  persistAssets = true,
+  framingMode = 'auto',
 } = {}) {
   const report = (msg) => {
     if (typeof onStatus === 'function') onStatus(msg);
   };
 
-  const snapshots = snapshotsFromSelectedFeatures(features);
+  let snapshots = snapshotsFromSelectedFeatures(features);
+  if (!snapshots.length && printElements?.length) {
+    snapshots = snapshotsFromSelectedFeatures(featuresFromPrintElements(printElements));
+  }
   if (!snapshots.length) {
-    throw new Error('Select at least one parcel before generating.');
+    throw new Error(
+      'No parcels found on this listing. Add parcel boundaries, save, then generate again.'
+    );
   }
 
   const center = centroidFromSnapshots(snapshots);
@@ -115,6 +131,7 @@ export async function runNeighborhoodMapGeneration({
     onStatus: report,
     address: docTitle,
     placeLabel,
+    existingTourNearbyCache,
   });
   const amenities = amenitiesResult.selected || [];
   if (!amenities.length) {
@@ -124,10 +141,20 @@ export async function runNeighborhoodMapGeneration({
     );
   }
   report(
-    amenitiesResult.fromCache
-      ? `Using cached amenities (${amenities.length} places)…`
-      : `Selected ${amenities.length} amenities (close · high rated · well reviewed)…`
+    amenitiesResult.fromListingCache
+      ? `Using listing amenities (${amenities.length} places)…`
+      : amenitiesResult.fromCache
+        ? `Using cached amenities (${amenities.length} places)…`
+        : `Selected ${amenities.length} amenities (close · high rated · well reviewed)…`
   );
+
+  const cachedHome = existingTourNearbyCache?.homeMarker;
+  const homeLat = Number(cachedHome?.lat);
+  const homeLng = Number(cachedHome?.lng);
+  const homePosition =
+    Number.isFinite(homeLat) && Number.isFinite(homeLng)
+      ? { lat: homeLat, lng: homeLng }
+      : center;
 
   if (typeof setLayerStatus === 'function') {
     setLayerStatus((prev) => ({
@@ -148,16 +175,18 @@ export async function runNeighborhoodMapGeneration({
     map,
     snapshots,
     amenities,
-    basemapId: 'streets-v11',
+    basemapId: 'outdoors-v12',
+    homePosition,
     onStatus: report,
+    framingMode: framingMode === 'custom' ? 'custom' : 'auto',
   });
 
-  report('Saving shareable neighborhood map…');
   const fittedZoom =
     map && typeof map.getZoom === 'function' ? map.getZoom() : 14.5;
-  const printElements = buildNeighborhoodPrintElements(snapshots, amenities, {
+  const neighborhoodPrintElements = buildNeighborhoodPrintElements(snapshots, amenities, {
     forShare: true,
     zoom: fittedZoom,
+    homePosition: homePosition || null,
   });
 
   const profileName = [userProfile?.firstName, userProfile?.lastName].filter(Boolean).join(' ');
@@ -181,10 +210,32 @@ export async function runNeighborhoodMapGeneration({
   };
 
   let shareUrl = '';
-  let shareToken = '';
-  let mapId = '';
+  let shareToken = str(existingShareToken);
+  let mapId = str(existingMapId);
 
-  if (user && mapRef?.current) {
+  const tourNearbyCache = buildTourNearbyCacheForSave(
+    center,
+    amenitiesResult.byAmenity,
+    amenitiesResult.searchRadiusMeters,
+    Object.keys(amenitiesResult.byAmenity || {}),
+    { allowEmpty: true, homeMarker: homePosition }
+  );
+
+  if (shareToken) {
+    shareUrl = getMapShareUrls(shareToken).amenities;
+    if (tourNearbyCache && !amenitiesResult.fromListingCache) {
+      try {
+        report('Saving amenities on this listing…');
+        await mapService.saveTourNearbyCache(shareToken, {
+          ...tourNearbyCache,
+          dataVersion: TOUR_NEARBY_DATA_VERSION,
+        });
+      } catch (err) {
+        console.warn('Neighborhood amenity cache save failed:', err);
+      }
+    }
+  } else if (saveNewShareMap && user && mapRef?.current) {
+    report('Saving shareable neighborhood map…');
     try {
       const serialized = mapService.serializeMapState(
         {
@@ -194,19 +245,11 @@ export async function runNeighborhoodMapGeneration({
           layerOrder: [],
           layerLabels: {},
           paperSize: 'full',
-          printElements,
+          printElements: neighborhoodPrintElements,
           currentBasemapId: 'streets-v11',
           activeBasemapIdRef: { current: 'streets-v11' },
         },
         mapRef
-      );
-
-      const tourNearbyCache = buildTourNearbyCacheForSave(
-        center,
-        amenitiesResult.byAmenity,
-        amenitiesResult.searchRadiusMeters,
-        Object.keys(amenitiesResult.byAmenity || {}),
-        { replace: true, allowEmpty: true }
       );
 
       const saveResult = await mapService.saveMap({
@@ -214,7 +257,7 @@ export async function runNeighborhoodMapGeneration({
         description: `Neighborhood amenities map for ${placeLabel || docTitle}`,
         ...serialized,
         basemap: 'streets-v11',
-        printElements,
+        printElements: neighborhoodPrintElements,
         isPublic: true,
         ...(tourNearbyCache
           ? {
@@ -244,8 +287,24 @@ export async function runNeighborhoodMapGeneration({
     amenities,
     shareUrl,
     brand,
-    download: true,
+    download,
   });
+
+  let neighborhoodMapAssets = null;
+  if (persistAssets && mapId && user?.uid && outputs.pdfDataUrl && outputs.pngDataUrl) {
+    try {
+      report('Saving neighborhood map files…');
+      neighborhoodMapAssets = await uploadNeighborhoodMapAssets(user.uid, mapId, {
+        pdfDataUrl: outputs.pdfDataUrl,
+        pngDataUrl: outputs.pngDataUrl,
+        title: docTitle,
+      });
+      await mapService.updateMap(mapId, { neighborhoodMapAssets });
+    } catch (err) {
+      console.warn('Neighborhood map asset persist failed:', err);
+      report('Could not persist files — downloads still available this session.');
+    }
+  }
 
   report('Done');
   return {
@@ -256,6 +315,11 @@ export async function runNeighborhoodMapGeneration({
     mapId,
     amenityCount: amenities.length,
     fromAmenityCache: amenitiesResult.fromCache === true,
+    fromListingCache: amenitiesResult.fromListingCache === true,
     amenities,
+    tourNearbyCache: tourNearbyCache
+      ? { ...tourNearbyCache, dataVersion: TOUR_NEARBY_DATA_VERSION }
+      : null,
+    neighborhoodMapAssets,
   };
 }

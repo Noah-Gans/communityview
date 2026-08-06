@@ -7,6 +7,7 @@ const NEARBY_FETCH_RADIUS_METERS = 25000;
 const NEARBY_TOUR_DATA_VERSION = 28;
 const SEARCH_CENTER_MATCH_EPSILON_DEG = 0.008;
 
+/** Keep in sync with `src/utils/tourNearbyFirestore.js`. */
 const TOUR_NEARBY_AMENITY_KEYS = [
   "parks_rec",
   "grocery",
@@ -17,6 +18,16 @@ const TOUR_NEARBY_AMENITY_KEYS = [
   "coffee",
   "transit",
   "airport",
+  "dining",
+];
+
+/** Amenity-map-only categories (not tour slides). Keep in sync with client. */
+const AMENITY_MAP_EXTRA_KEYS = ["fire_station", "police_station", "library"];
+
+/** All keys allowed in `tourNearbyCache.byAmenity`. */
+const PERSISTED_NEARBY_AMENITY_KEYS = [
+  ...TOUR_NEARBY_AMENITY_KEYS,
+  ...AMENITY_MAP_EXTRA_KEYS,
 ];
 
 function finiteCoord(value) {
@@ -79,6 +90,8 @@ function sanitizeFeature(feature) {
     props.googleTypes = raw.googleTypes.map((t) => String(t));
   }
   if (raw.tourHidden === true) props.tourHidden = true;
+  if (raw.amenityMapHidden === true) props.amenityMapHidden = true;
+  if (raw.isCustom === true) props.isCustom = true;
 
   return {
     type: "Feature",
@@ -94,6 +107,114 @@ function sanitizeAmenityCollection(fc) {
   return { type: "FeatureCollection", features, fetched: true };
 }
 
+function sanitizeHomeMarker(raw) {
+  if (!raw || typeof raw !== "object") return null;
+  const lat = finiteCoord(raw.lat);
+  const lng = finiteCoord(raw.lng);
+  if (lat == null || lng == null) return null;
+  return { lat, lng };
+}
+
+function sanitizeAmenityMapBasemap(raw) {
+  const id = String(raw || "").trim();
+  if (
+    id === "outdoors-v12" ||
+    id === "imagery" ||
+    id === "satellite-streets-v12" ||
+    id === "streets-v11"
+  ) {
+    return id;
+  }
+  const aliases = {
+    discover: "outdoors-v12",
+    outdoors: "outdoors-v12",
+    satellite: "satellite-streets-v12",
+    streets: "streets-v11",
+    "imagery-3d": "imagery",
+  };
+  return aliases[id.toLowerCase()] || null;
+}
+
+/**
+ * Amenity map presentation (basemap + home pin + guest-edit access).
+ * Stored on maps/{id}.amenityMapSettings so tourNearbyCache merges cannot wipe editor choices.
+ */
+function normalizeAmenityMapSettings(raw, opts) {
+  if (!raw || typeof raw !== "object") return null;
+  const allowAccessFlags = !!(opts && opts.allowAccessFlags);
+  const out = {};
+  const basemap = sanitizeAmenityMapBasemap(raw.basemap || raw.amenityMapBasemap);
+  if (basemap) out.basemap = basemap;
+  const homeMarker = sanitizeHomeMarker(raw.homeMarker);
+  if (homeMarker) out.homeMarker = homeMarker;
+  if (allowAccessFlags) {
+    if (raw.guestEdit === true) out.guestEdit = true;
+    if (raw.guestEdit === false) out.guestEdit = false;
+    if (raw.guestEditExpiresAt == null || raw.guestEditExpiresAt === "") {
+      if (Object.prototype.hasOwnProperty.call(raw, "guestEditExpiresAt")) {
+        out.guestEditExpiresAt = null;
+      }
+    } else {
+      const t = Date.parse(String(raw.guestEditExpiresAt));
+      if (Number.isFinite(t)) out.guestEditExpiresAt = new Date(t).toISOString();
+    }
+  } else if (raw.guestEdit === true) {
+    out.guestEdit = true;
+    const t = Date.parse(String(raw.guestEditExpiresAt || ""));
+    if (Number.isFinite(t)) out.guestEditExpiresAt = new Date(t).toISOString();
+  }
+  return Object.keys(out).length ? out : null;
+}
+
+function isGuestEditAllowed(settings) {
+  const s = normalizeAmenityMapSettings(settings, { allowAccessFlags: true });
+  if (!s || s.guestEdit !== true) return false;
+  if (s.guestEditExpiresAt) {
+    const t = Date.parse(s.guestEditExpiresAt);
+    if (Number.isFinite(t) && Date.now() > t) return false;
+  }
+  return true;
+}
+
+function buildAmenityEditAccess(mapData, authUid) {
+  const viewerIsOwner = !!(authUid && mapData && mapData.userId === authUid);
+  const guestEdit = isGuestEditAllowed(mapData && mapData.amenityMapSettings);
+  return {
+    guestEdit,
+    viewerIsOwner,
+    canEdit: viewerIsOwner || guestEdit,
+  };
+}
+
+function mergeAmenityMapSettings(existingRaw, incomingRaw, opts) {
+  const allowAccessFlags = !!(opts && opts.allowAccessFlags);
+  const existing =
+    normalizeAmenityMapSettings(existingRaw, { allowAccessFlags: true }) || {};
+  const incoming =
+    normalizeAmenityMapSettings(incomingRaw, { allowAccessFlags }) || {};
+  const merged = {
+    ...existing,
+    ...incoming,
+  };
+  if (merged.guestEdit === false) {
+    delete merged.guestEdit;
+  }
+  if (merged.guestEditExpiresAt === null) {
+    delete merged.guestEditExpiresAt;
+  }
+  // Guests must never flip access flags — keep existing when not allowed.
+  if (!allowAccessFlags) {
+    if (existing.guestEdit === true) merged.guestEdit = true;
+    else delete merged.guestEdit;
+    if (existing.guestEditExpiresAt) {
+      merged.guestEditExpiresAt = existing.guestEditExpiresAt;
+    } else {
+      delete merged.guestEditExpiresAt;
+    }
+  }
+  return Object.keys(merged).length ? merged : null;
+}
+
 function normalizeTourNearbyCache(raw) {
   if (!raw || typeof raw !== "object") return null;
   const lat = finiteCoord(raw.searchCenter && raw.searchCenter.lat);
@@ -102,12 +223,12 @@ function normalizeTourNearbyCache(raw) {
 
   const byAmenity = {};
   const src = raw.byAmenity && typeof raw.byAmenity === "object" ? raw.byAmenity : {};
-  for (const key of TOUR_NEARBY_AMENITY_KEYS) {
+  for (const key of PERSISTED_NEARBY_AMENITY_KEYS) {
     if (!src[key]) continue;
     byAmenity[key] = sanitizeAmenityCollection(src[key]);
   }
 
-  return {
+  const out = {
     dataVersion: Number(raw.dataVersion) || NEARBY_TOUR_DATA_VERSION,
     searchRadiusMeters: Number(raw.searchRadiusMeters) || NEARBY_FETCH_RADIUS_METERS,
     searchCenter: { lat, lng },
@@ -117,6 +238,11 @@ function normalizeTourNearbyCache(raw) {
         ? normalizeTourSettings(raw.tourSettings)
         : null,
   };
+  const homeMarker = sanitizeHomeMarker(raw.homeMarker);
+  if (homeMarker) out.homeMarker = homeMarker;
+  const amenityMapBasemap = sanitizeAmenityMapBasemap(raw.amenityMapBasemap);
+  if (amenityMapBasemap) out.amenityMapBasemap = amenityMapBasemap;
+  return out;
 }
 
 function readAmenityFromTourCache(mapData, amenityKey, searchCenter, expectedRadiusMeters) {
@@ -163,6 +289,18 @@ function mergeTourNearbyCachePayload(existingRaw, incomingRaw) {
     } else if (existingRaw && existingRaw.tourSettings && typeof existingRaw.tourSettings === "object") {
       merged.tourSettings = normalizeTourSettings(existingRaw.tourSettings);
     }
+    const homeMarker =
+      sanitizeHomeMarker(incomingRaw && incomingRaw.homeMarker) ||
+      sanitizeHomeMarker(incoming.homeMarker) ||
+      sanitizeHomeMarker(existingRaw && existingRaw.homeMarker) ||
+      sanitizeHomeMarker(existing.homeMarker);
+    if (homeMarker) merged.homeMarker = homeMarker;
+    const amenityMapBasemap =
+      sanitizeAmenityMapBasemap(incomingRaw && incomingRaw.amenityMapBasemap) ||
+      sanitizeAmenityMapBasemap(incoming.amenityMapBasemap) ||
+      sanitizeAmenityMapBasemap(existingRaw && existingRaw.amenityMapBasemap) ||
+      sanitizeAmenityMapBasemap(existing.amenityMapBasemap);
+    if (amenityMapBasemap) merged.amenityMapBasemap = amenityMapBasemap;
     return merged;
   }
 
@@ -182,11 +320,24 @@ function mergeTourNearbyCachePayload(existingRaw, incomingRaw) {
           : null,
   };
 
-  for (const key of TOUR_NEARBY_AMENITY_KEYS) {
+  for (const key of PERSISTED_NEARBY_AMENITY_KEYS) {
     if (incoming.byAmenity[key]) {
       merged.byAmenity[key] = incoming.byAmenity[key];
     }
   }
+
+  const homeMarker =
+    sanitizeHomeMarker(incomingRaw && incomingRaw.homeMarker) ||
+    sanitizeHomeMarker(incoming.homeMarker) ||
+    sanitizeHomeMarker(existingRaw && existingRaw.homeMarker) ||
+    sanitizeHomeMarker(existing.homeMarker);
+  if (homeMarker) merged.homeMarker = homeMarker;
+  const amenityMapBasemap =
+    sanitizeAmenityMapBasemap(incomingRaw && incomingRaw.amenityMapBasemap) ||
+    sanitizeAmenityMapBasemap(incoming.amenityMapBasemap) ||
+    sanitizeAmenityMapBasemap(existingRaw && existingRaw.amenityMapBasemap) ||
+    sanitizeAmenityMapBasemap(existing.amenityMapBasemap);
+  if (amenityMapBasemap) merged.amenityMapBasemap = amenityMapBasemap;
 
   return merged;
 }
@@ -424,6 +575,8 @@ function buildSingleAmenityCachePayload(searchCenter, amenityKey, featureCollect
 module.exports = {
   NEARBY_TOUR_DATA_VERSION,
   TOUR_NEARBY_AMENITY_KEYS,
+  AMENITY_MAP_EXTRA_KEYS,
+  PERSISTED_NEARBY_AMENITY_KEYS,
   isRootCacheValid,
   tourNearbySearchCentersMatch,
   normalizeTourNearbyCache,
@@ -434,4 +587,8 @@ module.exports = {
   mergeTourNearbyCachePayload,
   buildSingleAmenityCachePayload,
   sanitizeAmenityCollection,
+  normalizeAmenityMapSettings,
+  mergeAmenityMapSettings,
+  isGuestEditAllowed,
+  buildAmenityEditAccess,
 };

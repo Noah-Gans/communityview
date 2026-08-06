@@ -75,6 +75,7 @@ import {
   transmissionTickSegments,
 } from './print/polylineDecorationUtils';
 import PrintFeatureEditPanel from './print/PrintFeatureEditPanel';
+import PropertyMapWizardBar from './print/PropertyMapWizardBar';
 import PrintMapLabel from '../components/map/printShapes/PrintMapLabel';
 import { buildMapLabelDisplayText, labelUsesGeoOffset } from './print/mapLabelUtils';
 import {
@@ -94,6 +95,11 @@ import {
   PRINT_GALLERY_DRAG_MIME,
   takePrintGalleryDragPayload,
 } from '../utils/printGalleryDragBuffer';
+import {
+  PRINT_CATALOG_DRAG_MIME,
+  takePrintCatalogDragPayload,
+  isPointLikeCatalogTool,
+} from '../utils/printCatalogDragBuffer';
 import { getPhotoSrcListFromElement } from '../utils/mapPhotoStorage';
 import { ensureTourEditRadiusLayersOnTop } from '../utils/tourBuilderMapLayers';
 import {
@@ -108,8 +114,10 @@ import { navigateToMarketingHome } from '../utils/marketingNavigation';
 import { mapDebug } from '../utils/mapDebug';
 import { safeMapResize } from '../utils/safeMapResize';
 import { normalizePathname } from '../utils/mapBackedRoutes';
+import { normalizeToGeoJsonFeature, normalizeToGeoJsonFeatures } from '../utils/normalizeMapFeature';
 
 import {
+  basemapIdForUrl,
   DEFAULT_BASEMAP_ID,
   getBasemapIdFromSearch,
   normalizeBasemapId,
@@ -174,7 +182,6 @@ import {
   isRegridParcelSelectionFeature,
   layerStatusLiveRef,
   parcelShowRegridLiveRef,
-  rebuildRegridParcelStackForDensity,
   REGRID_PARCELS_SELECTION_FILL_ID,
   REGRID_PARCELS_SELECTION_LINE_ID,
   regridStyleBasemapRef,
@@ -260,6 +267,7 @@ const MapPage = () => {
     setPropertyMapWizardActive,
     propertyMapWizardIntent,
     setPropertyMapWizardIntent,
+    setListingParcelRefs,
     clearPrintElements,
     shareViewerReadOnly,
     setShareViewerReadOnly,
@@ -282,7 +290,20 @@ const MapPage = () => {
     routerLocation.pathname.startsWith('/tour/') ||
     routerLocation.pathname.startsWith('/amenities/');
   const isPropertyTourRoute = routerLocation.pathname.startsWith('/tour/');
-  const isBasemapTutorialStep = tourActive && tourMode === 'map' && tourStep?.id === 'basemap-control';
+  const isBasemapTutorialOpenStep = tourActive && tourMode === 'map' && tourStep?.id === 'basemap-open';
+  const isBasemapTutorialSelectStep = tourActive && tourMode === 'map' && tourStep?.id === 'basemap-select';
+  const isBasemapTutorialStep = isBasemapTutorialOpenStep || isBasemapTutorialSelectStep;
+  const [basemapTutorialOpened, setBasemapTutorialOpened] = useState(false);
+
+  useEffect(() => {
+    if (!isBasemapTutorialStep) {
+      setBasemapTutorialOpened(false);
+      return;
+    }
+    if (isBasemapTutorialSelectStep) {
+      setBasemapTutorialOpened(true);
+    }
+  }, [isBasemapTutorialStep, isBasemapTutorialSelectStep]);
 
   // --- 2. Local state & refs ---
 
@@ -360,6 +381,7 @@ const MapPage = () => {
   ]);
   const [isPanelOpen, setIsPanelOpen] = useState(true); // State for toggling the side panel
   const [printSharePanelVisible, setPrintSharePanelVisible] = useState(false);
+  const [propertyMapWizardBusy, setPropertyMapWizardBusy] = useState(false);
 
   useEffect(() => {
     const onSharePanelVisible = (e) => {
@@ -375,11 +397,11 @@ const MapPage = () => {
       setIsPanelOpen(true);
       return;
     }
-    if (printSharePanelVisible || printLayoutMode) {
+    if (printSharePanelVisible || printLayoutMode || propertyMapWizardActive) {
       setIsPanelOpen(false);
       return;
     }
-    setIsPanelOpen(!propertyMapWizardActive);
+    setIsPanelOpen(true);
   }, [isPrinting, propertyMapWizardActive, printSharePanelVisible, printLayoutMode]);
   const [activeSidePanelTab, setActiveSidePanelTab] = useState('layers'); // Manage active tab state
   /** Print / map builder: hide Regrid parcel vectors without toggling Ownership in Layers. */
@@ -398,13 +420,13 @@ const MapPage = () => {
   useEffect(() => {
     if (!tourActive || tourMode !== 'map' || !tourStep) return;
     const id = tourStep.id;
-    if (id === 'side-info' || id === 'info-details') {
+    if (id === 'side-info') {
       setActiveSidePanelTab('info');
     }
     if (id === 'side-layers') {
       setActiveSidePanelTab('info');
     }
-    if (id === 'public-land-layer') {
+    if (id === 'public-land-layer' || id === 'layers-explore') {
       setActiveSidePanelTab('layers');
     }
   }, [tourActive, tourMode, tourStep]);
@@ -481,6 +503,67 @@ const MapPage = () => {
     if (!isPrinting || propertyMapWizardActive) return;
     setPrintParcelsOverlayVisible(Boolean(layerStatus.ownership));
   }, [isPrinting, layerStatus.ownership, propertyMapWizardActive]);
+
+  // Document / report generator can force parcel overlay visible during map captures.
+  useEffect(() => {
+    const onForce = (event) => {
+      const visible = event?.detail?.visible !== false;
+      setPrintParcelsOverlayVisible(visible);
+      if (visible) {
+        setLayerStatus((prev) => ({ ...prev, ownership: true }));
+      }
+    };
+    window.addEventListener('cv-force-print-parcels', onForce);
+    return () => window.removeEventListener('cv-force-print-parcels', onForce);
+  }, [setLayerStatus]);
+
+  useEffect(() => {
+    const onWizardStart = () => {
+      setPrintParcelsOverlayVisible(true);
+      setIsPanelOpen(false);
+      setLayerStatus((prev) => ({ ...prev, ownership: true }));
+    };
+    window.addEventListener('cv-property-map-wizard-start', onWizardStart);
+    return () => window.removeEventListener('cv-property-map-wizard-start', onWizardStart);
+  }, [setLayerStatus]);
+
+  /** Keep ownership lines visible through the satellite basemap swap when the parcel wizard opens. */
+  useEffect(() => {
+    if (!propertyMapWizardActive || !isPrinting) return undefined;
+
+    setPrintParcelsOverlayVisible(true);
+    setIsPanelOpen(false);
+
+    if (!mapIsReady || !mapRef?.current) return undefined;
+    const map = mapRef.current;
+    let cancelled = false;
+
+    const ensureParcelsVisible = () => {
+      if (cancelled || !propertyMapWizardActiveRef.current) return;
+      parcelShowRegridLiveRef.current = true;
+      try {
+        const vis = { showRegrid: true };
+        syncOwnershipTileLayer(map, vis);
+        syncRegridParcelLayersIntoMap(map, vis);
+        applyParcelVisualizationVisibility(map, vis);
+        bringRegridParcelLayersBeforeSymbolLabels(map);
+        fireRegridRestack(map);
+        repaintRegridParcelsAfterShow(map);
+      } catch (_) {
+        /* ignore */
+      }
+    };
+
+    ensureParcelsVisible();
+    const t1 = window.setTimeout(ensureParcelsVisible, 200);
+    const t2 = window.setTimeout(ensureParcelsVisible, 700);
+
+    return () => {
+      cancelled = true;
+      window.clearTimeout(t1);
+      window.clearTimeout(t2);
+    };
+  }, [propertyMapWizardActive, isPrinting, mapIsReady, mapRef]);
 
   useEffect(() => {
     if (!isPrinting || !mapIsReady || !mapRef?.current) return undefined;
@@ -719,18 +802,27 @@ const MapPage = () => {
   };
 
 
-  /** After dragging a point icon on the overlay, write the new lng/lat back into geometry. */
+  /** After dragging/resizing a point icon on the overlay, write lng/lat from the live screen box. */
   const syncProjectedEditToGeo = (nextElement) => {
     if (!nextElement || !mapRef.current) return nextElement;
 
     if (nextElement.geometry?.type === 'Point') {
-      const dw = nextElement.screenWidth ?? nextElement.width ?? 80;
-      const dh = nextElement.screenHeight ?? nextElement.height ?? 80;
+      const s =
+        Number.isFinite(nextElement.printZoomScale) && nextElement.printZoomScale > 0
+          ? nextElement.printZoomScale
+          : getPrintPixelScale(mapRef.current);
+      const dw = Number.isFinite(nextElement.screenWidth)
+        ? nextElement.screenWidth
+        : (nextElement.width || 80) * s;
+      const dh = Number.isFinite(nextElement.screenHeight)
+        ? nextElement.screenHeight
+        : (nextElement.height || 80) * s;
       const centerX = (nextElement.x || 0) + dw / 2;
       const centerY = (nextElement.y || 0) + dh / 2;
       const lngLat = mapRef.current.unproject([centerX, centerY]);
+      const { screenWidth, screenHeight, printZoomScale, ...rest } = nextElement;
       return {
-        ...nextElement,
+        ...rest,
         geometry: {
           type: 'Point',
           coordinates: [lngLat.lng, lngLat.lat],
@@ -1155,37 +1247,67 @@ const MapPage = () => {
   }, []);
 
 
-  /** Allow dropping a gallery photo onto the map while in print mode. */
+  /** Allow dropping a gallery photo or catalog point element onto the map while in print mode. */
   const handlePrintMapDragOver = useCallback(
     (e) => {
       if (!isPrinting) return;
-      if (!e.dataTransfer?.types?.includes(PRINT_GALLERY_DRAG_MIME)) return;
+      const types = e.dataTransfer?.types;
+      if (!types) return;
+      const ok =
+        types.includes(PRINT_GALLERY_DRAG_MIME) || types.includes(PRINT_CATALOG_DRAG_MIME);
+      if (!ok) return;
       e.preventDefault();
       e.dataTransfer.dropEffect = 'copy';
+      if (
+        types.includes(PRINT_CATALOG_DRAG_MIME) &&
+        isPrintShapeIconPlacingTool(activePrintTool) &&
+        mapRef.current
+      ) {
+        const rect = mapRef.current.getCanvas().getBoundingClientRect();
+        setPrintIconPlaceCursorPx({
+          x: e.clientX - rect.left,
+          y: e.clientY - rect.top,
+        });
+      }
     },
-    [isPrinting]
+    [isPrinting, activePrintTool]
   );
 
 
-  /** Drop a gallery photo onto the map → create a photo point print element. */
+  /** Drop gallery photo or catalog tool onto the map. */
   const handlePrintMapDrop = useCallback(
     (e) => {
       if (!isPrinting || !mapRef.current) return;
-      const id = e.dataTransfer?.getData(PRINT_GALLERY_DRAG_MIME);
-      const photoEntry = takePrintGalleryDragPayload(id);
-      if (!photoEntry?.url) return;
-      e.preventDefault();
       const map = mapRef.current;
       const rect = map.getCanvas().getBoundingClientRect();
       const x = e.clientX - rect.left;
       const y = e.clientY - rect.top;
       const lngLat = map.unproject([x, y]);
-      addPrintElementFromTool(
-        'shape_camera',
-        { photoGallery: [photoEntry], label: 'Photo point' },
-        { lng: lngLat.lng, lat: lngLat.lat }
-      );
-      setActivePrintTool('select');
+
+      const galleryId = e.dataTransfer?.getData(PRINT_GALLERY_DRAG_MIME);
+      const photoEntry = takePrintGalleryDragPayload(galleryId);
+      if (photoEntry?.url) {
+        e.preventDefault();
+        addPrintElementFromTool(
+          'shape_camera',
+          { photoGallery: [photoEntry], label: 'Photo point' },
+          { lng: lngLat.lng, lat: lngLat.lat }
+        );
+        setActivePrintTool('select');
+        return;
+      }
+
+      const catalogId = e.dataTransfer?.getData(PRINT_CATALOG_DRAG_MIME);
+      const catalog = takePrintCatalogDragPayload(catalogId);
+      if (!catalog?.tool) return;
+      e.preventDefault();
+      if (isPointLikeCatalogTool(catalog.tool)) {
+        addPrintElementFromTool(catalog.tool, {}, { lng: lngLat.lng, lat: lngLat.lat });
+        setActivePrintTool('select');
+        return;
+      }
+      // Lines / areas: arm the tool so the user can draw from here.
+      setActivePrintTool(catalog.tool);
     },
     [isPrinting, addPrintElementFromTool, setActivePrintTool]
   );
@@ -1274,7 +1396,7 @@ const MapPage = () => {
     };
   }, []);
 
-  /** Rebuild parcel MVT when map center crosses sparse ↔ dense geofences (minzoom 11 vs 13). */
+  /** Rebuild Regrid density + refresh selection highlight when the view settles (not on click). */
   useEffect(() => {
     if (!mapIsReady || !mapRef?.current) return undefined;
     const map = mapRef.current;
@@ -1283,6 +1405,17 @@ const MapPage = () => {
       if (!parcelMapVisibilityRef.current?.showRegrid) return;
       window.clearTimeout(debounceId);
       debounceId = window.setTimeout(() => {
+        const m = mapRef.current;
+        if (!m?.getStyle?.()?.layers) return;
+        // Sparse↔dense minzoom rebuild belongs here — not on every parcel click.
+        const stackChanged = syncOwnershipTileLayer(m, parcelMapVisibilityRef.current);
+        if (stackChanged) {
+          try {
+            applyLabelLayersRef.current?.();
+          } catch (_) {
+            /* ignore */
+          }
+        }
         enrichSelectionFromRenderedOwnershipTilesRef.current();
         reapplySelectionHighlightIfNeededRef.current();
       }, 350);
@@ -1453,6 +1586,11 @@ const MapPage = () => {
   const initialUrlBasemapAppliedRef = useRef(false);
   const flushPendingLayerSyncRef = useRef(() => {});
   const runUpdateLayersRef = useRef(() => {});
+  /** Latest updateLayers body — coalesce retries always use current layerStatus. */
+  const updateLayersImplRef = useRef(() => Promise.resolve());
+  /** One in-flight sync; further requests set pending and re-run once with latest refs. */
+  const updateLayersFlightRef = useRef({ running: false, pending: false, promise: null });
+  const searchHighlightMatchGenRef = useRef(0);
   const restackDataAndParcelsOnceRef = useRef(() => {});
   /** Writes lat/lng/zoom/basemap to the address bar (assigned after helpers exist). */
   const syncMapUrlRef = useRef(() => {});
@@ -1471,9 +1609,11 @@ const MapPage = () => {
   /** Update basemap state/refs/UI and refresh Regrid parcel outline colors for the new basemap. */
   const publishBasemapSelection = useCallback(
     (id, { skipUrlWrite = false } = {}) => {
+      const raw = String(id || '').trim().toLowerCase();
       const next = normalizeBasemapId(id);
+      const urlId = basemapIdForUrl(next, raw === 'imagery-3d' || is3DEnabledRef.current);
       if (pendingPrintBasemapRestoreRef) pendingPrintBasemapRestoreRef.current = null;
-      urlBasemapIdRef.current = next;
+      urlBasemapIdRef.current = urlId;
       baseMapRef.current = next;
       if (activeBasemapIdRef) activeBasemapIdRef.current = next;
       regridStyleBasemapRef.current = next;
@@ -1481,7 +1621,7 @@ const MapPage = () => {
       setCurrentBasemapId(next);
       applyRegridParcelOutlineForBasemap(mapRef.current, next);
       if (!skipUrlWrite) {
-        writeBasemapToUrlRef.current(next);
+        writeBasemapToUrlRef.current(urlId);
       }
     },
     [setCurrentBasemapId, activeBasemapIdRef, pendingPrintBasemapRestoreRef]
@@ -1875,6 +2015,11 @@ const MapPage = () => {
     () => typeof window !== 'undefined' && window.innerWidth <= 768
   );
   const [isBasemapSelectorOpen, setIsBasemapSelectorOpen] = useState(false);
+
+  useEffect(() => {
+    if (!isBasemapTutorialSelectStep) return;
+    setIsBasemapSelectorOpen(true);
+  }, [isBasemapTutorialSelectStep]);
 
   /** Dismiss mobile basemap sheet when the user pans/zooms the map (map stays interactive). */
   useEffect(() => {
@@ -2439,7 +2584,11 @@ useEffect(() => {
     } catch {
       return;
     }
-    const next = normalizeBasemapId(basemapId);
+    const raw = String(basemapId || '').trim().toLowerCase();
+    const next = basemapIdForUrl(
+      basemapId,
+      raw === 'imagery-3d' || is3DEnabledRef.current
+    );
     prevUrlBasemapRef.current = next;
     urlBasemapIdRef.current = next;
     const params = queryString.parse(routerLocation.search || '');
@@ -2479,10 +2628,15 @@ useEffect(() => {
 
     const layersForUrl = layerOrder.filter((name) => Boolean(layerStatus[name])).join(',');
 
-    const liveBasemap = normalizeBasemapId(
-      activeBasemapIdRef?.current || baseMapRef.current || basemap || currentBasemapId
+    const liveBasemap = basemapIdForUrl(
+      activeBasemapIdRef?.current || baseMapRef.current || basemap || currentBasemapId,
+      is3DEnabledRef.current
     );
-    const pendingUrlBasemap = normalizeBasemapId(urlBasemapIdRef.current || '');
+    const pendingRaw = String(urlBasemapIdRef.current || '').trim().toLowerCase();
+    const pendingUrlBasemap = basemapIdForUrl(
+      urlBasemapIdRef.current || '',
+      pendingRaw === 'imagery-3d'
+    );
     const basemapForUrl =
       !initialBasemapRestoreCompleteRef.current &&
       pendingUrlBasemap &&
@@ -2766,14 +2920,25 @@ useEffect(() => {
   // --- 7. Layer sync (updateLayers) ---
 
   const lastAppliedLayerOrderRef = useRef('');
+  const updateLayersDebugPassRef = useRef(0);
 
   /** Add/remove/reorder hosted tile layers and Regrid parcels based on `layerStatus` and `layerOrder`. */
   const updateLayers = () => {
+    const passId = ++updateLayersDebugPassRef.current;
+    const mapForDebug = mapRef.current;
+    const onLayers = Object.keys(layerStatus || {}).filter((k) => layerStatus[k]);
+    console.log('[cv:updateLayers] START', {
+      passId,
+      onLayers,
+      layerStatus: { ...layerStatus },
+      mapLoaded: Boolean(mapForDebug?.loaded?.()),
+      styleLoaded: Boolean(mapForDebug?.isStyleLoaded?.()),
+    });
     mapDebug.trace('updateLayers', layerStatus);
 
     const syncBasemapOverlaysIfNeeded = () => {
       const map = mapRef.current;
-      if (!map?.isStyleLoaded?.()) return;
+      if (!map?.getStyle?.()?.layers) return;
       const wantedBasemap = normalizeBasemapId(
         activeBasemapIdRef?.current || baseMapRef.current || urlBasemapIdRef.current
       );
@@ -2802,6 +2967,10 @@ useEffect(() => {
     };
 
     syncBasemapOverlaysIfNeeded();
+    console.log('[cv:updateLayers] after basemap sync', {
+      passId,
+      styleLoaded: Boolean(mapRef.current?.isStyleLoaded?.()),
+    });
 
   /** Tile URL/spec changed — needs reload. Fresh addSource already fetches tiles; reloading causes first-toggle flicker. */
     const sourcesNeedingTileReload = new Set();
@@ -3074,7 +3243,7 @@ useEffect(() => {
           setSelectedFeatures(visibleSelection);
         }
         if (visibleSelection.length) {
-          repaintSelectionHighlightRef.current(visibleSelection, { syncOwnership: false });
+          repaintSelectionHighlightRef.current(visibleSelection);
         } else {
           removeHighlight();
         }
@@ -3094,47 +3263,99 @@ useEffect(() => {
     };
 
     const map = mapRef.current;
-    if (!map?.loaded?.()) {
+    // Style *document* present (can addLayer) vs isStyleLoaded/loaded (false while data
+    // sources are still downloading). After a layer toggle, loaded() goes false — but
+    // 'load' / 'style.load' often never re-fire. Do not park on those for data sync.
+    const styleDocReady = Boolean(map?.getStyle?.()?.layers);
+
+    if (!styleDocReady) {
+      console.log('[cv:updateLayers] WAIT style-document', {
+        passId,
+        mapLoaded: Boolean(map?.loaded?.()),
+        styleLoaded: Boolean(map?.isStyleLoaded?.()),
+      });
       finishLayerStack();
       return new Promise((resolve) => {
-        const afterLoad = () => {
-          if (parcelMapVisibility.showRegrid) {
-            syncOwnershipTileLayer(mapRef.current, parcelMapVisibility);
+        let settled = false;
+        const done = (via) => {
+          if (settled) return;
+          settled = true;
+          window.clearTimeout(tid);
+          try {
+            map?.off?.('load', onReady);
+            map?.off?.('style.load', onReady);
+            map?.off?.('idle', onReady);
+          } catch (_) {
+            /* ignore */
           }
-          finishLayerStack();
+          console.log('[cv:updateLayers] RESUME style-document', { passId, via });
+          try {
+            if (parcelMapVisibility.showRegrid) {
+              syncOwnershipTileLayer(mapRef.current, parcelMapVisibility);
+            }
+            finishLayerStack();
+          } catch (_) {
+            /* ignore */
+          }
+          console.log('[cv:updateLayers] FINISH', { passId, via: `style-document:${via}` });
           resolve();
         };
+        const onReady = () => done('event');
+        const tid = window.setTimeout(() => done('timeout'), 1000);
         try {
-          if (map.loaded()) {
-            afterLoad();
+          if (map?.getStyle?.()?.layers) {
+            done('already');
             return;
           }
-          map.once('load', afterLoad);
+          map?.once?.('load', onReady);
+          map?.once?.('style.load', onReady);
+          map?.once?.('idle', onReady);
         } catch (_) {
-          resolve();
+          done('error');
         }
-      }).then(() => undefined);
+      });
     }
 
-    return new Promise((resolve) => {
-      const runRegridWhenStyleReady = () => {
-        if (!map.isStyleLoaded()) {
-          map.once('style.load', runRegridWhenStyleReady);
-          return;
-        }
-        syncOwnershipTileLayer(map, parcelMapVisibility);
-        finishLayerStack();
-        resolve();
-      };
-      runRegridWhenStyleReady();
+    syncOwnershipTileLayer(map, parcelMapVisibility);
+    finishLayerStack();
+    console.log('[cv:updateLayers] FINISH', {
+      passId,
+      via: 'style-doc-ready',
+      onLayers: Object.keys(layerStatus || {}).filter((k) => layerStatus[k]),
+      mapLoaded: Boolean(map?.loaded?.()),
+      styleLoaded: Boolean(map?.isStyleLoaded?.()),
     });
+    return Promise.resolve();
   };
 
-  runUpdateLayersRef.current = () => Promise.resolve(updateLayers());
+  updateLayersImplRef.current = updateLayers;
+
+  runUpdateLayersRef.current = () => {
+    const flight = updateLayersFlightRef.current;
+    if (flight.running && flight.promise) {
+      flight.pending = true;
+      console.log('[cv:updateLayers] COALESCE mark pending (will re-run with latest)');
+      return flight.promise;
+    }
+    flight.running = true;
+    flight.promise = (async () => {
+      try {
+        do {
+          flight.pending = false;
+          await updateLayersImplRef.current();
+        } while (flight.pending);
+      } finally {
+        flight.running = false;
+        flight.promise = null;
+      }
+    })();
+    return flight.promise;
+  };
 
   flushPendingLayerSyncRef.current = () => {
     runUpdateLayersRef.current();
   };
+
 
   /** After basemap style swap: tear down and re-add the full Regrid MVT stack from TileJSON. */
   const reinitializeRegridParcelsAfterBasemapSwap = useCallback(async () => {
@@ -3269,13 +3490,23 @@ useEffect(() => {
         getQueryLayerIdsForTileLayer(layerName, mapRef.current)
       );
       // Regrid: same rules as parcel overlay visibility (print toggle can hide vectors)
-      if (parcelMapVisibility.showRegrid && mapRef.current.getLayer('regrid-parcels-layer')) {
-        queryLayers.push('regrid-parcels-layer', 'regrid-parcels-outline');
+      if (parcelMapVisibility.showRegrid) {
+        if (!mapRef.current.getLayer('regrid-parcels-layer')) {
+          // Mid-rebuild or ownership just turned on — try to sync before querying.
+          try {
+            syncOwnershipTileLayer(mapRef.current, parcelMapVisibilityRef.current);
+          } catch (_) {
+            /* ignore */
+          }
+        }
+        if (mapRef.current.getLayer('regrid-parcels-layer')) {
+          queryLayers.push('regrid-parcels-layer', 'regrid-parcels-outline');
+        }
       }
   
       if (queryLayers.length > 0) {
         const features = mapRef.current.queryRenderedFeatures(e.point, {
-          layers: queryLayers,
+          layers: queryLayers.filter((id) => mapRef.current.getLayer(id)),
         });
   
   
@@ -3494,21 +3725,20 @@ useEffect(() => {
     const map = mapRef.current;
     if (!map || !mapIsReady) return undefined;
 
-    const syncLayers = () => {
-      if (!map.isStyleLoaded()) {
-        const onStyleLoad = () => {
-          runUpdateLayersRef.current();
-        };
-        map.once('style.load', onStyleLoad);
-        return () => {
-          map.off('style.load', onStyleLoad);
-        };
-      }
-      runUpdateLayersRef.current();
-      return undefined;
-    };
+    const onLayers = Object.keys(layerStatus || {}).filter((k) => layerStatus[k]);
+    const styleDocReady = Boolean(map.getStyle?.()?.layers);
+    console.log('[cv:updateLayers] EFFECT', {
+      onLayers,
+      styleLoaded: Boolean(map.isStyleLoaded?.()),
+      styleDocReady,
+      mapLoaded: Boolean(map.loaded?.()),
+    });
 
-    return syncLayers();
+    // Always request a sync. updateLayers only waits when the style *document* is missing
+    // (true initial load / setStyle). Do not gate on isStyleLoaded() — that goes false
+    // while data sources download and would skip the second rapid toggle entirely.
+    void runUpdateLayersRef.current();
+    return undefined;
   }, [
     layerStatus,
     layerOrder,
@@ -3612,7 +3842,7 @@ useEffect(() => {
 
   ensureImageryBasemapRef.current = (options = {}) => {
     const map = mapRef.current;
-    if (!map || !map.isStyleLoaded?.()) return false;
+    if (!map?.getStyle?.()?.layers) return false;
     try {
       addEsriWorldImageryRaster(options);
       return verifyBasemapAppliedOnMap(map, 'imagery');
@@ -3693,7 +3923,7 @@ useEffect(() => {
 
   repairBasemapOverlaysRef.current = (basemapId) => {
     const map = mapRef.current;
-    if (!map?.isStyleLoaded?.()) return false;
+    if (!map?.getStyle?.()?.layers) return false;
     const id = String(basemapId || '').trim();
     try {
       if (id === 'imagery' || id === 'imagery-3d' || id === 'esri-world-imagery') {
@@ -3756,7 +3986,7 @@ useEffect(() => {
     if (!map || !id) return;
 
     const basemapStackOk = () =>
-      map.isStyleLoaded?.() &&
+      Boolean(map.getStyle?.()?.layers) &&
       verifyBasemapAppliedOnMap(map, id) &&
       !needsBasemapOverlayMaintenance(map, id);
 
@@ -3859,11 +4089,14 @@ useEffect(() => {
 
     /** Layer order + visibility only — no tile reload (reload caused lag + restack feedback). */
     const restack = () => {
-      if (!map.isStyleLoaded?.()) return;
+      if (!map.getStyle?.()?.layers) return;
       bringRegridParcelLayersBeforeSymbolLabels(map);
       applyParcelVisualizationVisibility(map, parcelMapVisibility);
       bringLabelsToTop();
-      applyCompositeLabelStyleForBasemap(map, regridStyleBasemapRef.current);
+      applyCompositeLabelStyleForBasemap(
+        map,
+        activeBasemapIdRef?.current || baseMapRef.current || regridStyleBasemapRef.current
+      );
       const wantedBasemap = String(
         activeBasemapIdRef?.current || regridStyleBasemapRef.current || ''
       ).trim();
@@ -3872,7 +4105,7 @@ useEffect(() => {
       }
       const selection = selectedFeatureRef.current;
       if (selection?.length) {
-        repaintSelectionHighlightRef.current(selection, { syncOwnership: false });
+        repaintSelectionHighlightRef.current(selection);
       }
       if (propertyTourSlideIdRef.current === 'vicinity' || isPropertyTourVicinitySlideActive()) {
         ensureTourVicinityNearbyLayersOnTop(map);
@@ -4152,8 +4385,8 @@ useEffect(() => {
           });
         }
         ensure3DBuildingsLayer();
-      } catch (_) {
-        /* ignore */
+      } catch (err) {
+        console.warn('applyBasemapEnhancements 3D failed', err);
       }
     } else {
       try {
@@ -4183,7 +4416,10 @@ useEffect(() => {
         applyParcelVisualizationVisibility(map, parcelMapVisibilityRef.current);
       }
       bringLabelsToTop();
-      applyCompositeLabelStyleForBasemap(map, regridStyleBasemapRef.current);
+      applyCompositeLabelStyleForBasemap(
+        map,
+        activeBasemapIdRef?.current || baseMapRef.current || regridStyleBasemapRef.current
+      );
     } catch (_) {
       /* ignore */
     }
@@ -4199,7 +4435,10 @@ useEffect(() => {
       bringRegridParcelLayersBeforeSymbolLabels(map);
       applyParcelVisualizationVisibility(map, parcelMapVisibilityRef.current);
       bringLabelsToTop();
-      applyCompositeLabelStyleForBasemap(map, regridStyleBasemapRef.current);
+      applyCompositeLabelStyleForBasemap(
+        map,
+        activeBasemapIdRef?.current || baseMapRef.current || regridStyleBasemapRef.current
+      );
       if (propertyTourSlideIdRef.current === 'vicinity' || isPropertyTourVicinitySlideActive()) {
         ensureTourVicinityNearbyLayersOnTop(map);
       }
@@ -4215,7 +4454,7 @@ useEffect(() => {
       fireRegridRestack(map);
       const selection = selectedFeatureRef.current;
       if (selection?.length) {
-        repaintSelectionHighlightRef.current(selection, { syncOwnership: false });
+        repaintSelectionHighlightRef.current(selection);
       }
       if (typeof map.triggerRepaint === 'function') map.triggerRepaint();
     } catch (_) {
@@ -4227,7 +4466,7 @@ useEffect(() => {
 
   maintainBasemapStackRef.current = () => {
     const map = mapRef.current;
-    if (!map?.isStyleLoaded?.()) return;
+    if (!map?.getStyle?.()?.layers) return;
     const wanted = normalizeBasemapId(
       urlBasemapIdRef.current || activeBasemapIdRef?.current || baseMapRef.current
     );
@@ -4253,7 +4492,7 @@ useEffect(() => {
   const finalizeBasemapVisualStackRef = useRef(() => {});
   finalizeBasemapVisualStackRef.current = () => {
     const map = mapRef.current;
-    if (!map?.isStyleLoaded?.()) return;
+    if (!map?.getStyle?.()?.layers) return;
     const wanted = normalizeBasemapId(
       activeBasemapIdRef?.current || baseMapRef.current || urlBasemapIdRef.current
     );
@@ -4300,7 +4539,7 @@ useEffect(() => {
       );
 
     const syncBasemapIfNeeded = () => {
-      if (!mapRef.current?.isStyleLoaded?.()) return;
+      if (!mapRef.current?.getStyle?.()?.layers) return;
       const wanted = getWantedBasemapId();
       if (!wanted) return;
 
@@ -4574,27 +4813,49 @@ useEffect(() => {
    * If triggered, we zoom and highlight the search results via `handleFeatureZoomAndHighlight`.
    */
     useEffect(() => {
-  
-      if (isMapTriggeredFromSearch && focusFeatures.length > 0) {
-          handleFeatureZoomAndHighlight(focusFeatures);
-          
-          setIsMapTriggeredFromSearch(false); // Reset trigger after execution
+      if (!(isMapTriggeredFromSearch && focusFeatures.length > 0)) return;
+
+      if (propertyMapWizardActiveRef.current) {
+        const incoming = normalizeToGeoJsonFeatures(focusFeatures);
+        const existing = (selectedFeatureRef.current || []).filter(isRegridParcelPolygonFeature);
+        let next = incoming;
+        if (propertyMapWizardIntent !== 'single' && incoming.length === 1) {
+          const feature = incoming[0];
+          const id = feature?.properties?.ll_uuid;
+          if (id && existing.some((f) => f.properties?.ll_uuid === id)) {
+            next = existing;
+          } else {
+            next = [...existing, feature];
+          }
+        }
+        handleFeatureZoomAndHighlight(next);
       } else {
+        handleFeatureZoomAndHighlight(focusFeatures);
       }
-  }, [isMapTriggeredFromSearch, focusFeatures]);
-  
+
+      setIsMapTriggeredFromSearch(false);
+  }, [isMapTriggeredFromSearch, focusFeatures, propertyMapWizardIntent]);
 
   /** Search/navigation: fit bounds to features, query rendered parcels, then highlight matches. */
-  const handleFeatureZoomAndHighlight = (features) => {
-    if (!features || features.length === 0) {
+  const handleFeatureZoomAndHighlight = (rawFeatures) => {
+    const features = normalizeToGeoJsonFeatures(rawFeatures);
+    if (!features.length || !mapRef.current) {
       return;
     }
-  
-  
-    // Remove existing highlights
+
+    // Map It always needs ownership so Regrid tiles exist for matching.
+    if (!layerStatusRef.current?.ownership) {
+      setLayerStatus((prev) => ({ ...prev, ownership: true }));
+    }
+
     removeHighlight();
-    
-    // Build bbox list from either explicit bbox or feature geometry
+
+    // Select normalized search features immediately so SidePanel never sees flat rows.
+    selectedFeatureRef.current = features;
+    setSelectedFeatures(features);
+    setActiveSidePanelTab('info');
+    highlightFeature(features);
+
     const featuresWithBbox = features
       .map((feature) => {
         if (Array.isArray(feature?.bbox) && feature.bbox.length === 4) {
@@ -4611,19 +4872,19 @@ useEffect(() => {
             if (Array.isArray(geometryBbox) && geometryBbox.length === 4) {
               return { ...feature, bbox: geometryBbox };
             }
-          } catch (error) {
+          } catch (_) {
+            /* ignore */
           }
         }
 
         return null;
       })
       .filter(Boolean);
-    
+
     if (featuresWithBbox.length > 0) {
-      // Calculate combined bounds from feature bboxes
       const bounds = featuresWithBbox.reduce((acc, feature) => {
         const [minX, minY, maxX, maxY] = feature.bbox;
-        acc = acc
+        return acc
           ? [
               Math.min(acc[0], minX),
               Math.min(acc[1], minY),
@@ -4631,52 +4892,56 @@ useEffect(() => {
               Math.max(acc[3], maxY),
             ]
           : [minX, minY, maxX, maxY];
-        return acc;
       }, null);
-    
-      const paddingValue = window.innerWidth < 768 ? 10 : 200; // 10px on mobile, 200px on desktop
+
+      const paddingValue = window.innerWidth < 768 ? 10 : 200;
       if (bounds && bounds.length === 4) {
         mapRef.current.fitBounds(bounds, {
           padding: paddingValue,
-          duration: 1000, // Add smooth animation duration
+          duration: 1000,
         });
-      } else {
       }
-    } else {
-      // Optionally zoom to a default area or just highlight without zooming
     }
-  
-    // Step 3: After zooming (or immediately if no bbox), highlight all features
-    const highlightFeatures = () => {
-  
-      const searchableLayers = [
-        'regrid-parcels-layer',
-        ...(layerStatus.ownership ? ['regrid-parcels-layer', 'regrid-parcels-outline'] : []),
-      ].filter((layerId) => mapRef.current.getLayer(layerId));
-      const queriedFeatures = searchableLayers.length > 0
-        ? mapRef.current.queryRenderedFeatures({ layers: searchableLayers })
-        : [];
 
-      // Match by multiple identifiers so both legacy and Regrid features can be focused.
-      const inputIds = new Set(
-        features.flatMap((feature, index) => {
-          const ids = [
-            feature?.GFI,
-            feature?.global_parcel_uid,
-            feature?.ll_uuid,
-            feature?.parcelnumb,
-            feature?.county_parcel_id,
-            feature?.pidn,
-            feature?.properties?.GFI,
-            feature?.properties?.global_parcel_uid,
-            feature?.properties?.ll_uuid,
-            feature?.properties?.parcelnumb,
-            feature?.properties?.pidn,
-          ].filter(Boolean).map((value) => String(value));
+    const inputIds = new Set(
+      features.flatMap((feature) =>
+        [
+          feature?.properties?.GFI,
+          feature?.properties?.global_parcel_uid,
+          feature?.properties?.ll_uuid,
+          feature?.properties?.parcelnumb,
+          feature?.properties?.county_parcel_id,
+          feature?.properties?.pidn,
+        ]
+          .filter(Boolean)
+          .map((value) => String(value))
+      )
+    );
 
-          return ids;
-        })
+    let attempts = 0;
+    const maxAttempts = 8;
+    const matchGen = ++searchHighlightMatchGenRef.current;
+
+    const tryMatchRenderedParcels = () => {
+      if (matchGen !== searchHighlightMatchGenRef.current) return;
+      const map = mapRef.current;
+      if (!map) return;
+
+      if (parcelMapVisibilityRef.current?.showRegrid) {
+        try {
+          syncOwnershipTileLayer(map, parcelMapVisibilityRef.current);
+        } catch (_) {
+          /* ignore */
+        }
+      }
+
+      const searchableLayers = ['regrid-parcels-layer', 'regrid-parcels-outline'].filter(
+        (layerId) => map.getLayer(layerId)
       );
+      const queriedFeatures =
+        searchableLayers.length > 0
+          ? map.queryRenderedFeatures({ layers: searchableLayers })
+          : [];
 
       const matchingFeatures = queriedFeatures.filter((f) => {
         const candidateIds = [
@@ -4687,43 +4952,42 @@ useEffect(() => {
           f?.properties?.pidn,
           f?.properties?.fid,
           f?.properties?.ogc_fid,
-        ].filter(Boolean).map((value) => String(value));
-
+        ]
+          .filter(Boolean)
+          .map((value) => String(value));
         return candidateIds.some((id) => inputIds.has(id));
       });
-      
-      if (matchingFeatures.length === 0) {
-        setSelectedFeatures(features);
-        highlightFeature(features);
+
+      if (matchingFeatures.length > 0) {
+        const uniqueFeatures = matchingFeatures.filter((feature, index, self) => {
+          const gfi = feature.properties?.GFI || feature.properties?.ll_uuid;
+          return (
+            self.findIndex(
+              (f) =>
+                (f.properties?.GFI || f.properties?.ll_uuid) === gfi
+            ) === index
+          );
+        });
+        setIsMapTriggeredFromSearch(false);
+        selectedFeatureRef.current = uniqueFeatures;
+        setSelectedFeatures(uniqueFeatures);
+        highlightFeature(uniqueFeatures);
         setActiveSidePanelTab('info');
         return;
       }
-  
-  
-      // ✅ DEDUPLICATE: Remove duplicate features based on GFI
-      const uniqueFeatures = matchingFeatures.filter((feature, index, self) => {
-        const gfi = feature.properties?.GFI;
-        return self.findIndex(f => f.properties?.GFI === gfi) === index;
-      });
-      
-  
-      setIsMapTriggeredFromSearch(false);
-      setSelectedFeatures(uniqueFeatures); // Use deduplicated features
-      // Highlight the matching features
-      highlightFeature(uniqueFeatures); // Use deduplicated features
-  
-      // Switch to the info tab after highlighting
-      setActiveSidePanelTab('info');
+
+      attempts += 1;
+      if (attempts < maxAttempts) {
+        window.setTimeout(tryMatchRenderedParcels, 300 * attempts);
+      }
     };
-    
+
     if (featuresWithBbox.length > 0) {
-      // Wait for zoom to complete before highlighting
-      mapRef.current.once('idle', highlightFeatures);
+      mapRef.current.once('idle', tryMatchRenderedParcels);
     } else {
-      // Highlight immediately if no zoom needed
-      highlightFeatures();
+      tryMatchRenderedParcels();
     }
-    };
+  };
 
   /** Fly/fit map to one feature's bbox without changing the current selection highlight. */
   const zoomToIndividualFeature = async (feature) => {
@@ -4847,27 +5111,7 @@ useEffect(() => {
    * Search and legacy callers sometimes pass flat objects (GFI, ll_uuid, etc. on the
    * feature root) instead of GeoJSON with a `properties` bag. Normalize before highlight logic.
    */
-  const normalizeInputFeatureForHighlight = (feature) => {
-    if (!feature) return null;
-    if (feature.properties && typeof feature.properties === 'object') {
-      return feature;
-    }
-    const metaKeys = new Set(['type', 'geometry', 'bbox', 'layer', 'id', 'source', 'sourceLayer']);
-    const properties = {};
-    for (const [key, value] of Object.entries(feature)) {
-      if (!metaKeys.has(key)) {
-        properties[key] = value;
-      }
-    }
-    return {
-      type: feature.type || 'Feature',
-      geometry: feature.geometry,
-      properties,
-      ...(feature.bbox ? { bbox: feature.bbox } : {}),
-      ...(feature.layer ? { layer: feature.layer } : {}),
-      ...(feature.id != null ? { id: feature.id } : {}),
-    };
-  };
+  const normalizeInputFeatureForHighlight = normalizeToGeoJsonFeature;
 
   /**
    * Gets the appropriate identifier property for a feature based on its layer
@@ -5312,19 +5556,20 @@ useEffect(() => {
     deferSelectionHighlightUntilSettledRef.current(selection);
   }, []);
 
-  /** Sync ownership stack, then repaint selection (MVT filter for Regrid, GeoJSON for others). */
-  const repaintSelectionHighlight = useCallback((features, { syncOwnership = false } = {}) => {
+  /** Paint selection highlight only — no ownership rebuild (density sync runs on move/zoom). */
+  const repaintSelectionHighlight = useCallback((features) => {
     const map = mapRef.current;
     if (!map?.getStyle?.() || !features?.length) return;
-    if (syncOwnership && parcelMapVisibilityRef.current?.showRegrid) {
-      syncOwnershipTileLayer(map, parcelMapVisibilityRef.current);
-    }
     highlightFeatureRef.current(
       features,
       resolveLayerStatusForSelection(layerStatusRef.current)
     );
   }, []);
 
+  /**
+   * Highlight immediately on click; one idle + short retry for tiles that weren't painted yet.
+   * Does not sync/rebuild Regrid — that was causing teardown on select.
+   */
   const deferSelectionHighlightUntilSettled = useCallback((features) => {
     if (!features?.length) return;
 
@@ -5334,9 +5579,11 @@ useEffect(() => {
     selectionHighlightSettleGenRef.current += 1;
     const generation = selectionHighlightSettleGenRef.current;
 
+    repaintSelectionHighlight(features);
+
     const settledReapply = () => {
       if (generation !== selectionHighlightSettleGenRef.current) return;
-      repaintSelectionHighlight(features, { syncOwnership: true });
+      repaintSelectionHighlight(features);
     };
 
     try {
@@ -5344,31 +5591,7 @@ useEffect(() => {
     } catch (_) {
       /* ignore */
     }
-
-    let onRegridSourceData;
-    try {
-      onRegridSourceData = (e) => {
-        if (e?.sourceId === 'regrid-parcels' && e.isSourceLoaded) {
-          settledReapply();
-        }
-      };
-      map.on('sourcedata', onRegridSourceData);
-    } catch (_) {
-      onRegridSourceData = null;
-    }
-
-    [0, 120, 350, 600, 1000, 1500].forEach((ms) => {
-      window.setTimeout(() => {
-        settledReapply();
-        if (ms === 1500 && onRegridSourceData) {
-          try {
-            map.off('sourcedata', onRegridSourceData);
-          } catch (_) {
-            /* ignore */
-          }
-        }
-      }, ms);
-    });
+    window.setTimeout(settledReapply, 200);
   }, [repaintSelectionHighlight]);
 
   deferSelectionHighlightUntilSettledRef.current = deferSelectionHighlightUntilSettled;
@@ -5380,6 +5603,10 @@ useEffect(() => {
     
   /** Clear selection highlight from the map (panel selection cleared separately). */
   const removeHighlight = () => {
+    // Cancel deferred select-highlight retries (idle / sourcedata / timeouts) so a
+    // deselect click can't get its highlight painted back a moment later.
+    selectionHighlightSettleGenRef.current += 1;
+
     if (highlightRenderTimeoutRef.current) {
       clearTimeout(highlightRenderTimeoutRef.current);
       highlightRenderTimeoutRef.current = null;
@@ -5467,10 +5694,11 @@ useEffect(() => {
 
 
   /** Property wizard: turn merged parcel geometry into one or more boundary print polygons. */
-  const addPolygonBoundariesFromMergedFeature = (merged) => {
+  const addPolygonBoundariesFromMergedFeature = (merged, sourceParcels = []) => {
     const g = merged?.geometry;
     if (!g) return;
-    const addOne = (polyFeature) => {
+    const primaryProps = merged?.properties || sourceParcels[0]?.properties || {};
+    const addOne = (polyFeature, propsOverride) => {
       const coords = getRegridParcelBoundaryCoordinates(polyFeature);
       if (!coords || coords.length < 3) return;
       const metrics = getMetricsForPolygonLngLat(coords);
@@ -5478,17 +5706,36 @@ useEffect(() => {
         lng: coords.reduce((s, c) => s + c.lng, 0) / coords.length,
         lat: coords.reduce((s, c) => s + c.lat, 0) / coords.length,
       };
-      addPrintElementFromTool('polygon_boundary', { coordinates: coords, metrics }, center);
+      const p = propsOverride || polyFeature?.properties || primaryProps || {};
+      addPrintElementFromTool(
+        'polygon_boundary',
+        {
+          coordinates: coords,
+          metrics,
+          ll_uuid: p.ll_uuid || undefined,
+          path: p.path || undefined,
+          parcelProperties: {
+            ll_uuid: p.ll_uuid || null,
+            path: p.path || null,
+            owner: p.owner || p.owner2 || null,
+            address: p.address || p.situs_address || p.physaddr || null,
+            parcelnumb: p.parcelnumb || p.county_parcel_id || p.apn || null,
+            apn: p.apn || p.parcelnumb || null,
+            zip: p.zip || p.situs_zip || p.mail_zip || null,
+          },
+        },
+        center
+      );
     };
 
     if (g.type === 'Polygon') {
-      addOne(merged);
+      addOne(merged, primaryProps);
       return;
     }
     if (g.type === 'MultiPolygon') {
       for (const polyCoords of g.coordinates) {
         try {
-          addOne(turf.polygon(polyCoords));
+          addOne(turf.polygon(polyCoords), primaryProps);
         } catch (_) {
           /* skip invalid ring */
         }
@@ -5500,23 +5747,41 @@ useEffect(() => {
   /** Finish parcel wizard — merge selected parcels into boundary print element(s) and exit wizard. */
   const handlePropertyMapWizardContinue = async () => {
     const parcels = (selectedFeature || []).filter(isRegridParcelPolygonFeature);
-    if (parcels.length === 0) return;
-    const merged = await mergeRegridParcelFeaturesPreferApi(parcels);
-    if (!merged) return;
-    addPolygonBoundariesFromMergedFeature(merged);
-    setPropertyMapWizardActive(false);
-    setPropertyMapWizardIntent(null);
-    setSelectedFeatures([]);
-    removeHighlight();
-    setActivePrintTool('select');
-    setActiveSidePanelTab('print');
+    if (parcels.length === 0 || propertyMapWizardBusy) return;
+    setPropertyMapWizardBusy(true);
+    try {
+      const merged = await mergeRegridParcelFeaturesPreferApi(parcels);
+      if (!merged) return;
+      if (typeof setListingParcelRefs === 'function') {
+        setListingParcelRefs(
+          parcels.map((f) => ({
+            type: 'Feature',
+            geometry: f.geometry,
+            properties: { ...(f.properties || {}) },
+          }))
+        );
+      }
+      addPolygonBoundariesFromMergedFeature(merged, parcels);
+      setPropertyMapWizardActive(false);
+      setPropertyMapWizardIntent(null);
+      // Hide Regrid again so the new print boundary is the focus.
+      setLayerStatus((prev) => ({ ...prev, ownership: false }));
+      setSelectedFeatures([]);
+      removeHighlight();
+      setActivePrintTool('select');
+      setActiveSidePanelTab('print');
+    } finally {
+      setPropertyMapWizardBusy(false);
+    }
   };
 
 
   /** Cancel parcel wizard — clear selection, highlight, and exit edit mode. */
   const handlePropertyMapWizardCancel = () => {
+    if (propertyMapWizardBusy) return;
     setPropertyMapWizardActive(false);
     setPropertyMapWizardIntent(null);
+    setLayerStatus((prev) => ({ ...prev, ownership: false }));
     setSelectedFeatures([]);
     removeHighlight();
     window.dispatchEvent(new CustomEvent('print-exit-edit'));
@@ -5819,7 +6084,31 @@ useEffect(() => {
         >
           <button
             className={`map-floating-control-button ${is3DEnabled ? 'active' : ''}`}
-            onClick={() => setIs3DEnabled((prev) => !prev)}
+            onClick={() => {
+              setIs3DEnabled((prev) => {
+                const next = !prev;
+                is3DEnabledRef.current = next;
+                const map = mapRef.current;
+                if (map) {
+                  try {
+                    if (next && map.getPitch() < 20) {
+                      map.easeTo({ pitch: 60, duration: 700 });
+                    } else if (!next && map.getPitch() > 5) {
+                      map.easeTo({ pitch: 0, duration: 500 });
+                    }
+                  } catch (_) {
+                    /* ignore */
+                  }
+                }
+                const bm = normalizeBasemapId(
+                  activeBasemapIdRef?.current || baseMapRef.current || basemap
+                );
+                if (bm === 'imagery') {
+                  writeBasemapToUrlRef.current(basemapIdForUrl(bm, next));
+                }
+                return next;
+              });
+            }}
             title="Toggle 3D terrain"
           >
             <span className="map-floating-control-text">3D</span>
@@ -5873,7 +6162,10 @@ useEffect(() => {
         <div
           className={[
             'layer-selector-container',
-            isBasemapTutorialStep ? 'tutorial-force-open' : '',
+            isBasemapTutorialOpenStep && !basemapTutorialOpened ? 'tutorial-await-click' : '',
+            (isBasemapTutorialSelectStep || (isBasemapTutorialOpenStep && basemapTutorialOpened))
+              ? 'tutorial-force-open'
+              : '',
             isBasemapSelectorOpen ? 'is-open' : '',
           ]
             .filter(Boolean)
@@ -5882,10 +6174,19 @@ useEffect(() => {
         >
           <button
             type="button"
-            className={`layer-selector-button${isBasemapSelectorOpen ? ' active' : ''}`}
+            className={`layer-selector-button${isBasemapSelectorOpen || basemapTutorialOpened || isBasemapTutorialSelectStep ? ' active' : ''}`}
             data-tour="basemap-toggle-button"
-            aria-expanded={isMobileViewport ? isBasemapSelectorOpen : undefined}
+            aria-expanded={
+              isMobileViewport || isBasemapTutorialStep
+                ? Boolean(isBasemapSelectorOpen || basemapTutorialOpened || isBasemapTutorialSelectStep)
+                : undefined
+            }
             onClick={() => {
+              if (isBasemapTutorialOpenStep || isBasemapTutorialSelectStep) {
+                setBasemapTutorialOpened(true);
+                setIsBasemapSelectorOpen(true);
+                return;
+              }
               if (isMobileViewport) {
                 setIsBasemapSelectorOpen((open) => !open);
               }
@@ -5949,7 +6250,7 @@ useEffect(() => {
           </div>
         </div>
       </div>
-      {!isClientShareMapRoute && (
+      {!isClientShareMapRoute && !propertyMapWizardActive && (
       <ToolPanel
         onZoomIn={() => mapRef.current.zoomIn()}
         onZoomOut={() => mapRef.current.zoomOut()}
@@ -6093,13 +6394,48 @@ useEffect(() => {
                 printIconPlaceCursorPx &&
                 mapRef.current &&
                 (() => {
+                  const s = getPrintPixelScale(mapRef.current);
+                  if (activePrintTool === 'note') {
+                    const w = 220 * s;
+                    const h = 120 * s;
+                    const fontSize = Math.max(10, 14 * s);
+                    return (
+                      <div
+                        key="print-note-place-preview"
+                        aria-hidden
+                        style={{
+                          position: 'absolute',
+                          left: printIconPlaceCursorPx.x,
+                          top: printIconPlaceCursorPx.y,
+                          transform: 'translate(-50%, -50%)',
+                          width: w,
+                          height: h,
+                          pointerEvents: 'none',
+                          zIndex: 25,
+                          opacity: 0.92,
+                          background: '#ffffff',
+                          border: '1px solid rgba(17, 24, 39, 0.15)',
+                          borderRadius: 6,
+                          boxSizing: 'border-box',
+                          padding: Math.max(6, 8 * s),
+                          color: '#111827',
+                          fontSize,
+                          fontFamily: 'Inter, system-ui, sans-serif',
+                          lineHeight: 1.4,
+                          boxShadow: '0 2px 10px rgba(15, 23, 42, 0.28)',
+                          overflow: 'hidden',
+                        }}
+                      >
+                        Type something…
+                      </div>
+                    );
+                  }
                   const parsed = parsePrintPlacementTool(activePrintTool);
                   const svgKey = parsed.shapeSvgKey;
                   if (!svgKey) return null;
                   const renderSvg = svgMap[svgKey];
                   if (!renderSvg) return null;
                   const iconDefaults = getPointIconDefaultStyle(svgKey) || {};
-                  const s = getPrintPixelScale(mapRef.current);
                   const baseW = 70;
                   const baseH = 70;
                   const w = baseW * s;
@@ -6395,10 +6731,9 @@ useEffect(() => {
                   if (!shouldRenderPrintElementOnMap(element)) return null;
                   const projected = withGeoProjectedFrame(element);
                   const placingTool = activePrintTool && activePrintTool !== 'select';
-                  const featurePtr =
-                    placingTool || (activePrintTool === 'select' && selectedPrintElement?.id !== element.id)
-                      ? 'none'
-                      : 'auto';
+                  // Select mode: overlays receive clicks so icons can be grabbed without
+                  // selecting via the map first. While placing, keep features out of the way.
+                  const featurePtr = placingTool ? 'none' : 'auto';
                   switch (element.type) {
                     case 'polygon': {
                       const polygonPoints = projected.projectedPolygonPoints || [];
@@ -6837,28 +7172,20 @@ useEffect(() => {
         />
       )}
 
-      {isPrinting && !isPropertyTourRoute && (
+      {isPrinting && !isPropertyTourRoute && !propertyMapWizardActive && (
         <div
           className={`print-map-top-toolbar${
             shareViewerReadOnly ? ' print-map-top-toolbar--share' : ''
           }`}
         >
           <label
-            className={`print-parcels-toggle${
-              propertyMapWizardActive ? ' print-parcels-toggle-disabled' : ''
-            }`}
-            title={
-              propertyMapWizardActive
-                ? 'Parcels stay on while you select boundaries'
-                : 'Show or hide parcel outlines (synced with Layers → Ownership)'
-            }
+            className="print-parcels-toggle"
+            title="Show or hide parcel outlines (synced with Layers → Ownership)"
           >
             <input
               type="checkbox"
-              checked={propertyMapWizardActive || Boolean(layerStatus.ownership)}
-              disabled={propertyMapWizardActive}
+              checked={Boolean(layerStatus.ownership)}
               onChange={(e) => {
-                if (propertyMapWizardActive) return;
                 const next = e.target.checked;
                 setPrintParcelsOverlayVisible(next);
                 setLayerStatus((prev) => ({
@@ -6872,52 +7199,16 @@ useEffect(() => {
         </div>
       )}
 
-      {isPrinting && propertyMapWizardActive && (
-        <div className="property-map-wizard-bar">
-          <div className="property-map-wizard-bar-inner">
-            <p className="property-map-wizard-title">Select parcel boundaries</p>
-            <p className="property-map-wizard-help">
-              {propertyMapWizardIntent === 'single' ? (
-                <>
-                  Click a parcel on the map to select it. When it looks right, press{' '}
-                  <strong>Continue with selected parcels</strong> below.
-                </>
-              ) : (
-                <>
-                  Click a parcel to select the first one. To add or remove more parcels, hold{' '}
-                  <kbd className="property-map-wizard-kbd">Shift</kbd> and click each parcel.
-                </>
-              )}
-            </p>
-            <p className="property-map-wizard-help property-map-wizard-help-secondary">
-              {propertyMapWizardIntent === 'single'
-                ? 'You can change the selection by clicking a different parcel before you continue.'
-                : 'When you are ready, continue — multiple parcels merge into one outline when they touch, or separate outlines when they do not.'}
-            </p>
-            <p className="property-map-wizard-count">
-              Selected:{' '}
-              <strong>{(selectedFeature || []).filter(isRegridParcelPolygonFeature).length}</strong> parcel
-              {(selectedFeature || []).filter(isRegridParcelPolygonFeature).length === 1 ? '' : 's'}
-            </p>
-            <div className="property-map-wizard-actions">
-              <button
-                type="button"
-                className="property-map-wizard-btn property-map-wizard-btn-secondary"
-                onClick={handlePropertyMapWizardCancel}
-              >
-                Cancel
-              </button>
-              <button
-                type="button"
-                className="property-map-wizard-btn property-map-wizard-btn-primary"
-                onClick={handlePropertyMapWizardContinue}
-                disabled={(selectedFeature || []).filter(isRegridParcelPolygonFeature).length === 0}
-              >
-                Continue with selected parcels
-              </button>
-            </div>
-          </div>
-        </div>
+      {isPrinting &&
+        propertyMapWizardActive &&
+        (routerLocation.pathname || '').replace(/\/+$/, '') === '/print' && (
+        <PropertyMapWizardBar
+          selectedCount={(selectedFeature || []).filter(isRegridParcelPolygonFeature).length}
+          isBusy={propertyMapWizardBusy}
+          isPanelOpen={isPanelOpen}
+          onCancel={handlePropertyMapWizardCancel}
+          onContinue={handlePropertyMapWizardContinue}
+        />
       )}
 
       {/* Print feature editor: fixed below Save / Back (Print.js ~72px toolbar) */}

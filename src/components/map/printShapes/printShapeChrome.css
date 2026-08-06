@@ -1,0 +1,114 @@
+.print-shape-rnd.is-selected {
+  outline: none;
+}
+
+.print-shape-selection-ring {
+  position: absolute;
+  top: -5px;
+  left: -5px;
+  width: calc(100% + 10px);
+  height: calc(100% + 10px);
+  border: 2px solid #1d784f;
+  border-radius: 10px;
+  pointer-events: none;
+  z-index: 998;
+  box-shadow:
+    0 0 0 3px rgba(29, 120, 79, 0.16),
+    0 8px 20px rgba(15, 23, 42, 0.12);
+}
+
+.print-shape-resize-handle {
+  width: 12px !important;
+  height: 12px !important;
+  margin-top: -6px;
+  margin-left: -6px;
+  background: #fff;
+  border: 2px solid #1d784f;
+  border-radius: 999px;
+  box-shadow: 0 1px 4px rgba(15, 23, 42, 0.25);
+  z-index: 2001;
+}
+
+.print-shape-resize-edge {
+  z-index: 2000;
+}
+
+.print-shape-resize-edge--t,
+.print-shape-resize-edge--b {
+  height: 8px !important;
+  margin-top: -4px;
+}
+
+.print-shape-resize-edge--l,
+.print-shape-resize-edge--r {
+  width: 8px !important;
+  margin-left: -4px;
+}
+
+.print-shape-rotate-knob {
+  position: absolute;
+  top: -34px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 22px;
+  height: 22px;
+  background: #1d784f;
+  border-radius: 50%;
+  border: 2px solid #fff;
+  cursor: grab;
+  z-index: 2000;
+  box-shadow: 0 2px 8px rgba(15, 23, 42, 0.25);
+}
+
+.print-shape-rotate-knob::after {
+  content: '';
+  position: absolute;
+  left: 50%;
+  bottom: -10px;
+  width: 2px;
+  height: 10px;
+  background: #1d784f;
+  transform: translateX(-50%);
+}
+
+.print-shape-delete-btn {
+  position: absolute;
+  top: -30px;
+  right: -30px;
+  width: 24px;
+  height: 24px;
+  border: none;
+  border-radius: 999px;
+  background: #dc2626;
+  color: #fff;
+  font-size: 16px;
+  line-height: 1;
+  cursor: pointer;
+  z-index: 3000;
+  box-shadow: 0 2px 8px rgba(15, 23, 42, 0.2);
+  padding: 0;
+}
+
+.print-note-move-bar {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 22px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+  background: linear-gradient(180deg, rgba(15, 23, 42, 0.1), rgba(15, 23, 42, 0.02));
+  border-bottom: 1px solid rgba(15, 23, 42, 0.08);
+  cursor: grab;
+  z-index: 12;
+}
+
+.print-note-move-dot {
+  width: 4px;
+  height: 4px;
+  border-radius: 999px;
+  background: #64748b;
+  display: inline-block;
+}

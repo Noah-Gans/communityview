@@ -1,11 +1,69 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import MapLoadingOverlay from '../../components/loading/MapLoadingOverlay';
-import { mapService } from '../../services/mapService';
+import { autoGenerateAmenityMap } from '../../utils/amenityMapAutoGenerate';
 import { autoGeneratePropertyTour } from '../../utils/tourAutoGenerate';
 import { getMapShareUrls } from '../../utils/mapShareLinks';
+import MapLoadingOverlay from '../../components/loading/MapLoadingOverlay';
+import { mapService } from '../../services/mapService';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+
+function KitCard({
+  id,
+  title,
+  description,
+  previewClass,
+  previewLabel,
+  previewSrc,
+  previewFit = 'cover',
+  previewContent = null,
+  status,
+  children,
+  accent = 'default',
+}) {
+  return (
+    <article className={`content-kit-card content-kit-card--${accent}`} data-kit-card={id}>
+      <div
+        className={`content-kit-card-preview ${previewClass}${previewSrc && !previewContent ? ' content-kit-card-preview--photo' : ''}${
+          previewFit === 'contain' ? ' content-kit-card-preview--contain' : ''
+        }${previewContent ? ' content-kit-card-preview--custom' : ''}`}
+      >
+        {previewContent ? (
+          previewContent
+        ) : (
+          <>
+            {previewSrc ? (
+              <img
+                className="content-kit-card-preview-img"
+                src={previewSrc}
+                alt=""
+                draggable={false}
+              />
+            ) : null}
+            {previewLabel ? <span className="content-kit-card-preview-label">{previewLabel}</span> : null}
+          </>
+        )}
+      </div>
+      <div className="content-kit-card-body">
+        <div className="content-kit-card-top">
+          <h3 className="content-kit-card-title">{title}</h3>
+          {status ? <span className={`content-kit-status content-kit-status--${status.tone}`}>{status.label}</span> : null}
+        </div>
+        <p className="content-kit-card-desc">{description}</p>
+        <div className="content-kit-card-actions">{children}</div>
+      </div>
+    </article>
+  );
+}
+
+const CONTENT_KIT_PREVIEWS = {
+  print: '/content-kit/print-map.jpg',
+  clientMap: '/content-kit/client-map.jpg',
+  amenities: '/content-kit/amenity-map.jpg',
+  tour: '/content-kit/property-tour.jpg',
+  neighborhood: '/content-kit/amenity-map.jpg',
+  embed: '/content-kit/embed-listing.jpg',
+};
 
 /**
- * Floating right panel: shareable client link, raster PNG/PDF export, optional browser print.
+ * Full-panel Content kit: shareable outputs for one listing map.
  */
 export default function ShareMapPanel({
   open,
@@ -23,18 +81,26 @@ export default function ShareMapPanel({
   onOpenPrintMap,
   onExportPng: _onExportPng,
   onExportPdf: _onExportPdf,
-  /** When true, PNG/PDF export is unavailable (e.g. dashboard before opening the map in the editor). */
   rasterExportDisabled = false,
   rasterExportDisabledReason = 'Open this map in the editor to export the live map image.',
-  /** Mobile dashboard: client map + tour links only (bottom sheet). */
   mobileShareFocus = false,
   hasTourData = false,
+  hasAmenityData = false,
+  hasNeighborhoodMap = false,
+  neighborhoodMapAssets = null,
   onTourGenerated,
+  onAmenityGenerated,
+  onNeighborhoodGenerated: _onNeighborhoodGenerated,
+  onGenerateNeighborhoodMap,
+  neighborhoodBusy = false,
+  neighborhoodStatus: _neighborhoodStatus = '',
+  neighborhoodError = '',
 }) {
   const [copied, setCopied] = useState(false);
   const [tourCopied, setTourCopied] = useState(false);
   const [amenityCopied, setAmenityCopied] = useState(false);
   const [generatingTour, setGeneratingTour] = useState(false);
+  const [generatingAmenity, setGeneratingAmenity] = useState(false);
   const [embedCopied, setEmbedCopied] = useState(false);
   const [embedHeight, setEmbedHeight] = useState(500);
   const [busy, setBusy] = useState(false);
@@ -48,37 +114,50 @@ export default function ShareMapPanel({
   const lastSavedDescriptionRef = useRef((mapDescription || '').trim());
 
   useEffect(() => {
+    if (!open) return;
     const nextTitle = (mapTitle || '').trim() || 'Untitled map';
     setTitleDraft(nextTitle);
     lastSavedTitleRef.current = nextTitle;
     setTitleSaveState('idle');
-  }, [mapTitle, mapId, open]);
+    // Intentionally not depending on mapTitle — live onChange would mark drafts as "saved"
+    // and skip the blur persist. Reset only when opening / switching maps.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mapId, open]);
 
   useEffect(() => {
+    if (!open) return;
     const next = mapDescription || '';
     setDescriptionDraft(next);
     lastSavedDescriptionRef.current = next.trim();
     setDescSaveState('idle');
-  }, [mapDescription, mapId, open]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mapId, open]);
 
   useEffect(() => {
     if (!open) {
       setGeneratingTour(false);
+      setGeneratingAmenity(false);
     }
   }, [open]);
 
   const persistTitle = useCallback(async () => {
     const trimmed = titleDraft.trim();
     if (!trimmed) {
-      setTitleDraft(lastSavedTitleRef.current);
+      setTitleDraft(lastSavedTitleRef.current || 'Untitled map');
       setTitleSaveState('error');
       setErr('Map title cannot be empty.');
       return;
     }
 
     onMapTitleChange?.(trimmed);
-    if (needsSave || !mapId) return;
-    if (trimmed === lastSavedTitleRef.current) return;
+    if (needsSave || !mapId) {
+      lastSavedTitleRef.current = trimmed;
+      return;
+    }
+    if (trimmed === lastSavedTitleRef.current) {
+      setTitleSaveState('idle');
+      return;
+    }
 
     setTitleSaveState('saving');
     setErr(null);
@@ -87,7 +166,7 @@ export default function ShareMapPanel({
       lastSavedTitleRef.current = trimmed;
       setTitleSaveState('saved');
       await onMapsUpdated?.();
-      window.setTimeout(() => setTitleSaveState('idle'), 2000);
+      window.setTimeout(() => setTitleSaveState((s) => (s === 'saved' ? 'idle' : s)), 2000);
     } catch (e) {
       setTitleSaveState('error');
       setErr(e?.message || 'Could not save map title');
@@ -97,16 +176,23 @@ export default function ShareMapPanel({
   const persistDescription = useCallback(async () => {
     const trimmed = descriptionDraft.trim();
     onMapDescriptionChange?.(trimmed);
-    if (needsSave || !mapId) return;
-    if (trimmed === lastSavedDescriptionRef.current) return;
+    if (needsSave || !mapId) {
+      lastSavedDescriptionRef.current = trimmed;
+      return;
+    }
+    if (trimmed === lastSavedDescriptionRef.current) {
+      setDescSaveState('idle');
+      return;
+    }
 
     setDescSaveState('saving');
+    setErr(null);
     try {
       await mapService.updateMap(mapId, { description: trimmed });
       lastSavedDescriptionRef.current = trimmed;
       setDescSaveState('saved');
       await onMapsUpdated?.();
-      window.setTimeout(() => setDescSaveState('idle'), 2000);
+      window.setTimeout(() => setDescSaveState((s) => (s === 'saved' ? 'idle' : s)), 2000);
     } catch (e) {
       setDescSaveState('error');
       setErr(e?.message || 'Could not save property description');
@@ -116,12 +202,14 @@ export default function ShareMapPanel({
   const shareUrls = getMapShareUrls(shareToken);
   const shareUrl = shareUrls?.client || '';
   const embedUrl = shareToken ? `${shareUrl}?embed=1` : '';
-  /** Dedicated path + locked basemap so cold opens do not race map style init. */
   const tourUrl = shareToken
     ? `${window.location.origin}/tour/${shareToken}?basemap=imagery-3d`
     : '';
   const amenityMapUrl = shareUrls?.amenities || '';
   const amenityMapEditUrl = shareUrls?.amenitiesEdit || '';
+  const neighborhoodAmenityEditUrl = amenityMapEditUrl
+    ? `${amenityMapEditUrl}${amenityMapEditUrl.includes('?') ? '&' : '?'}from=neighborhood`
+    : '';
 
   const embedSnippet = useMemo(() => {
     if (!embedUrl) return '';
@@ -203,12 +291,13 @@ export default function ShareMapPanel({
     }
   };
 
-  const handleOpenAmenityEditor = async () => {
-    if (!amenityMapEditUrl) return;
+  const handleOpenAmenityEditor = async ({ fromNeighborhood = false } = {}) => {
+    const url = fromNeighborhood ? neighborhoodAmenityEditUrl : amenityMapEditUrl;
+    if (!url) return;
     setErr(null);
     try {
       await ensureMapIsPublic();
-      window.open(amenityMapEditUrl, '_blank', 'noopener,noreferrer');
+      window.open(url, '_blank', 'noopener,noreferrer');
     } catch (e) {
       setErr(e?.message || 'Could not open amenity map editor');
     } finally {
@@ -260,6 +349,9 @@ export default function ShareMapPanel({
         tourSettings: result.tourSettings,
         tourSlidePlan: result.tourSlidePlan,
       });
+      onAmenityGenerated?.({
+        tourNearbyCache: result.tourNearbyCache,
+      });
       await onMapsUpdated?.();
       await navigator.clipboard.writeText(tourUrl);
       setTourCopied(true);
@@ -268,13 +360,36 @@ export default function ShareMapPanel({
         try {
           tourTab.location.reload();
         } catch {
-          // Same-origin tab should always be reloadable; ignore if blocked.
+          // ignore
         }
       }
     } catch (e) {
       setErr(e?.message || 'Could not create tour');
     } finally {
       setGeneratingTour(false);
+      setBusy(false);
+    }
+  };
+
+  const handleGenerateAmenityMap = async () => {
+    if (!amenityMapUrl || !mapId) return;
+    setErr(null);
+    setGeneratingAmenity(true);
+    try {
+      await ensureMapIsPublic();
+      const mapData = await mapService.getMapById(mapId);
+      const result = await autoGenerateAmenityMap({ shareToken, mapData });
+      onAmenityGenerated?.({
+        tourNearbyCache: result.tourNearbyCache,
+      });
+      await onMapsUpdated?.();
+      await navigator.clipboard.writeText(amenityMapUrl);
+      setAmenityCopied(true);
+      window.setTimeout(() => setAmenityCopied(false), 2200);
+    } catch (e) {
+      setErr(e?.message || 'Could not create amenity map');
+    } finally {
+      setGeneratingAmenity(false);
       setBusy(false);
     }
   };
@@ -307,429 +422,551 @@ export default function ShareMapPanel({
     }
   };
 
+  const readyStatus = { tone: 'ready', label: 'Ready' };
+  const generateStatus = { tone: 'new', label: 'Generate' };
+  const needsSaveStatus = { tone: 'warn', label: 'Save first' };
+  const lockedStatus = needsSave ? needsSaveStatus : shareToken ? readyStatus : { tone: 'warn', label: 'No share link' };
+  const amenityReady = Boolean(hasAmenityData);
+  const neighborhoodReady = Boolean(hasNeighborhoodMap);
+  const neighborhoodPreviewSrc =
+    neighborhoodMapAssets?.pngUrl || CONTENT_KIT_PREVIEWS.neighborhood;
+
   return (
     <>
-      {generatingTour ? (
-        <MapLoadingOverlay phraseSet="createTour" className="map-loading-overlay--share-create" />
+      {generatingTour || generatingAmenity || neighborhoodBusy ? (
+        <MapLoadingOverlay
+          phraseSet={neighborhoodBusy ? 'map' : generatingAmenity ? 'amenities' : 'createTour'}
+          className="map-loading-overlay--share-create"
+        />
       ) : null}
       <div
-        className={`print-share-panel-overlay${mobileShareFocus ? ' print-share-panel-overlay--mobile' : ''}`}
+        className={`print-share-panel-overlay print-share-panel-overlay--kit${
+          mobileShareFocus ? ' print-share-panel-overlay--mobile' : ''
+        }`}
         onClick={onClose}
         role="presentation"
       >
-      <aside
-        className={`print-share-panel${mobileShareFocus ? ' print-share-panel--mobile' : ''}`}
-        onClick={(e) => e.stopPropagation()}
-        role="dialog"
-        aria-labelledby="print-share-panel-title"
-      >
-        <div className="print-share-panel-header">
-          {mobileShareFocus && <span className="print-share-panel-grabber" aria-hidden="true" />}
-          <h2 id="print-share-panel-title" className="print-share-panel-title">
-            Share map
-          </h2>
-          <button type="button" className="print-share-panel-close" onClick={onClose} aria-label="Close">
-            ×
-          </button>
-        </div>
-        {!mobileShareFocus && (
-        <>
-        <section className="print-share-title-section" aria-labelledby="print-share-map-title-label">
-          <label id="print-share-map-title-label" className="print-share-property-label" htmlFor="print-share-map-title">
-            Map title
-          </label>
-          <p className="print-share-property-hint">
-            Shown on share links, the property tour, and your saved maps list.
-          </p>
-          <input
-            id="print-share-map-title"
-            className="print-share-title-input"
-            type="text"
-            value={titleDraft}
-            onChange={(e) => {
-              setTitleDraft(e.target.value);
-              onMapTitleChange?.(e.target.value);
-              if (titleSaveState === 'saved') setTitleSaveState('idle');
-            }}
-            onBlur={() => {
-              void persistTitle();
-            }}
-            placeholder="e.g. 1200 Elk Ridge — 640 acres"
-          />
-          {needsSave ? (
-            <p className="print-share-property-note">
-              Save this map to publish the title on share and tour links.
-            </p>
-          ) : (
-            <p className="print-share-property-status" aria-live="polite">
-              {titleSaveState === 'saving'
-                ? 'Saving title…'
-                : titleSaveState === 'saved'
-                  ? 'Title saved.'
-                  : titleSaveState === 'error'
-                    ? 'Could not save title. Try again.'
-                    : 'Edits save automatically when you leave this field.'}
-            </p>
-          )}
-        </section>
+        <aside
+          className={`print-share-panel print-share-panel--kit${
+            mobileShareFocus ? ' print-share-panel--mobile' : ''
+          }`}
+          data-tour="print-share-panel"
+          onClick={(e) => e.stopPropagation()}
+          role="dialog"
+          aria-labelledby="print-share-panel-title"
+        >
+          <div className="print-share-panel-header content-kit-header">
+            {mobileShareFocus && <span className="print-share-panel-grabber" aria-hidden="true" />}
+            <div className="content-kit-header-text">
+              <p className="content-kit-eyebrow">Listing content kit</p>
+              <h2 id="print-share-panel-title" className="print-share-panel-title">
+                Share &amp; generate
+              </h2>
+              <p className="content-kit-lead">
+                One listing map unlocks client links, amenity maps, tours, print, and a printable neighborhood map.
+              </p>
+            </div>
+            <button type="button" className="print-share-panel-close" onClick={onClose} aria-label="Close">
+              ×
+            </button>
+          </div>
 
-        <section className="print-share-property-section" aria-labelledby="print-share-property-desc-label">
-          <label id="print-share-property-desc-label" className="print-share-property-label" htmlFor="print-share-property-desc">
-            Property description
-          </label>
-          <p className="print-share-property-hint">
-            Shown at the top of the client share map and property tour (above agent photo and logo).
-          </p>
-          <textarea
-            id="print-share-property-desc"
-            className="print-share-property-textarea"
-            value={descriptionDraft}
-            onChange={(e) => {
-              setDescriptionDraft(e.target.value);
-              onMapDescriptionChange?.(e.target.value);
-              if (descSaveState === 'saved') setDescSaveState('idle');
-            }}
-            onBlur={() => {
-              void persistDescription();
-            }}
-            rows={5}
-            placeholder="Summarize the property, acreage, water rights, improvements, or other highlights for clients…"
-          />
-          {needsSave ? (
-            <p className="print-share-property-note">
-              Save this map to publish the description on share and tour links.
-            </p>
-          ) : (
-            <p className="print-share-property-status" aria-live="polite">
-              {descSaveState === 'saving'
-                ? 'Saving…'
-                : descSaveState === 'saved'
-                  ? 'Saved — clients will see this on share and tour.'
-                  : descSaveState === 'error'
-                    ? 'Could not save. Try again or save the map from the editor.'
-                    : 'Edits save automatically when you leave this field.'}
-            </p>
-          )}
-        </section>
-        </>
-        )}
-
-        {err && <div className="print-share-panel-error">{err}</div>}
-
-        <section className="print-share-option">
-          <h3 className="print-share-option-title">Client map (link)</h3>
-          <p className="print-share-option-desc">
-            A lightweight view for your client: pan and zoom, see map graphics and labels. No editing tools.
-          </p>
-          {needsSave ? (
-            <p className="print-share-option-note">Save this map first to create a share link.</p>
-          ) : !shareToken ? (
-            <p className="print-share-option-note">This map has no share token yet. Save again from the editor.</p>
-          ) : (
-            <>
-              <label className="print-share-url-label" htmlFor="print-share-url-input">
-                Link
-              </label>
-              <div className="print-share-url-row">
-                <input
-                  id="print-share-url-input"
-                  type="text"
-                  readOnly
-                  value={shareUrl}
-                  className="print-share-url-input"
-                />
-                <button
-                  type="button"
-                  className="print-share-primary-btn"
-                  onClick={handleCopyLink}
-                  disabled={busy}
+          {!mobileShareFocus && (
+            <div className="content-kit-meta">
+              <section className="print-share-title-section" aria-labelledby="print-share-map-title-label">
+                <label
+                  id="print-share-map-title-label"
+                  className="print-share-property-label"
+                  htmlFor="print-share-map-title"
                 >
-                  {copied ? 'Copied' : busy ? '…' : 'Copy link'}
-                </button>
-                <button
-                  type="button"
-                  className="print-share-secondary-btn"
-                  onClick={async () => {
-                    setErr(null);
-                    try {
-                      await ensureMapIsPublic();
-                      window.open(shareUrl, '_blank', 'noopener,noreferrer');
-                    } catch (e) {
-                      setErr(e?.message || 'Could not open preview');
-                    } finally {
-                      setBusy(false);
+                  Listing title
+                </label>
+                <input
+                  id="print-share-map-title"
+                  className="print-share-title-input"
+                  type="text"
+                  value={titleDraft}
+                  onChange={(e) => {
+                    setTitleDraft(e.target.value);
+                    if (titleSaveState === 'saved' || titleSaveState === 'error') {
+                      setTitleSaveState('idle');
                     }
                   }}
-                  disabled={busy || !shareUrl}
-                >
-                  Preview
-                </button>
-              </div>
-              {!isPublic && (
-                <p className="print-share-option-hint">
-                  First copy turns on <strong>public access</strong> for this link so anyone with the URL can view
-                  it.
-                </p>
-              )}
-            </>
-          )}
-          {needsSave && (
-            <button type="button" className="print-share-secondary-btn" onClick={onOpenSave}>
-              Open save
-            </button>
-          )}
-        </section>
-
-        {!mobileShareFocus && (
-        <section className="print-share-option">
-          <h3 className="print-share-option-title">Embed on listing</h3>
-          <p className="print-share-option-desc">
-            Paste this HTML into your MLS or website “custom HTML” block. It’s the same client map, with the side panel
-            tucked away until visitors open it — better for narrow layouts.
-          </p>
-          {needsSave ? (
-            <p className="print-share-option-note">Save this map first to create embed code.</p>
-          ) : !shareToken ? (
-            <p className="print-share-option-note">This map has no share token yet. Save again from the editor.</p>
-          ) : (
-            <>
-              <label className="print-share-url-label" htmlFor="print-embed-height">
-                Iframe height
-              </label>
-              <div className="print-share-embed-height-row">
-                <select
-                  id="print-embed-height"
-                  className="print-share-embed-height-select"
-                  value={embedHeight}
-                  onChange={(e) => setEmbedHeight(Number(e.target.value) || 500)}
-                >
-                  <option value={400}>400 px</option>
-                  <option value={500}>500 px</option>
-                  <option value={600}>600 px</option>
-                  <option value={720}>720 px</option>
-                </select>
-              </div>
-              <label className="print-share-url-label" htmlFor="print-embed-snippet">
-                Embed code
-              </label>
-              <textarea
-                id="print-embed-snippet"
-                readOnly
-                className="print-share-embed-snippet"
-                value={embedSnippet}
-                rows={6}
-                spellCheck={false}
-              />
-              <div className="print-share-url-row print-share-embed-actions">
-                <button
-                  type="button"
-                  className="print-share-primary-btn"
-                  onClick={handleCopyEmbed}
-                  disabled={busy}
-                >
-                  {embedCopied ? 'Copied' : busy ? '…' : 'Copy embed code'}
-                </button>
-                <button
-                  type="button"
-                  className="print-share-secondary-btn print-share-embed-preview-btn"
-                  onClick={handleOpenEmbedPreview}
-                  disabled={busy}
-                >
-                  Preview embed
-                </button>
-              </div>
-              {!isPublic && (
-                <p className="print-share-option-hint">
-                  First copy or preview turns on <strong>public access</strong> so the embedded map can load for site
-                  visitors.
-                </p>
-              )}
-            </>
-          )}
-          {needsSave && (
-            <button type="button" className="print-share-secondary-btn" onClick={onOpenSave}>
-              Open save
-            </button>
-          )}
-        </section>
-        )}
-
-        {!mobileShareFocus && (
-        <section className="print-share-option">
-          <h3 className="print-share-option-title">Print</h3>
-          <p className="print-share-option-desc">
-            Open print mode to choose page layout and define the print area directly on the map, then generate a PDF.
-          </p>
-          {rasterExportDisabled ? <p className="print-share-option-note">{rasterExportDisabledReason}</p> : null}
-          <button
-            type="button"
-            className="print-share-primary-btn"
-            disabled={rasterExportDisabled}
-            onClick={onOpenPrintMap}
-          >
-            Print Map
-          </button>
-        </section>
-        )}
-
-        <section className="print-share-option print-share-option--amenities">
-          <h3 className="print-share-option-title">Neighborhood amenity map</h3>
-          <p className="print-share-option-desc">
-            Show parks, schools, cafés, restaurants, grocery stores, fire and police stations,
-            and libraries together on one calm map. Choose a radius and individual places for
-            each category.
-          </p>
-          {needsSave ? (
-            <p className="print-share-option-note">
-              Save this map first to build or share an amenity map.
-            </p>
-          ) : !shareToken ? (
-            <p className="print-share-option-note">
-              This map has no share token yet. Save again from the editor.
-            </p>
-          ) : (
-            <>
-              <button
-                type="button"
-                className="print-share-primary-btn print-share-amenity-create-btn"
-                onClick={() => void handleOpenAmenityEditor()}
-                disabled={busy}
-              >
-                Make / edit amenity map
-              </button>
-              <label className="print-share-url-label" htmlFor="print-amenity-map-url-input">
-                Client amenity map link
-              </label>
-              <div className="print-share-url-row">
-                <input
-                  id="print-amenity-map-url-input"
-                  type="text"
-                  readOnly
-                  value={amenityMapUrl}
-                  className="print-share-url-input"
+                  onBlur={() => {
+                    void persistTitle();
+                  }}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') {
+                      e.preventDefault();
+                      e.currentTarget.blur();
+                    }
+                  }}
+                  placeholder="e.g. 1200 Elk Ridge — 640 acres"
                 />
-                <button
-                  type="button"
-                  className="print-share-primary-btn"
-                  onClick={() => void handleCopyAmenityLink()}
-                  disabled={busy}
+                {needsSave ? (
+                  <p className="print-share-property-note">Save this listing to publish the title on share links.</p>
+                ) : (
+                  <p className="print-share-property-status" aria-live="polite">
+                    {titleSaveState === 'saving'
+                      ? 'Saving title…'
+                      : titleSaveState === 'saved'
+                        ? 'Title saved.'
+                        : titleSaveState === 'error'
+                          ? 'Could not save title. Try again.'
+                          : 'Edits save when you leave this field.'}
+                  </p>
+                )}
+              </section>
+
+              <section className="print-share-property-section" aria-labelledby="print-share-property-desc-label">
+                <label
+                  id="print-share-property-desc-label"
+                  className="print-share-property-label"
+                  htmlFor="print-share-property-desc"
                 >
-                  {amenityCopied ? 'Copied' : 'Copy link'}
-                </button>
-              </div>
-              <button
-                type="button"
-                className="print-share-secondary-btn"
-                onClick={() => void handleOpenAmenityMap()}
-                disabled={busy}
-              >
-                Preview amenity map
-              </button>
-            </>
+                  Property description
+                </label>
+                <textarea
+                  id="print-share-property-desc"
+                  className="print-share-property-textarea"
+                  value={descriptionDraft}
+                  onChange={(e) => {
+                    setDescriptionDraft(e.target.value);
+                    if (descSaveState === 'saved' || descSaveState === 'error') {
+                      setDescSaveState('idle');
+                    }
+                  }}
+                  onBlur={() => {
+                    void persistDescription();
+                  }}
+                  rows={3}
+                  placeholder="Highlights for clients on the share map and tour…"
+                />
+                {needsSave ? (
+                  <p className="print-share-property-note">Save to publish this description.</p>
+                ) : (
+                  <p className="print-share-property-status" aria-live="polite">
+                    {descSaveState === 'saving'
+                      ? 'Saving…'
+                      : descSaveState === 'saved'
+                        ? 'Description saved.'
+                        : descSaveState === 'error'
+                          ? 'Could not save. Try again.'
+                          : 'Edits save when you leave this field.'}
+                  </p>
+                )}
+              </section>
+            </div>
+          )}
+
+          {(err || neighborhoodError) && (
+            <div className="print-share-panel-error">{err || neighborhoodError}</div>
           )}
           {needsSave && (
-            <button type="button" className="print-share-secondary-btn" onClick={onOpenSave}>
-              Open save
-            </button>
+            <div className="content-kit-save-banner">
+              <p>Save this listing once to unlock share links, tours, amenity maps, and neighborhood maps.</p>
+              <button type="button" className="print-share-primary-btn" onClick={onOpenSave}>
+                Save listing
+              </button>
+            </div>
           )}
-        </section>
 
-        <section className="print-share-option">
-          <h3 className="print-share-option-title">Digital property tour</h3>
-          <p className="print-share-option-desc">
-            Step through your map story for clients — welcome, property views, photos, and nearby amenities.
-          </p>
-          {needsSave ? (
-            <p className="print-share-option-note">Save this map first to build or share a tour.</p>
-          ) : !shareToken ? (
-            <p className="print-share-option-note">This map has no share token yet. Save again from the editor.</p>
-          ) : (
-            <>
-              {hasTourData ? (
+          <div className={`content-kit-grid${mobileShareFocus ? ' content-kit-grid--mobile' : ''}`}>
+            {!mobileShareFocus && (
+              <KitCard
+                id="print"
+                title="Print map"
+                description="Just a regular map with legend, compass and the map you've made. Will make a PDF for printing or sharing."
+                previewClass="content-kit-preview--print"
+                previewLabel="Print"
+                previewSrc={CONTENT_KIT_PREVIEWS.print}
+                previewFit="contain"
+                status={rasterExportDisabled ? { tone: 'warn', label: 'Open in editor' } : readyStatus}
+                accent="print"
+              >
+                {rasterExportDisabled ? (
+                  <p className="print-share-option-note">{rasterExportDisabledReason}</p>
+                ) : null}
+                <div className="content-kit-card-action-row">
+                  <button
+                    type="button"
+                    className="print-share-primary-btn"
+                    disabled={rasterExportDisabled}
+                    onClick={onOpenPrintMap}
+                  >
+                    Print map
+                  </button>
+                </div>
+              </KitCard>
+            )}
+
+            <KitCard
+              id="client-map"
+              title="Client map"
+              description="A digital map of the property that can be shared via a link. It will have the added photos, and it can be explored by the recipient."
+              previewClass="content-kit-preview--map"
+              previewLabel="Map link"
+              previewSrc={CONTENT_KIT_PREVIEWS.clientMap}
+              status={lockedStatus}
+              accent="map"
+            >
+              {needsSave || !shareToken ? (
+                <p className="print-share-option-note">Save to create the client link.</p>
+              ) : (
                 <>
-                  <label className="print-share-url-label" htmlFor="print-tour-url-input">
-                    Tour link
-                  </label>
                   <div className="print-share-url-row">
-                    <input
-                      id="print-tour-url-input"
-                      type="text"
-                      readOnly
-                      value={tourUrl}
-                      className="print-share-url-input"
-                    />
+                    <input type="text" readOnly value={shareUrl} className="print-share-url-input" aria-label="Client map link" />
+                  </div>
+                  <div className="content-kit-card-action-row">
+                    <button type="button" className="print-share-primary-btn" onClick={handleCopyLink} disabled={busy}>
+                      {copied ? 'Copied' : 'Copy link'}
+                    </button>
+                    <button
+                      type="button"
+                      className="print-share-secondary-btn"
+                      disabled={busy}
+                      onClick={async () => {
+                        setErr(null);
+                        try {
+                          await ensureMapIsPublic();
+                          window.open(shareUrl, '_blank', 'noopener,noreferrer');
+                        } catch (e) {
+                          setErr(e?.message || 'Could not open preview');
+                        } finally {
+                          setBusy(false);
+                        }
+                      }}
+                    >
+                      Preview
+                    </button>
+                  </div>
+                </>
+              )}
+            </KitCard>
+
+            {!mobileShareFocus && (
+              <KitCard
+                id="amenities"
+                title="Amenity map"
+                description="Interactive neighborhood map that shows off parks, schools, cafés, and more. Same amenity list as the tour and printable map."
+                previewClass="content-kit-preview--amenities"
+                previewLabel="Amenities"
+                previewSrc={CONTENT_KIT_PREVIEWS.amenities}
+                status={
+                  needsSave || !shareToken
+                    ? lockedStatus
+                    : amenityReady
+                      ? readyStatus
+                      : generateStatus
+                }
+                accent="amenities"
+              >
+                {needsSave || !shareToken ? (
+                  <p className="print-share-option-note">Save to build or share an amenity map.</p>
+                ) : amenityReady ? (
+                  <>
+                    <div className="print-share-url-row">
+                      <input
+                        type="text"
+                        readOnly
+                        value={amenityMapUrl}
+                        className="print-share-url-input"
+                        aria-label="Amenity map link"
+                      />
+                    </div>
+                    <div className="content-kit-card-action-row">
+                      <button
+                        type="button"
+                        className="print-share-primary-btn"
+                        onClick={() => void handleCopyAmenityLink()}
+                        disabled={busy}
+                      >
+                        {amenityCopied ? 'Copied' : 'Copy link'}
+                      </button>
+                      <button
+                        type="button"
+                        className="print-share-secondary-btn"
+                        onClick={() => void handleOpenAmenityMap()}
+                        disabled={busy}
+                      >
+                        Preview
+                      </button>
+                      <button
+                        type="button"
+                        className="print-share-secondary-btn"
+                        onClick={() => void handleOpenAmenityEditor()}
+                        disabled={busy}
+                      >
+                        Edit
+                      </button>
+                    </div>
+                  </>
+                ) : (
+                  <div className="content-kit-card-action-row content-kit-card-action-row--stack">
                     <button
                       type="button"
                       className="print-share-primary-btn"
-                      onClick={handleCopyTourLink}
-                      disabled={busy}
+                      onClick={() => void handleGenerateAmenityMap()}
+                      disabled={busy || generatingAmenity}
                     >
-                      {tourCopied ? 'Copied' : busy ? '…' : 'Copy link'}
+                      {generatingAmenity
+                        ? 'Creating…'
+                        : amenityCopied
+                          ? 'Link copied'
+                          : 'Create Immediately'}
+                    </button>
+                    <button
+                      type="button"
+                      className="print-share-secondary-btn"
+                      onClick={() => void handleOpenAmenityEditor()}
+                      disabled={busy || generatingAmenity}
+                    >
+                      Customize amenities
                     </button>
                   </div>
-                  <div className="print-share-tour-actions">
+                )}
+              </KitCard>
+            )}
+
+            <KitCard
+              id="tour"
+              title="Property tour"
+              description="Cinematic walkthrough of the property and amenities nearby. Shares the amenity list with the amenity and neighborhood maps."
+              previewClass="content-kit-preview--tour"
+              previewLabel="Tour"
+              previewSrc={CONTENT_KIT_PREVIEWS.tour}
+              status={
+                needsSave || !shareToken
+                  ? lockedStatus
+                  : hasTourData
+                    ? readyStatus
+                    : generateStatus
+              }
+              accent="tour"
+            >
+              {needsSave || !shareToken ? (
+                <p className="print-share-option-note">Save to build or share a tour.</p>
+              ) : hasTourData ? (
+                <>
+                  <div className="print-share-url-row">
+                    <input type="text" readOnly value={tourUrl} className="print-share-url-input" aria-label="Tour link" />
+                  </div>
+                  <div className="content-kit-card-action-row">
+                    <button type="button" className="print-share-primary-btn" onClick={handleCopyTourLink} disabled={busy}>
+                      {tourCopied ? 'Copied' : 'Copy link'}
+                    </button>
+                    <button type="button" className="print-share-secondary-btn" onClick={handleOpenTour} disabled={busy}>
+                      Preview
+                    </button>
                     <button
                       type="button"
                       className="print-share-secondary-btn"
                       onClick={() => void handleOpenTourEditor()}
                       disabled={busy}
                     >
-                      Edit tour
-                    </button>
-                    <button
-                      type="button"
-                      className="print-share-secondary-btn"
-                      onClick={handleOpenTour}
-                      disabled={busy}
-                    >
-                      Preview tour
+                      Edit
                     </button>
                   </div>
                 </>
               ) : (
-                <div className="print-share-tour-choices">
-                  <div className="print-share-tour-choice">
+                <div className="content-kit-card-action-row content-kit-card-action-row--stack">
+                  <button
+                    type="button"
+                    className="print-share-primary-btn"
+                    onClick={() => void handleGenerateTour()}
+                    disabled={busy || generatingTour}
+                  >
+                    {generatingTour ? 'Creating tour…' : tourCopied ? 'Tour link copied' : 'Create Immediately'}
+                  </button>
+                  <button
+                    type="button"
+                    className="print-share-secondary-btn"
+                    onClick={() => void handleOpenTourEditor()}
+                    disabled={busy || generatingTour}
+                  >
+                    Customize tour
+                  </button>
+                </div>
+              )}
+            </KitCard>
+
+            {!mobileShareFocus && (
+              <KitCard
+                id="neighborhood"
+                title="Neighborhood map"
+                description="Printable PDF of nearby places. Uses the same amenities as the amenity map and tour."
+                previewClass="content-kit-preview--neighborhood"
+                previewLabel="PDF"
+                previewSrc={neighborhoodPreviewSrc}
+                previewFit="contain"
+                status={
+                  needsSave || !shareToken
+                    ? lockedStatus
+                    : neighborhoodReady
+                      ? readyStatus
+                      : generateStatus
+                }
+                accent="neighborhood"
+              >
+                {needsSave || !shareToken ? (
+                  <p className="print-share-option-note">Save to build a neighborhood map.</p>
+                ) : neighborhoodReady ? (
+                  <div className="content-kit-card-action-row">
                     <button
                       type="button"
                       className="print-share-primary-btn"
-                      onClick={() => void handleGenerateTour()}
-                      disabled={busy || generatingTour}
+                      onClick={() => {
+                        if (neighborhoodMapAssets?.pdfUrl) {
+                          window.open(neighborhoodMapAssets.pdfUrl, '_blank', 'noopener,noreferrer');
+                        }
+                      }}
+                      disabled={busy || !neighborhoodMapAssets?.pdfUrl}
                     >
-                      {generatingTour
-                        ? 'Creating tour…'
-                        : tourCopied
-                          ? 'Tour link copied'
-                          : 'Create tour'}
+                      Download PDF
                     </button>
-                    <p className="print-share-tour-choice-desc">
-                      Makes a default tour which can be edited later.
-                    </p>
-                  </div>
-                  <div className="print-share-tour-choice">
                     <button
                       type="button"
                       className="print-share-secondary-btn"
-                      onClick={() => void handleOpenTourEditor()}
-                      disabled={busy || generatingTour}
+                      onClick={() => {
+                        if (neighborhoodMapAssets?.pngUrl) {
+                          window.open(neighborhoodMapAssets.pngUrl, '_blank', 'noopener,noreferrer');
+                        }
+                      }}
+                      disabled={busy || !neighborhoodMapAssets?.pngUrl}
                     >
-                      Customize tour
+                      Preview
                     </button>
-                    <p className="print-share-tour-choice-desc">
-                      Customize your tour from the beginning.
-                    </p>
+                    <button
+                      type="button"
+                      className="print-share-secondary-btn"
+                      onClick={() => void handleOpenAmenityEditor({ fromNeighborhood: true })}
+                      disabled={busy}
+                    >
+                      Edit amenities
+                    </button>
+                    <button
+                      type="button"
+                      className="print-share-secondary-btn"
+                      onClick={() => void onGenerateNeighborhoodMap?.()}
+                      disabled={busy || neighborhoodBusy || !onGenerateNeighborhoodMap}
+                    >
+                      {neighborhoodBusy ? 'Updating…' : 'Regenerate'}
+                    </button>
                   </div>
-                </div>
-              )}
-            </>
-          )}
-          {needsSave && (
-            <button type="button" className="print-share-secondary-btn" onClick={onOpenSave}>
-              Open save
-            </button>
-          )}
-        </section>
-      </aside>
-    </div>
+                ) : amenityReady ? (
+                  <div className="content-kit-card-action-row content-kit-card-action-row--stack">
+                    <button
+                      type="button"
+                      className="print-share-primary-btn"
+                      onClick={() => void onGenerateNeighborhoodMap?.()}
+                      disabled={busy || neighborhoodBusy || !onGenerateNeighborhoodMap}
+                    >
+                      {neighborhoodBusy ? 'Generating…' : 'Generate PDF'}
+                    </button>
+                    <button
+                      type="button"
+                      className="print-share-secondary-btn"
+                      onClick={() => void handleOpenAmenityEditor({ fromNeighborhood: true })}
+                      disabled={busy || neighborhoodBusy}
+                    >
+                      Customize amenities
+                    </button>
+                  </div>
+                ) : (
+                  <div className="content-kit-card-action-row content-kit-card-action-row--stack">
+                    <button
+                      type="button"
+                      className="print-share-primary-btn"
+                      onClick={() => void onGenerateNeighborhoodMap?.()}
+                      disabled={busy || neighborhoodBusy || !onGenerateNeighborhoodMap}
+                    >
+                      {neighborhoodBusy ? 'Creating…' : 'Create Immediately'}
+                    </button>
+                    <button
+                      type="button"
+                      className="print-share-secondary-btn"
+                      onClick={() => void handleOpenAmenityEditor({ fromNeighborhood: true })}
+                      disabled={busy || neighborhoodBusy}
+                    >
+                      Customize amenities
+                    </button>
+                  </div>
+                )}
+              </KitCard>
+            )}
+
+            {!mobileShareFocus && (
+              <KitCard
+                id="embed"
+                title="Embed on listing"
+                description="Iframe for MLS or website custom HTML. Same as the client map, compact chrome."
+                previewClass="content-kit-preview--embed"
+                previewLabel="Embed"
+                previewSrc={CONTENT_KIT_PREVIEWS.embed}
+                status={lockedStatus}
+                accent="embed"
+                previewContent={
+                  needsSave || !shareToken ? (
+                    <div className="content-kit-embed-preview">
+                      <img
+                        className="content-kit-card-preview-img"
+                        src={CONTENT_KIT_PREVIEWS.embed}
+                        alt=""
+                        draggable={false}
+                      />
+                      <span className="content-kit-card-preview-label">Embed</span>
+                    </div>
+                  ) : (
+                    <div className="content-kit-embed-preview">
+                      <div className="content-kit-embed-preview-toolbar">
+                        <label className="content-kit-embed-height-label" htmlFor="print-embed-height">
+                          Height
+                        </label>
+                        <select
+                          id="print-embed-height"
+                          className="content-kit-embed-height-select"
+                          value={embedHeight}
+                          onChange={(e) => setEmbedHeight(Number(e.target.value) || 500)}
+                        >
+                          <option value={400}>400 px</option>
+                          <option value={500}>500 px</option>
+                          <option value={600}>600 px</option>
+                          <option value={720}>720 px</option>
+                        </select>
+                      </div>
+                      <textarea
+                        readOnly
+                        className="content-kit-embed-snippet"
+                        value={embedSnippet}
+                        spellCheck={false}
+                        aria-label="Embed code"
+                      />
+                    </div>
+                  )
+                }
+              >
+                {needsSave || !shareToken ? (
+                  <p className="print-share-option-note">Save to create embed code.</p>
+                ) : (
+                  <div className="content-kit-card-action-row">
+                    <button type="button" className="print-share-primary-btn" onClick={handleCopyEmbed} disabled={busy}>
+                      {embedCopied ? 'Copied' : 'Copy embed'}
+                    </button>
+                    <button
+                      type="button"
+                      className="print-share-secondary-btn"
+                      onClick={handleOpenEmbedPreview}
+                      disabled={busy}
+                    >
+                      Preview
+                    </button>
+                  </div>
+                )}
+              </KitCard>
+            )}
+          </div>
+        </aside>
+      </div>
     </>
   );
 }

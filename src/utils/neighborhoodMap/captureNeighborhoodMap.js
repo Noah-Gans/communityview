@@ -26,7 +26,7 @@ async function waitMapIdle(map) {
   await sleep(200);
 }
 
-function bboxFromSnapshotsAndAmenities(snapshots, amenities) {
+function bboxFromSnapshotsAndAmenities(snapshots, amenities, homePosition) {
   const pts = [];
   (snapshots || []).forEach((s) => {
     if (!s?.geometry) return;
@@ -40,6 +40,11 @@ function bboxFromSnapshotsAndAmenities(snapshots, amenities) {
   (amenities || []).forEach((a) => {
     if (Number.isFinite(a.lng) && Number.isFinite(a.lat)) pts.push([a.lng, a.lat]);
   });
+  const homeLat = Number(homePosition?.lat);
+  const homeLng = Number(homePosition?.lng);
+  if (Number.isFinite(homeLat) && Number.isFinite(homeLng)) {
+    pts.push([homeLng, homeLat]);
+  }
   if (!pts.length) return null;
   try {
     return turf.bbox(turf.multiPoint(pts));
@@ -83,19 +88,35 @@ async function setBasemap(id) {
 }
 
 /**
+ * @param {{
+ *   map: object,
+ *   snapshots: object[],
+ *   amenities: object[],
+ *   basemapId?: string,
+ *   homePosition?: { lat: number, lng: number }|null,
+ *   onStatus?: Function,
+ *   framingMode?: 'auto' | 'custom',
+ * }} opts
  * @returns {Promise<string>} PNG data URL of the map frame only
  */
 export async function captureNeighborhoodMapFrame({
   map,
   snapshots,
   amenities,
-  basemapId = 'streets-v11',
+  basemapId = 'outdoors-v12',
+  homePosition = null,
   onStatus,
+  framingMode = 'auto',
 } = {}) {
   if (!map) throw new Error('Map is not ready for neighborhood capture.');
   const report = typeof onStatus === 'function' ? onStatus : () => {};
+  const mode = framingMode === 'custom' ? 'custom' : 'auto';
 
-  report('Framing home + amenities on Streets…');
+  report(
+    mode === 'custom'
+      ? 'Capturing your current map frame…'
+      : 'Framing home + amenities…'
+  );
   await setBasemap(basemapId);
 
   try {
@@ -106,32 +127,34 @@ export async function captureNeighborhoodMapFrame({
 
   forceOwnershipLayersHidden(map);
 
-  const printElements = buildNeighborhoodPrintElements(snapshots, amenities, {
-    forShare: false,
-    zoom: typeof map.getZoom === 'function' ? map.getZoom() : 14.5,
-  });
-
   // Fit parcel(s) + amenity pins tightly — small padding only for pin/label bleed.
-  const rawBbox = bboxFromSnapshotsAndAmenities(snapshots, amenities);
-  const bbox = expandBbox(rawBbox, 1.04);
-  if (bbox) {
-    map.fitBounds(
-      [
-        [bbox[0], bbox[1]],
-        [bbox[2], bbox[3]],
-      ],
-      { padding: 48, duration: 0, maxZoom: 16 }
-    );
+  if (mode === 'auto') {
+    const rawBbox = bboxFromSnapshotsAndAmenities(snapshots, amenities, homePosition);
+    const bbox = expandBbox(rawBbox, 1.04);
+    if (bbox) {
+      map.fitBounds(
+        [
+          [bbox[0], bbox[1]],
+          [bbox[2], bbox[3]],
+        ],
+        { padding: 48, duration: 0, maxZoom: 16 }
+      );
+    }
+    await waitMapIdle(map);
+    forceOwnershipLayersHidden(map);
+    await sleep(1100);
+  } else {
+    await waitMapIdle(map);
+    forceOwnershipLayersHidden(map);
+    await sleep(400);
   }
-  await waitMapIdle(map);
-  forceOwnershipLayersHidden(map);
-  await sleep(1100);
 
   // Rebuild pins at the *fitted* zoom so circle size matches the final frame.
   const fittedZoom = typeof map.getZoom === 'function' ? map.getZoom() : 14.5;
   const sizedElements = buildNeighborhoodPrintElements(snapshots, amenities, {
     forShare: false,
     zoom: fittedZoom,
+    homePosition,
   });
 
   if (typeof map.triggerRepaint === 'function') map.triggerRepaint();

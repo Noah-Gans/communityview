@@ -29,13 +29,17 @@ export function ensureRegridTileProxyUrl(templateUrl) {
 export function removeRegridParcelLayersAndSource(map) {
   if (!map) return;
   try {
-    [
-      REGRID_PARCELS_SELECTION_LINE_ID,
-      REGRID_PARCELS_SELECTION_FILL_ID,
-      'regrid-parcels-outline',
-      'regrid-parcels-layer',
-    ].forEach((id) => {
-      if (map.getLayer(id)) map.removeLayer(id);
+    // ownership-label-layer (and any other consumer) must be removed before the source,
+    // or removeSource fails and we leave orphans: labels on, outline/fill gone.
+    const styleLayers = map.getStyle?.()?.layers || [];
+    styleLayers.forEach((layer) => {
+      if (layer?.source === 'regrid-parcels' && map.getLayer(layer.id)) {
+        try {
+          map.removeLayer(layer.id);
+        } catch (_) {
+          /* ignore */
+        }
+      }
     });
     if (map.getSource('regrid-parcels')) map.removeSource('regrid-parcels');
   } catch (_) {
@@ -225,7 +229,8 @@ export function applyRegridParcelSelectionHighlightPaint(map, settings = {}) {
 
 /** Highlight selected parcels via MVT layer filter — O(selection), not O(viewport parcels). */
 export function setRegridParcelSelectionHighlight(map, features, settings = {}) {
-  if (!map?.isStyleLoaded?.()) return false;
+  // Style *document* is enough; isStyleLoaded() goes false while tiles download after zoom.
+  if (!map?.getStyle?.()?.layers) return false;
   ensureRegridParcelSelectionHighlightLayers(map);
   if (!map.getLayer(REGRID_PARCELS_SELECTION_FILL_ID)) return false;
 
@@ -275,12 +280,19 @@ export function addRegridParcelLayersFromTileJson(
   const tileUrls = getRegridTileUrls(tileJson);
   if (!map?.addSource || !tileUrls.length) return;
   if (map.getSource('regrid-parcels')) {
-    const mapZoom = typeof map.getZoom === 'function' ? map.getZoom() : activeRegridVectorMinZoom;
-    if (mapZoom >= activeRegridVectorMinZoom) {
-      forceRegridParcelsSourceRefresh(map, tileUrls);
+    const stackMissing =
+      !map.getLayer('regrid-parcels-layer') || !map.getLayer('regrid-parcels-outline');
+    if (stackMissing) {
+      // Source survived a partial teardown (e.g. labels blocked removeSource) — full rebuild.
+      removeRegridParcelLayersAndSource(map);
+    } else {
+      const mapZoom = typeof map.getZoom === 'function' ? map.getZoom() : activeRegridVectorMinZoom;
+      if (mapZoom >= activeRegridVectorMinZoom) {
+        forceRegridParcelsSourceRefresh(map, tileUrls);
+      }
+      ensureRegridParcelSelectionHighlightLayers(map);
+      return;
     }
-    ensureRegridParcelSelectionHighlightLayers(map);
-    return;
   }
 
   activeRegridVectorMinZoom = vectorMinZoom;
@@ -448,8 +460,11 @@ export function addRegridParcelLayersFromTileJson(
 
 /** Rebuild MVT stack when map center moves between sparse/dense geofences (source minzoom must change). */
 export function rebuildRegridParcelStackForDensity(map, vectorMinZoom) {
-  if (!map?.isStyleLoaded?.() || !cachedRegridTileJson) return;
-  if (vectorMinZoom === activeRegridVectorMinZoom && map.getSource('regrid-parcels')) return;
+  if (!map?.getStyle?.()?.layers || !cachedRegridTileJson) return;
+  if (vectorMinZoom === activeRegridVectorMinZoom && map.getSource('regrid-parcels')) {
+    // Still repair if draw layers were lost while source remained.
+    if (map.getLayer('regrid-parcels-outline') && map.getLayer('regrid-parcels-layer')) return;
+  }
   try {
     removeRegridParcelLayersAndSource(map);
   } catch (_) {
@@ -486,7 +501,7 @@ export function forceRegridParcelsSourceRefresh(map, tilesOverride) {
  * hide layers based on current map zoom, so Mapbox can fetch MVT tiles as soon as zoom allows.
  */
 export function syncRegridParcelLayersIntoMap(map, parcelMapVisibility) {
-  if (!map?.isStyleLoaded?.()) return;
+  if (!map?.getStyle?.()?.layers) return;
   if (!parcelMapVisibility?.showRegrid) return;
 
   const vectorMinZoom = getRegridVectorMinZoomForMap(map);
@@ -496,6 +511,9 @@ export function syncRegridParcelLayersIntoMap(map, parcelMapVisibility) {
     addRegridParcelLayersFromTileJson(map, cachedRegridTileJson, vectorMinZoom);
   } else if (vectorMinZoom !== activeRegridVectorMinZoom) {
     rebuildRegridParcelStackForDensity(map, vectorMinZoom);
+  } else if (!map.getLayer('regrid-parcels-outline') || !map.getLayer('regrid-parcels-layer')) {
+    // Repair orphaned source (lines removed, labels left behind).
+    addRegridParcelLayersFromTileJson(map, cachedRegridTileJson, vectorMinZoom);
   } else {
     ensureRegridParcelSelectionHighlightLayers(map);
   }
@@ -506,14 +524,16 @@ export function syncRegridParcelLayersIntoMap(map, parcelMapVisibility) {
  * @returns {boolean} true when the Regrid source was added this pass
  */
 export function syncOwnershipTileLayer(map, parcelMapVisibility) {
-  if (!map?.isStyleLoaded?.()) return false;
+  // Same as highlight: don't require isStyleLoaded() (false while data tiles load after zoom).
+  if (!map?.getStyle?.()?.layers) return false;
   if (parcelMapVisibility?.showRegrid) {
     if (!cachedRegridTileJson) return false;
     const hadSource = Boolean(map.getSource('regrid-parcels'));
+    const hadOutline = Boolean(map.getLayer('regrid-parcels-outline'));
     syncRegridParcelLayersIntoMap(map, parcelMapVisibility);
     applyParcelVisualizationVisibility(map, parcelMapVisibility);
     bringRegridParcelLayersBeforeSymbolLabels(map);
-    return !hadSource && Boolean(map.getSource('regrid-parcels'));
+    return (!hadSource || !hadOutline) && Boolean(map.getSource('regrid-parcels'));
   }
   applyParcelVisualizationVisibility(map, { showRegrid: false });
   clearRegridParcelSelectionHighlight(map);

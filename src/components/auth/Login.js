@@ -14,6 +14,15 @@ async function getPostLoginPath(uid) {
   return hasActiveSubscription(status) ? "/map" : "/signup";
 }
 
+/** Only allow same-origin relative paths (open-redirect safe). */
+function safeReturnToPath(raw) {
+  const value = String(raw || "").trim();
+  if (!value.startsWith("/") || value.startsWith("//") || value.includes("://")) {
+    return null;
+  }
+  return value;
+}
+
 const Login = () => {
   const navigate = useNavigate();
   const location = useLocation();
@@ -27,7 +36,13 @@ const Login = () => {
   const [resetMessage, setResetMessage] = useState("");
 
   const finishLogin = async (firebaseUser) => {
-    const destination = await getPostLoginPath(firebaseUser.uid);
+    const params = new URLSearchParams(location.search);
+    const returnTo = safeReturnToPath(params.get("returnTo"));
+    const postLoginPath = await getPostLoginPath(firebaseUser.uid);
+    // Unpaid users must reach /signup — do not honor returnTo to protected routes
+    // (ProtectedRoute would bounce them back to login in a loop).
+    const destination =
+      postLoginPath === "/signup" ? postLoginPath : returnTo || postLoginPath;
     setIsLoading(false);
     navigate(destination, { replace: true });
   };

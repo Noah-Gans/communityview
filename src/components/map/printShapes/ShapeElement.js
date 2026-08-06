@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { Rnd } from 'react-rnd';
 import { useMapContext } from '../../../pages/MapContext';
 import { svgMap } from './svgMap';
+import './printShapeChrome.css';
 
 export default function ShapeElement({ shape, onChange, onDelete, featurePointerEvents = 'auto' }) {
   const { selectedPrintElement, setSelectedPrintElement, shareViewerReadOnly } = useMapContext();
@@ -9,7 +10,6 @@ export default function ShapeElement({ shape, onChange, onDelete, featurePointer
   const [livePosition, setLivePosition] = useState({ x: shape.x, y: shape.y });
   const [liveSize, setLiveSize] = useState({ width: shape.width, height: shape.height });
   const [rotation, setRotation] = useState(shape.rotation || 0);
-  const [resizeDirection, setResizeDirection] = useState(null);
 
   const fill = shape.fill || '#000000';
   const stroke = shape.stroke || '#000000';
@@ -42,10 +42,10 @@ export default function ShapeElement({ shape, onChange, onDelete, featurePointer
     const el = document.getElementById(`shape-${shape.id}`);
     if (!el) return;
     const { left, top, width, height } = el.getBoundingClientRect();
-    const cx = left + width / 2,
-      cy = top + height / 2;
-    const dx = eMove.pageX - cx,
-      dy = eMove.pageY - cy;
+    const cx = left + width / 2;
+    const cy = top + height / 2;
+    const dx = eMove.pageX - cx;
+    const dy = eMove.pageY - cy;
     const angle = (Math.atan2(dx, -dy) * 180) / Math.PI;
     const newRot = Math.round(angle);
     setRotation(newRot);
@@ -53,18 +53,55 @@ export default function ShapeElement({ shape, onChange, onDelete, featurePointer
   };
 
   const renderSvg = svgMap[shape.svgKey];
+  const scale = shape.printZoomScale ?? 1;
+
+  const persistBox = (pos, size) => {
+    onChange({
+      ...shape,
+      x: pos.x,
+      y: pos.y,
+      width: size.width / scale,
+      height: size.height / scale,
+      screenWidth: size.width,
+      screenHeight: size.height,
+      printZoomScale: scale,
+      rotation,
+    });
+  };
 
   return (
     <Rnd
       bounds="parent"
       position={livePosition}
       size={liveSize}
+      minWidth={28}
+      minHeight={28}
       disableDragging={!!shareViewerReadOnly}
-      disableResizing={!!shareViewerReadOnly}
-      lockAspectRatio={['topLeft', 'topRight', 'bottomLeft', 'bottomRight'].includes(resizeDirection)}
-      onResizeStart={(e, dir) => {
+      enableResizing={
+        shareViewerReadOnly || !isSelected
+          ? false
+          : {
+              top: false,
+              right: false,
+              bottom: false,
+              left: false,
+              topRight: true,
+              bottomRight: true,
+              bottomLeft: true,
+              topLeft: true,
+            }
+      }
+      lockAspectRatio
+      resizeHandleClasses={{
+        topLeft: 'print-shape-resize-handle print-shape-resize-handle--tl',
+        topRight: 'print-shape-resize-handle print-shape-resize-handle--tr',
+        bottomLeft: 'print-shape-resize-handle print-shape-resize-handle--bl',
+        bottomRight: 'print-shape-resize-handle print-shape-resize-handle--br',
+      }}
+      onDragStart={(e) => {
         if (shareViewerReadOnly) return;
-        setResizeDirection(dir);
+        e.stopPropagation?.();
+        if (!isSelected) setSelectedPrintElement(shape);
       }}
       onDrag={(e, d) => {
         if (shareViewerReadOnly) return;
@@ -72,8 +109,9 @@ export default function ShapeElement({ shape, onChange, onDelete, featurePointer
       }}
       onDragStop={(e, d) => {
         if (shareViewerReadOnly) return;
-        setLivePosition({ x: d.x, y: d.y });
-        onChange({ ...shape, x: d.x, y: d.y });
+        const next = { x: d.x, y: d.y };
+        setLivePosition(next);
+        persistBox(next, liveSize);
       }}
       onResize={(e, dir, ref, delta, pos) => {
         if (shareViewerReadOnly) return;
@@ -86,13 +124,13 @@ export default function ShapeElement({ shape, onChange, onDelete, featurePointer
         if (shareViewerReadOnly) return;
         const newW = parseFloat(ref.style.width);
         const newH = parseFloat(ref.style.height);
-        setLiveSize({ width: newW, height: newH });
+        const nextSize = { width: newW, height: newH };
+        setLiveSize(nextSize);
         setLivePosition(pos);
-        setResizeDirection(null);
-        const s = shape.printZoomScale ?? 1;
-        onChange({ ...shape, x: pos.x, y: pos.y, width: newW / s, height: newH / s, rotation });
+        persistBox(pos, nextSize);
       }}
-      style={{ pointerEvents: featurePointerEvents, zIndex: 1000 }}
+      style={{ pointerEvents: featurePointerEvents, zIndex: isSelected ? 1100 : 1000 }}
+      className={isSelected && !shareViewerReadOnly ? 'print-shape-rnd is-selected' : 'print-shape-rnd'}
     >
       <div
         id={`shape-${shape.id}`}
@@ -107,25 +145,10 @@ export default function ShapeElement({ shape, onChange, onDelete, featurePointer
           position: 'relative',
           transform: `rotate(${rotation}deg)`,
           transformOrigin: 'center center',
-          cursor: 'pointer',
+          cursor: shareViewerReadOnly ? 'default' : isSelected ? 'grab' : 'pointer',
         }}
       >
-        {isSelected && !shareViewerReadOnly && (
-          <div
-            style={{
-              position: 'absolute',
-              top: -4,
-              left: -4,
-              width: 'calc(100% + 8px)',
-              height: 'calc(100% + 8px)',
-              border: '3px dashed #22c55a',
-              borderRadius: '4px',
-              pointerEvents: 'none',
-              zIndex: 998,
-              boxShadow: '0 0 0 2px rgba(34, 197, 94, 0.25)',
-            }}
-          />
-        )}
+        {isSelected && !shareViewerReadOnly && <div className="print-shape-selection-ring" />}
 
         {renderSvg &&
           renderSvg({
@@ -141,6 +164,7 @@ export default function ShapeElement({ shape, onChange, onDelete, featurePointer
 
         {isSelected && !shareViewerReadOnly && (
           <div
+            className="print-shape-rotate-knob"
             onMouseDown={(e) => {
               e.stopPropagation();
               window.addEventListener('mousemove', handleRotation);
@@ -150,44 +174,20 @@ export default function ShapeElement({ shape, onChange, onDelete, featurePointer
                 { once: true }
               );
             }}
-            style={{
-              position: 'absolute',
-              top: -30,
-              left: '50%',
-              transform: 'translateX(-50%)',
-              width: 24,
-              height: 24,
-              backgroundColor: '#16a34a',
-              borderRadius: '50%',
-              border: '3px solid white',
-              cursor: 'grab',
-              zIndex: 2000,
-              boxShadow: '0 0 0 2px rgba(0,0,0,0.2)',
-            }}
           />
         )}
 
         {isSelected && !shareViewerReadOnly && (
           <button
-            onClick={() => onDelete(shape.id)}
-            style={{
-              position: 'absolute',
-              top: -28,
-              right: -28,
-              background: 'red',
-              color: 'white',
-              border: 'none',
-              borderRadius: '3px',
-              cursor: 'pointer',
-              width: 20,
-              height: 20,
-              fontSize: 12,
-              lineHeight: '16px',
-              padding: 0,
-              zIndex: 3000,
+            type="button"
+            className="print-shape-delete-btn"
+            onClick={(e) => {
+              e.stopPropagation();
+              onDelete(shape.id);
             }}
+            aria-label="Delete"
           >
-            X
+            ×
           </button>
         )}
       </div>

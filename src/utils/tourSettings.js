@@ -236,6 +236,35 @@ export function mapHasTourNearbyData(tourNearbyCache) {
   );
 }
 
+/** True when the agent has toggled place visibility (amenity map or tour). */
+export function tourNearbyCacheLooksCurated(tourNearbyCache) {
+  const root = normalizeTourNearbyCacheFromFirestore(tourNearbyCache);
+  if (!root?.byAmenity) return false;
+  return Object.values(root.byAmenity).some((fc) =>
+    (fc?.features || []).some(
+      (f) => f?.properties?.amenityMapHidden === true || f?.properties?.tourHidden === true
+    )
+  );
+}
+
+/**
+ * Amenity map + tour + neighborhood PDF share one pool: drop places the agent hid.
+ * @param {Record<string, { features?: unknown[] }>|null|undefined} byAmenity
+ */
+export function byAmenityVisibleForListing(byAmenity) {
+  const out = {};
+  for (const [key, entry] of Object.entries(byAmenity || {})) {
+    const features = Array.isArray(entry?.features)
+      ? entry.features.filter(
+          (f) =>
+            f?.properties?.amenityMapHidden !== true && f?.properties?.tourHidden !== true
+        )
+      : [];
+    out[key] = { ...entry, features };
+  }
+  return out;
+}
+
 /**
  * Share panel: map already has a tour worth sharing (not a fresh map).
  * Pass raw Firestore fields only — never normalized {@link normalizeTourSettings} output.

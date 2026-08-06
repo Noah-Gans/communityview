@@ -9,8 +9,13 @@ import {
   PRINT_GALLERY_DRAG_MIME,
   registerPrintGalleryDragPayload,
 } from '../../utils/printGalleryDragBuffer';
+import {
+  PRINT_CATALOG_DRAG_MIME,
+  registerPrintCatalogDragPayload,
+  isPointLikeCatalogTool,
+} from '../../utils/printCatalogDragBuffer';
 import { galleryItemToSrc } from '../../utils/mapPhotoStorage';
-import AgentProfileEditor from './AgentProfileEditor';
+import { useTutorialWalkthrough } from '../../contexts/TutorialWalkthroughContext';
 
 /** Order for the “All” tab: Points → Lines → Shapes. */
 const CATALOG_CATEGORY_ORDER = { point: 0, line: 1, shape: 2 };
@@ -41,15 +46,27 @@ export default function PrintEditorContent({
   onPrintGalleryTransfer,
   onRemovePrintGalleryItem,
   printGalleryUploading = false,
-  agentProfile = null,
-  onAgentProfileChange,
-  agentAccountDefaults = {},
-  onUploadAgentImage,
 }) {
   const [openFlowSection, setOpenFlowSection] = useState('elements');
   const [elementCategory, setElementCategory] = useState(MAP_ELEMENT_CATEGORY.ALL);
   const [galleryDropActive, setGalleryDropActive] = useState(false);
   const [lightboxSrc, setLightboxSrc] = useState(null);
+  const { isActive: tutorialActive, mode: tutorialMode, currentStep: tutorialStep } =
+    useTutorialWalkthrough();
+
+  useEffect(() => {
+    if (!tutorialActive || tutorialMode !== 'print-map' || !tutorialStep) return;
+    if (tutorialStep.id === 'print-editor-sections') {
+      setOpenFlowSection('basemap');
+    } else if (tutorialStep.id === 'print-elements') {
+      setOpenFlowSection('elements');
+      window.requestAnimationFrame(() => {
+        document
+          .querySelector('[data-tour="print-elements-panel"]')
+          ?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+      });
+    }
+  }, [tutorialActive, tutorialMode, tutorialStep]);
 
   const canRemoveGalleryItem = typeof onRemovePrintGalleryItem === 'function';
 
@@ -386,23 +403,6 @@ export default function PrintEditorContent({
         </PrintFlowAccordion>
       )}
 
-      {extrasReady && typeof onAgentProfileChange === 'function' && (
-        <PrintFlowAccordion
-          id="agentCard"
-          title="Agent card"
-          isOpen={openFlowSection === 'agentCard'}
-          onToggle={toggleFlowSection}
-        >
-          <AgentProfileEditor
-            value={agentProfile}
-            onChange={onAgentProfileChange}
-            account={agentAccountDefaults}
-            galleryItems={printGalleryItems}
-            onUploadImage={onUploadAgentImage}
-          />
-        </PrintFlowAccordion>
-      )}
-
       <PrintFlowAccordion
         id="elements"
         title="Map elements"
@@ -428,21 +428,58 @@ export default function PrintEditorContent({
           ))}
         </div>
         <div className="print-element-grid">
-          {filteredCatalog.map((item) => (
-            <button
-              key={item.id}
-              type="button"
-              className={`print-element-tile${item.category === 'line' ? ' print-element-tile--line' : ''} ${
-                activePrintTool === item.tool ? 'active' : ''
-              }`}
-              onClick={() => setActivePrintTool(item.tool)}
-            >
-              <span className="print-element-icon" aria-hidden>
-                {renderCatalogIcon(item)}
-              </span>
-              <span className="print-element-name">{item.label}</span>
-            </button>
-          ))}
+          {filteredCatalog.map((item) => {
+            const canDrag = isPointLikeCatalogTool(item.tool);
+            return (
+              <button
+                key={item.id}
+                type="button"
+                draggable={canDrag}
+                className={`print-element-tile${item.category === 'line' ? ' print-element-tile--line' : ''}${
+                  canDrag ? ' print-element-tile--draggable' : ''
+                } ${activePrintTool === item.tool ? 'active' : ''}`}
+                title={
+                  canDrag
+                    ? `Drag ${item.label} onto the map, or click then place`
+                    : `Click to draw ${item.label}`
+                }
+                onClick={() => setActivePrintTool(item.tool)}
+                onDragStart={(e) => {
+                  if (!canDrag) {
+                    e.preventDefault();
+                    return;
+                  }
+                  const id = registerPrintCatalogDragPayload({
+                    tool: item.tool,
+                    label: item.label,
+                  });
+                  if (!id) {
+                    e.preventDefault();
+                    return;
+                  }
+                  e.dataTransfer.setData(PRINT_CATALOG_DRAG_MIME, id);
+                  e.dataTransfer.setData('text/plain', item.label || item.tool);
+                  e.dataTransfer.effectAllowed = 'copy';
+                  setActivePrintTool(item.tool);
+                  // Prefer the on-map place preview over the browser drag ghost.
+                  const empty = document.createElement('div');
+                  empty.style.width = '1px';
+                  empty.style.height = '1px';
+                  empty.style.opacity = '0';
+                  document.body.appendChild(empty);
+                  e.dataTransfer.setDragImage(empty, 0, 0);
+                  requestAnimationFrame(() => {
+                    empty.remove();
+                  });
+                }}
+              >
+                <span className="print-element-icon" aria-hidden>
+                  {renderCatalogIcon(item)}
+                </span>
+                <span className="print-element-name">{item.label}</span>
+              </button>
+            );
+          })}
         </div>
       </PrintFlowAccordion>
 

@@ -551,84 +551,89 @@ export default function PrintFeatureEditPanel({
     </option>
   ));
 
+  const isTextNote = selectedPrintElement.type === 'note';
+
   const labelAppearanceBody = (
     <>
-      <p className="print-feature-subpanel-hint">
-        Drag the map label to move it when this feature is selected.
-      </p>
+      {!isTextNote && (
+        <>
+          <p className="print-feature-subpanel-hint">
+            Drag the map label to move it when this feature is selected.
+          </p>
 
-      <label className="print-feature-field">
-        Map label font
-        <select
-          value={selectedPrintElement.labelFontFamily || 'Inter, system-ui, sans-serif'}
-          onChange={(e) =>
-            updatePrintElement({ ...selectedPrintElement, labelFontFamily: e.target.value })
-          }
-        >
-          {fontSelectOptions}
-        </select>
-      </label>
+          <label className="print-feature-field">
+            Map label font
+            <select
+              value={selectedPrintElement.labelFontFamily || 'Inter, system-ui, sans-serif'}
+              onChange={(e) =>
+                updatePrintElement({ ...selectedPrintElement, labelFontFamily: e.target.value })
+              }
+            >
+              {fontSelectOptions}
+            </select>
+          </label>
 
-      <div className="print-feature-field-row">
-        <label className="print-feature-field print-feature-field--half">
-          Map label size
-          <input
-            type="number"
-            min={8}
-            max={32}
-            value={selectedPrintElement.labelFontSize ?? 11}
-            onChange={(e) =>
-              updatePrintElement({
-                ...selectedPrintElement,
-                labelFontSize: Number(e.target.value) || 11,
-              })
-            }
-          />
-        </label>
-        <label className="print-feature-field print-feature-field--half">
-          Map label text
-          <input
-            type="color"
-            value={selectedPrintElement.labelColor || '#111827'}
-            onChange={(e) =>
-              updatePrintElement({ ...selectedPrintElement, labelColor: e.target.value })
-            }
-          />
-        </label>
-      </div>
+          <div className="print-feature-field-row">
+            <label className="print-feature-field print-feature-field--half">
+              Map label size
+              <input
+                type="number"
+                min={8}
+                max={32}
+                value={selectedPrintElement.labelFontSize ?? 11}
+                onChange={(e) =>
+                  updatePrintElement({
+                    ...selectedPrintElement,
+                    labelFontSize: Number(e.target.value) || 11,
+                  })
+                }
+              />
+            </label>
+            <label className="print-feature-field print-feature-field--half">
+              Map label text
+              <input
+                type="color"
+                value={selectedPrintElement.labelColor || '#111827'}
+                onChange={(e) =>
+                  updatePrintElement({ ...selectedPrintElement, labelColor: e.target.value })
+                }
+              />
+            </label>
+          </div>
 
-      <label className="print-feature-field">
-        Map label background
-        <input
-          type="color"
-          value={selectedPrintElement.labelBackgroundColor || '#ffffff'}
-          onChange={(e) =>
-            updatePrintElement({ ...selectedPrintElement, labelBackgroundColor: e.target.value })
-          }
-        />
-      </label>
+          <label className="print-feature-field">
+            Map label background
+            <input
+              type="color"
+              value={selectedPrintElement.labelBackgroundColor || '#ffffff'}
+              onChange={(e) =>
+                updatePrintElement({ ...selectedPrintElement, labelBackgroundColor: e.target.value })
+              }
+            />
+          </label>
 
-      {statsCapable && (
-        <label className="print-feature-field print-feature-checkbox">
-          <input
-            type="checkbox"
-            checked={!!selectedPrintElement.labelAttachStats}
-            onChange={(e) =>
-              updatePrintElement({
-                ...selectedPrintElement,
-                labelAttachStats: e.target.checked,
-              })
-            }
-          />
-          <span className="print-feature-checkbox-label">
-            Include area / length / perimeter on the map label (when available)
-          </span>
-        </label>
+          {statsCapable && (
+            <label className="print-feature-field print-feature-checkbox">
+              <input
+                type="checkbox"
+                checked={!!selectedPrintElement.labelAttachStats}
+                onChange={(e) =>
+                  updatePrintElement({
+                    ...selectedPrintElement,
+                    labelAttachStats: e.target.checked,
+                  })
+                }
+              />
+              <span className="print-feature-checkbox-label">
+                Include area / length / perimeter on the map label (when available)
+              </span>
+            </label>
+          )}
+        </>
       )}
 
-      {selectedPrintElement.type === 'note' && caps?.supportsText && (
+      {isTextNote && caps?.supportsText && (
         <>
-          <p className="print-feature-subheading">Note box — text</p>
           <label className="print-feature-field">
             Horizontal alignment
             <select
@@ -694,7 +699,7 @@ export default function PrintFeatureEditPanel({
             </label>
           </div>
           <label className="print-feature-field">
-            Note background
+            Background
             <input
               type="color"
               value={selectedPrintElement.fill || '#ffffff'}
@@ -817,7 +822,7 @@ export default function PrintFeatureEditPanel({
             onChange={(e) =>
               updatePrintElement({ ...selectedPrintElement, text: e.target.value })
             }
-            placeholder="Note body"
+            placeholder="Enter text"
             rows={4}
           />
         </label>
@@ -907,22 +912,26 @@ export default function PrintFeatureEditPanel({
         </>
       )}
 
-      <label className="print-feature-field">
-        Notes
-        <textarea
-          value={selectedPrintElement.description || ''}
-          onChange={(e) =>
-            updatePrintElement({ ...selectedPrintElement, description: e.target.value })
-          }
-          placeholder="Add notes"
-          rows={3}
-        />
-      </label>
+      {selectedPrintElement.type !== 'note' && (
+        <label className="print-feature-field">
+          Notes
+          <textarea
+            value={selectedPrintElement.description || ''}
+            onChange={(e) =>
+              updatePrintElement({ ...selectedPrintElement, description: e.target.value })
+            }
+            placeholder="Add notes"
+            rows={3}
+          />
+        </label>
+      )}
 
       {metricsBlock}
 
       <NavRow onClick={() => setSubPanel('appearance')}>Feature appearance</NavRow>
-      <NavRow onClick={() => setSubPanel('label')}>Label appearance / move</NavRow>
+      <NavRow onClick={() => setSubPanel('label')}>
+        {isTextNote ? 'Text appearance' : 'Label appearance / move'}
+      </NavRow>
     </>
   );
 
@@ -930,12 +939,15 @@ export default function PrintFeatureEditPanel({
     subPanel === 'appearance'
       ? 'Feature appearance'
       : subPanel === 'label'
-        ? 'Label appearance / move'
+        ? isTextNote
+          ? 'Text appearance'
+          : 'Label appearance / move'
         : '';
 
   return (
     <div
       className="print-feature-edit-card"
+      data-tour="print-feature-edit-panel"
       role="region"
       aria-label="Feature edit"
       onClick={(e) => e.stopPropagation()}

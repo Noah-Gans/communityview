@@ -11,6 +11,7 @@ import ShapeElement from '../../../components/map/printShapes/ShapeElement';
 import PrintMapLabel from '../../../components/map/printShapes/PrintMapLabel';
 import { svgMap } from '../../../components/map/printShapes/svgMap';
 import PrintFeatureEditPanel from '../../print/PrintFeatureEditPanel';
+import PropertyMapWizardBar from '../../print/PropertyMapWizardBar';
 import { parsePrintPlacementTool } from '../../print/annotationModel';
 import {
   arrowHeadPolygon,
@@ -82,6 +83,7 @@ export default function MapPrintOnMapLayer(props) {
     isRegridParcelPolygonFeature,
     handlePropertyMapWizardCancel,
     handlePropertyMapWizardContinue,
+    propertyMapWizardBusy,
     isPanelOpen,
   } = props;
 
@@ -191,13 +193,48 @@ export default function MapPrintOnMapLayer(props) {
               printIconPlaceCursorPx &&
               mapRef.current &&
               (() => {
+                const s = getPrintPixelScale(mapRef.current);
+                if (activePrintTool === 'note') {
+                  const w = 220 * s;
+                  const h = 120 * s;
+                  const fontSize = Math.max(10, 14 * s);
+                  return (
+                    <div
+                      key="print-note-place-preview"
+                      aria-hidden
+                      style={{
+                        position: 'absolute',
+                        left: printIconPlaceCursorPx.x,
+                        top: printIconPlaceCursorPx.y,
+                        transform: 'translate(-50%, -50%)',
+                        width: w,
+                        height: h,
+                        pointerEvents: 'none',
+                        zIndex: 25,
+                        opacity: 0.92,
+                        background: '#ffffff',
+                        border: '1px solid rgba(17, 24, 39, 0.15)',
+                        borderRadius: 6,
+                        boxSizing: 'border-box',
+                        padding: Math.max(6, 8 * s),
+                        color: '#111827',
+                        fontSize,
+                        fontFamily: 'Inter, system-ui, sans-serif',
+                        lineHeight: 1.4,
+                        boxShadow: '0 2px 10px rgba(15, 23, 42, 0.28)',
+                        overflow: 'hidden',
+                      }}
+                    >
+                      Type something…
+                    </div>
+                  );
+                }
                 const parsed = parsePrintPlacementTool(activePrintTool);
                 const svgKey = parsed.shapeSvgKey;
                 if (!svgKey) return null;
                 const renderSvg = svgMap[svgKey];
                 if (!renderSvg) return null;
                 const iconDefaults = getPointIconDefaultStyle(svgKey) || {};
-                const s = getPrintPixelScale(mapRef.current);
                 const baseW = 70;
                 const baseH = 70;
                 const w = baseW * s;
@@ -232,7 +269,6 @@ export default function MapPrintOnMapLayer(props) {
                   </div>
                 );
               })()}
-
             {isPolygonPlacingTool(activePrintTool) && polygonDraftPoints.length > 0 && (
               <svg
                 style={{
@@ -499,10 +535,7 @@ export default function MapPrintOnMapLayer(props) {
                 if (!shouldRenderPrintElementOnMap(element)) return null;
                 const projected = withGeoProjectedFrame(element);
                 const placingTool = activePrintTool && activePrintTool !== 'select';
-                const featurePtr =
-                  placingTool || (activePrintTool === 'select' && selectedPrintElement?.id !== element.id)
-                    ? 'none'
-                    : 'auto';
+                const featurePtr = placingTool ? 'none' : 'auto';
                 switch (element.type) {
                   case 'polygon': {
                     const polygonPoints = projected.projectedPolygonPoints || [];
@@ -987,7 +1020,7 @@ export default function MapPrintOnMapLayer(props) {
         />
       )}
 
-      {isPrinting && !isPropertyTourRoute && (
+      {isPrinting && !isPropertyTourRoute && !propertyMapWizardActive && (
         <div
           className={`print-map-top-toolbar${
             shareViewerReadOnly ? ' print-map-top-toolbar--share' : ''
@@ -1038,51 +1071,13 @@ export default function MapPrintOnMapLayer(props) {
       )}
 
       {isPrinting && propertyMapWizardActive && (
-        <div className="property-map-wizard-bar">
-          <div className="property-map-wizard-bar-inner">
-            <p className="property-map-wizard-title">Select parcel boundaries</p>
-            <p className="property-map-wizard-help">
-              {propertyMapWizardIntent === 'single' ? (
-                <>
-                  Click a parcel on the map to select it. When it looks right, press{' '}
-                  <strong>Continue with selected parcels</strong> below.
-                </>
-              ) : (
-                <>
-                  Click a parcel to select the first one. To add or remove more parcels, hold{' '}
-                  <kbd className="property-map-wizard-kbd">Shift</kbd> and click each parcel.
-                </>
-              )}
-            </p>
-            <p className="property-map-wizard-help property-map-wizard-help-secondary">
-              {propertyMapWizardIntent === 'single'
-                ? 'You can change the selection by clicking a different parcel before you continue.'
-                : 'When you are ready, continue — multiple parcels merge into one outline when they touch, or separate outlines when they do not.'}
-            </p>
-            <p className="property-map-wizard-count">
-              Selected:{' '}
-              <strong>{(selectedFeature || []).filter(isRegridParcelPolygonFeature).length}</strong> parcel
-              {(selectedFeature || []).filter(isRegridParcelPolygonFeature).length === 1 ? '' : 's'}
-            </p>
-            <div className="property-map-wizard-actions">
-              <button
-                type="button"
-                className="property-map-wizard-btn property-map-wizard-btn-secondary"
-                onClick={handlePropertyMapWizardCancel}
-              >
-                Cancel
-              </button>
-              <button
-                type="button"
-                className="property-map-wizard-btn property-map-wizard-btn-primary"
-                onClick={handlePropertyMapWizardContinue}
-                disabled={(selectedFeature || []).filter(isRegridParcelPolygonFeature).length === 0}
-              >
-                Continue with selected parcels
-              </button>
-            </div>
-          </div>
-        </div>
+        <PropertyMapWizardBar
+          selectedCount={(selectedFeature || []).filter(isRegridParcelPolygonFeature).length}
+          isBusy={propertyMapWizardBusy}
+          isPanelOpen={isPanelOpen}
+          onCancel={handlePropertyMapWizardCancel}
+          onContinue={handlePropertyMapWizardContinue}
+        />
       )}
 
       {isPrinting && selectedPrintElement && !shareViewerReadOnly && (

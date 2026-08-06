@@ -62,7 +62,8 @@ export function hasVisibleMapboxStyleUnderlay(map) {
 
 /** True when the live map stack matches the requested basemap (not just React/URL state). */
 export function verifyBasemapAppliedOnMap(map, basemapId) {
-  if (!map?.isStyleLoaded?.()) return false;
+  // Style *document* present is enough — isStyleLoaded() goes false while tiles download.
+  if (!map?.getStyle?.()?.layers) return false;
   const id = String(basemapId || '').trim();
   if (!id) return false;
 
@@ -91,7 +92,7 @@ export function verifyBasemapAppliedOnMap(map, basemapId) {
 
 /** Tour requires Esri imagery plus Mapbox terrain (DEM). */
 export function isTourImagery3DActive(map) {
-  if (!map?.isStyleLoaded?.()) return false;
+  if (!map?.getStyle?.()?.layers) return false;
   let terrainOk = false;
   try {
     terrainOk = Boolean(map.getTerrain?.()?.source);
@@ -146,7 +147,7 @@ export async function waitUntilTourBasemapReady(map, options = {}) {
  * (e.g. Discover landcover visible on top of Imagery after zoom / ownership restack).
  */
 export function needsBasemapOverlayMaintenance(map, basemapId) {
-  if (!map?.isStyleLoaded?.()) return false;
+  if (!map?.getStyle?.()?.layers) return false;
   const id = String(basemapId || '').trim();
   if (!id) return false;
 
@@ -263,6 +264,7 @@ export function restackDataLayersAboveBasemapOverlays(map) {
     .filter((id) => {
       if (MANAGED_BASEMAP_RASTER_LAYER_IDS.includes(id)) return false;
       if (id.includes('regrid')) return false;
+      if (id === 'cv-3d-buildings-layer' || id.startsWith('contour-lines-')) return false;
       if (id.endsWith('-layer') || id.startsWith('soil-')) return true;
       return id.startsWith('gl-draw-');
     });

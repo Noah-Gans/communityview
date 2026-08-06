@@ -8,24 +8,30 @@ import {
   sanitizeMapExportBasename,
 } from '../../utils/mapExportCapture';
 import { buildPrintAgentMetaFromSources } from '../../utils/sharedMapAgentMeta';
-import { normalizeAgentProfile } from '../../utils/agentProfile';
+import { normalizeAgentProfile, accountAgentDefaults } from '../../utils/agentProfile';
 import { auth } from '../../firebase/firebaseConfig';
 import { legends } from '../../assets/legends';
 import { layerNameMappings } from '../../components/map/layerMappings';
 import MapLoadingOverlay from '../../components/loading/MapLoadingOverlay';
 import PrintDashboard from './PrintDashboard';
 import ShareMapPanel from './ShareMapPanel';
+import { runNeighborhoodMapGeneration } from '../../utils/neighborhoodMap/runNeighborhoodMapGeneration';
+import { featuresForListingParcels } from '../../utils/featuresFromPrintElements';
 import {
   mapHasShareableTour,
+  mapHasTourNearbyData,
 } from '../../utils/tourSettings';
 import {
   fetchSavedMapsSummaries,
   invalidateSavedMapsCache,
 } from '../../utils/savedMapsCache';
 import { waitForMapRef } from '../../utils/waitForMapIdle';
+import { useTutorialWalkthrough } from '../../contexts/TutorialWalkthroughContext';
 
 export default function Print() {
   const { userProfile, user } = useUser();
+  const { isActive: printTourActive, mode: tourMode } = useTutorialWalkthrough();
+  const printMapTourActive = printTourActive && tourMode === 'print-map';
   const {
     setIsPrinting,
     clearPrintElements,
@@ -42,8 +48,12 @@ export default function Print() {
     setLayerOrder,
     setPaperSize: setPaperSizeContext,
     setSelectedFeatures,
+    isPrinting,
+    propertyMapWizardActive,
     setPropertyMapWizardActive,
     setPropertyMapWizardIntent,
+    listingParcelRefs,
+    setListingParcelRefs,
     printLayoutMode,
     setPrintLayoutMode,
     printLayoutRect,
@@ -57,9 +67,12 @@ export default function Print() {
     mobileMapsSearchQuery,
   } = useMapContext();
 
-  const [viewMode, setViewMode] = useState(() =>
-    pendingCreateMapFromFeatureRef?.current ? 'edit' : 'dashboard'
-  );
+  const [viewMode, setViewMode] = useState(() => {
+    if (pendingCreateMapFromFeatureRef?.current) return 'edit';
+    // Resume listing wizard after Search → Map It returns to /print
+    if (isPrinting || propertyMapWizardActive) return 'edit';
+    return 'dashboard';
+  });
   const [searchQuery, setSearchQuery] = useState('');
   const [savedMaps, setSavedMaps] = useState([]);
   const [currentMapId, setCurrentMapId] = useState(null);
@@ -73,6 +86,10 @@ export default function Print() {
   const [lastSavedNotice, setLastSavedNotice] = useState(null);
   const [sharePanel, setSharePanel] = useState(null);
   const [sharePanelTourMeta, setSharePanelTourMeta] = useState(null);
+  const [reportBusy, setReportBusy] = useState(false);
+  const [reportStatus, setReportStatus] = useState('');
+  const [reportError, setReportError] = useState('');
+  const [sharePanelNeighborhoodAssets, setSharePanelNeighborhoodAssets] = useState(null);
   const [newMapSetupOpen, setNewMapSetupOpen] = useState(false);
   const [draftMapTitle, setDraftMapTitle] = useState('');
   /** 'parcels' = property wizard; 'custom' = open canvas, no parcel step */
@@ -192,6 +209,16 @@ export default function Print() {
     [resolvedTourMeta]
   );
 
+  const hasAmenityData = useMemo(
+    () => mapHasTourNearbyData(resolvedTourMeta.tourNearbyCache),
+    [resolvedTourMeta]
+  );
+
+  const hasNeighborhoodMap = useMemo(() => {
+    const assets = sharePanelNeighborhoodAssets;
+    return Boolean(assets?.pdfUrl || assets?.pngUrl);
+  }, [sharePanelNeighborhoodAssets]);
+
   const handleTourGenerated = useCallback((result) => {
     setSharePanelTourMeta({
       tourNearbyCache: result?.tourNearbyCache || null,
@@ -212,10 +239,48 @@ export default function Print() {
     }
   }, [viewMode, currentMapId]);
 
+  const handleAmenityGenerated = useCallback((result) => {
+    setSharePanelTourMeta((prev) => ({
+      tourNearbyCache: result?.tourNearbyCache || prev?.tourNearbyCache || null,
+      tourSettings: prev?.tourSettings || null,
+      tourSlidePlan: prev?.tourSlidePlan || null,
+    }));
+    if (viewMode === 'edit' && currentMapId) {
+      setCurrentMap((prev) =>
+        prev
+          ? {
+              ...prev,
+              tourNearbyCache: result?.tourNearbyCache || prev.tourNearbyCache,
+            }
+          : prev
+      );
+    }
+  }, [viewMode, currentMapId]);
+
+  const handleNeighborhoodGenerated = useCallback((result) => {
+    if (result?.tourNearbyCache) {
+      handleAmenityGenerated({ tourNearbyCache: result.tourNearbyCache });
+    }
+    if (result?.neighborhoodMapAssets) {
+      setSharePanelNeighborhoodAssets(result.neighborhoodMapAssets);
+    } else if (result?.pdfDataUrl || result?.pngDataUrl) {
+      // Persist failed (e.g. storage rules not deployed) — keep session Ready state.
+      setSharePanelNeighborhoodAssets({
+        pdfUrl: result.pdfDataUrl || '',
+        pngUrl: result.pngDataUrl || '',
+        generatedAt: Date.now(),
+        title: result.title || 'Neighborhood map',
+      });
+    }
+  }, [handleAmenityGenerated]);
+
   useEffect(() => {
     const mapId = sharePanelResolved?.mapId;
     if (!mapId || !sharePanel) {
-      if (!mapId) setSharePanelTourMeta(null);
+      if (!mapId) {
+        setSharePanelTourMeta(null);
+        setSharePanelNeighborhoodAssets(null);
+      }
       return;
     }
     let cancelled = false;
@@ -228,9 +293,13 @@ export default function Print() {
           tourSettings: map.tourSettings || null,
           tourSlidePlan: map.tourSlidePlan || null,
         });
+        setSharePanelNeighborhoodAssets(map.neighborhoodMapAssets || null);
       })
       .catch(() => {
-        if (!cancelled) setSharePanelTourMeta(null);
+        if (!cancelled) {
+          setSharePanelTourMeta(null);
+          setSharePanelNeighborhoodAssets(null);
+        }
       });
     return () => {
       cancelled = true;
@@ -319,6 +388,7 @@ export default function Print() {
   const startGeneralMapEditor = () => {
     setPropertyMapWizardIntent(null);
     setPropertyMapWizardActive(false);
+    setListingParcelRefs([]);
     setCurrentMapId(null);
     setCurrentMap(null);
     clearPrintElements();
@@ -329,16 +399,25 @@ export default function Print() {
 
   /** Property map: pick parcel(s) on map, then merge into print canvas. */
   const startPropertyMapEditor = (intent) => {
+    // Enter print mode first so panel/parcel effects see isPrinting + wizard together.
+    enterEditMode();
     setPropertyMapWizardIntent(intent);
+    setListingParcelRefs([]);
     setCurrentMapId(null);
     setCurrentMap(null);
     clearPrintElements();
     setAgentProfile(normalizeAgentProfile(null));
     setSelectedFeatures([]);
-    setLayerStatus((prev) => ({ ...prev, ownership: false }));
+    // Keep ownership ON while selecting — Regrid tiles sync off layerStatus; the wizard
+    // flag alone can race the satellite basemap swap and leave lines missing.
+    setLayerStatus((prev) => ({ ...prev, ownership: true }));
     setPropertyMapWizardActive(true);
-    enterEditMode();
     applyMapMakerSatelliteBasemap();
+    try {
+      window.dispatchEvent(new CustomEvent('cv-property-map-wizard-start'));
+    } catch (_) {
+      /* ignore */
+    }
   };
 
   const openNewMapSetup = () => {
@@ -379,6 +458,7 @@ export default function Print() {
     setPrintLayoutMode(false);
     setPropertyMapWizardActive(false);
     setPropertyMapWizardIntent(null);
+    setListingParcelRefs([]);
     clearPrintElements();
     setAgentProfile(null);
     if (pendingPrintBasemapRestoreRef) pendingPrintBasemapRestoreRef.current = null;
@@ -399,7 +479,7 @@ export default function Print() {
 
   // Load a saved map (summary list + full document fetch on open)
   const handleLoadMap = async (mapId) => {
-    if (isMobileViewport) return;
+    if (isMobileViewport) return null;
     const generation = mapLoadGenerationRef.current + 1;
     mapLoadGenerationRef.current = generation;
 
@@ -417,11 +497,6 @@ export default function Print() {
       setPropertyMapWizardActive(false);
       setPropertyMapWizardIntent(null);
 
-      if (!savedMaps.some((m) => m.id === mapId)) {
-        setSaveError('Map not found');
-        return;
-      }
-
       setOpeningMapId(mapId);
       setCurrentMapId(mapId);
       setCurrentMap(null);
@@ -435,7 +510,29 @@ export default function Print() {
       enterEditMode();
 
       const map = await mapService.getMapById(mapId);
-      if (mapLoadGenerationRef.current !== generation) return;
+      // A newer load may have started (Strict Mode). Still return the fetched map;
+      // only skip applying stale state below.
+      const isCurrent = mapLoadGenerationRef.current === generation;
+      if (!isCurrent) {
+        return map;
+      }
+
+      setSavedMaps((prev) => {
+        if (prev.some((m) => m.id === mapId)) return prev;
+        return [
+          {
+            id: mapId,
+            title: map?.title || '',
+            description: map?.description || '',
+            basemap: map?.basemap || 'satellite-streets-v12',
+            isPublic: !!map?.isPublic,
+            shareToken: map?.shareToken || null,
+            updatedAt: map?.updatedAt || null,
+            createdAt: map?.createdAt || null,
+          },
+          ...prev,
+        ];
+      });
 
       setAgentProfile(normalizeAgentProfile(map.agentProfile));
 
@@ -470,6 +567,7 @@ export default function Print() {
           setLayerOrder,
           setPaperSize: setPaperSizeContext,
           setPrintElements,
+          setListingParcelRefs,
           setCurrentBasemapId,
         },
         mapRef
@@ -486,11 +584,22 @@ export default function Print() {
       });
 
       finishOpen(map);
+      return map;
     } catch (error) {
-      if (mapLoadGenerationRef.current !== generation) return;
+      if (mapLoadGenerationRef.current !== generation) return null;
       console.error('Error loading map:', error);
-      setSaveError(error.message || 'Failed to load map');
+      const code = String(error?.code || error?.message || '');
+      const permissionDenied =
+        code.includes('permission-denied') ||
+        /permission/i.test(code) ||
+        /do not have permission/i.test(String(error?.message || ''));
+      setSaveError(
+        permissionDenied
+          ? 'You do not have permission to open this map.'
+          : error.message || 'Failed to load map'
+      );
       exitEditMode();
+      return null;
     } finally {
       if (mapLoadGenerationRef.current === generation) {
         setOpeningMapId(null);
@@ -532,6 +641,7 @@ export default function Print() {
           layerLabels,
           paperSize,
           printElements,
+          listingParcelRefs,
         },
         mapRef
       );
@@ -541,15 +651,20 @@ export default function Print() {
         description: mapDescription.trim(),
         ...mapData,
       };
-      if (agentProfile) {
-        fullMapData.agentProfile = normalizeAgentProfile(agentProfile);
-      }
+      // Stamp account profile onto the map for backend/share consumers.
+      // Editor no longer supports per-map agent-card overrides.
+      fullMapData.agentProfile = normalizeAgentProfile({
+        mode: 'account',
+        ...accountAgentDefaults(userProfile, user),
+      });
+      setAgentProfile(fullMapData.agentProfile);
 
+      const isFirstSave = !currentMapId;
       let result;
       if (currentMapId) {
         await mapService.updateMap(currentMapId, fullMapData);
         result = { mapId: currentMapId };
-    } else {
+      } else {
         result = await mapService.saveMap(fullMapData);
         setCurrentMapId(result.mapId);
       }
@@ -559,6 +674,13 @@ export default function Print() {
       setShowSaveDialog(false);
       setLastSavedNotice(new Date().toLocaleString());
       setTimeout(() => setLastSavedNotice(null), 5000);
+      window.dispatchEvent(new CustomEvent('cv-tutorial-print-saved'));
+
+      // First save → open Content kit so agents discover share/tour options.
+      // During the map-maker tour, the next step asks them to click Share & generate.
+      if (isFirstSave && result?.mapId && !printMapTourActive) {
+        setSharePanel({ mapId: result.mapId });
+      }
     } catch (error) {
       console.error('Error saving map:', error);
       setSaveError(error.message || 'Failed to save map');
@@ -603,6 +725,94 @@ export default function Print() {
     }
     setSharePanel({ mapId: currentMapId });
   };
+
+  const handleGenerateNeighborhoodMap = useCallback(async () => {
+    setReportError('');
+    setReportStatus('Preparing neighborhood map…');
+    setReportBusy(true);
+    try {
+      let refs = listingParcelRefs;
+      let elements = printElements;
+      let title = mapTitle;
+      let existingCache = resolvedTourMeta.tourNearbyCache;
+      let mapId = sharePanel?.mapId || currentMapId;
+      let token = sharePanelResolved?.shareToken;
+
+      if (sharePanel?.mapId) {
+        setReportStatus('Loading listing…');
+        const map = await mapService.getMapById(sharePanel.mapId);
+        refs = map.listingParcelRefs || refs;
+        elements = map.printElements || elements;
+        title = map.title || title;
+        existingCache = map.tourNearbyCache || existingCache;
+        token = map.shareToken || token;
+        mapId = map.id || sharePanel.mapId;
+        if (map.neighborhoodMapAssets) {
+          setSharePanelNeighborhoodAssets(map.neighborhoodMapAssets);
+        }
+        if (viewMode !== 'edit' || sharePanel.mapId !== currentMapId) {
+          await handleLoadMap(sharePanel.mapId);
+          await waitForMapRef(mapRef, 5000);
+        }
+      }
+
+      await waitForMapRef(mapRef, 5000);
+      const features = featuresForListingParcels({
+        listingParcelRefs: refs,
+        selectedFeatures: [],
+        printElements: elements,
+      });
+      if (!features.length) {
+        throw new Error(
+          'No parcels found on this listing. Open the map, add parcel boundaries, save, then generate again.'
+        );
+      }
+
+      const result = await runNeighborhoodMapGeneration({
+        features,
+        printElements: elements,
+        title,
+        map: mapRef?.current,
+        mapRef,
+        user,
+        userProfile,
+        setLayerStatus,
+        onStatus: setReportStatus,
+        existingTourNearbyCache: existingCache,
+        existingMapId: mapId,
+        existingShareToken: token,
+        download: true,
+        saveNewShareMap: false,
+        persistAssets: true,
+      });
+
+      handleNeighborhoodGenerated(result);
+      await loadSavedMaps(true);
+      setReportStatus('Neighborhood map ready');
+      window.setTimeout(() => setReportStatus(''), 4000);
+    } catch (err) {
+      console.error('Neighborhood map generation failed:', err);
+      setReportError(err?.message || 'Failed to generate neighborhood map.');
+      setReportStatus('');
+    } finally {
+      setReportBusy(false);
+    }
+  }, [
+    listingParcelRefs,
+    printElements,
+    mapTitle,
+    sharePanel,
+    sharePanelResolved?.shareToken,
+    resolvedTourMeta.tourNearbyCache,
+    viewMode,
+    currentMapId,
+    mapRef,
+    setLayerStatus,
+    userProfile,
+    user,
+    handleNeighborhoodGenerated,
+    loadSavedMaps,
+  ]);
 
   const startPrintLayoutFlow = useCallback(() => {
     setSharePanel(null);
@@ -678,7 +888,7 @@ export default function Print() {
     setIsGeneratingPdf(true);
     try {
       const agentMeta = buildPrintAgentMetaFromSources(
-        { ...(currentMap || {}), agentProfile: agentProfile || currentMap?.agentProfile || null },
+        { ...(currentMap || {}), agentProfile: { mode: 'account' } },
         userProfile,
         user
       );
@@ -724,7 +934,6 @@ export default function Print() {
     setPrintLayoutMode,
     userProfile,
     user,
-    agentProfile,
   ]);
 
   useEffect(() => {
@@ -736,9 +945,17 @@ export default function Print() {
     }
   }, [user, loadSavedMaps]);
 
-  // Safety cleanup: never leave print overlay mode stuck on route change/unmount.
+  // Safety cleanup on leave — but keep wizard/print alive when hopping to Search to find a parcel.
   useEffect(() => {
     return () => {
+      try {
+        const path = (window.location.pathname || '').replace(/\/+$/, '') || '/';
+        if (path === '/search') return;
+        // Still on /print (React Strict Mode remount) — do not tear down edit mode.
+        if (path === '/print') return;
+      } catch (_) {
+        /* ignore */
+      }
       setIsPrinting(false);
       setPropertyMapWizardActive(false);
       setPropertyMapWizardIntent(null);
@@ -837,7 +1054,16 @@ export default function Print() {
             rasterExportDisabledReason="Open a map with Edit map first — exports use the live map on screen."
             mobileShareFocus={isMobileViewport}
             hasTourData={hasTourData}
+            hasAmenityData={hasAmenityData}
+            hasNeighborhoodMap={hasNeighborhoodMap}
+            neighborhoodMapAssets={sharePanelNeighborhoodAssets}
             onTourGenerated={handleTourGenerated}
+            onAmenityGenerated={handleAmenityGenerated}
+            onNeighborhoodGenerated={handleNeighborhoodGenerated}
+            onGenerateNeighborhoodMap={handleGenerateNeighborhoodMap}
+            neighborhoodBusy={reportBusy}
+            neighborhoodStatus={reportStatus}
+            neighborhoodError={reportError}
           />
         )}
         {newMapSetupOpen && !isMobileViewport && (
@@ -856,15 +1082,15 @@ export default function Print() {
               aria-labelledby="new-map-setup-title"
             >
               <h1 id="new-map-setup-title" className="new-map-setup-title">
-                Create a new map
+                Create listing content
               </h1>
               <p className="new-map-setup-lead">
-                Name your map, then choose Parcel / parcels (select boundaries on the map) or Custom / open (blank
-                canvas for layout and graphics).
+                Start with the property — name it, pick parcels (or a blank canvas), then use Share &amp; generate
+                for maps, tours, amenity links, and a neighborhood map.
               </p>
 
               <label className="new-map-setup-field-label" htmlFor="new-map-draft-title">
-                Map title
+                Listing title
               </label>
               <input
                 id="new-map-draft-title"
@@ -876,7 +1102,7 @@ export default function Print() {
                 autoFocus
               />
 
-              <p className="new-map-setup-section-label">Map type</p>
+              <p className="new-map-setup-section-label">How to start</p>
               <div className="new-map-setup-scope-grid">
                 <button
                   type="button"
@@ -915,7 +1141,7 @@ export default function Print() {
                   onClick={handleNewMapSetupContinue}
                   disabled={!draftMapTitle.trim() || !draftMapKind}
                 >
-                  Continue to map
+                  Continue
                 </button>
               </div>
             </div>
@@ -967,7 +1193,16 @@ export default function Print() {
           onMapsUpdated={loadSavedMaps}
           onOpenPrintMap={startPrintLayoutFlow}
           hasTourData={hasTourData}
+          hasAmenityData={hasAmenityData}
+          hasNeighborhoodMap={hasNeighborhoodMap}
+          neighborhoodMapAssets={sharePanelNeighborhoodAssets}
           onTourGenerated={handleTourGenerated}
+          onAmenityGenerated={handleAmenityGenerated}
+          onNeighborhoodGenerated={handleNeighborhoodGenerated}
+          onGenerateNeighborhoodMap={handleGenerateNeighborhoodMap}
+          neighborhoodBusy={reportBusy}
+          neighborhoodStatus={reportStatus}
+          neighborhoodError={reportError}
         />
         )}
       {printLayoutMode && (
@@ -1040,7 +1275,12 @@ export default function Print() {
       )}
       {showSaveDialog && (
         <div className="print-save-dialog-overlay" role="presentation">
-          <div className="print-save-dialog-panel" role="dialog" aria-labelledby="print-save-dialog-title">
+          <div
+            className="print-save-dialog-panel"
+            data-tour="print-save-dialog"
+            role="dialog"
+            aria-labelledby="print-save-dialog-title"
+          >
             <h3 id="print-save-dialog-title" className="print-save-dialog-heading">
               Save map
             </h3>
@@ -1048,7 +1288,7 @@ export default function Print() {
               Name and describe this map. Everything on the canvas (layers, viewport, and map elements) is stored
               with your account.
             </p>
-            <label className="print-save-dialog-field">
+            <label className="print-save-dialog-field" data-tour="print-save-title-field">
               Map title
               <input
                 type="text"
@@ -1057,7 +1297,7 @@ export default function Print() {
                 placeholder="e.g. Oak Creek listing map"
               />
             </label>
-            <label className="print-save-dialog-field">
+            <label className="print-save-dialog-field" data-tour="print-save-description-field">
               Property description{' '}
               <span className="print-save-dialog-optional">(optional — shown on client share &amp; tour)</span>
               <textarea
@@ -1083,6 +1323,7 @@ export default function Print() {
               <button
                 type="button"
                 className="print-save-dialog-btn print-save-dialog-btn--primary"
+                data-tour="print-save-dialog-confirm"
                 onClick={handleSaveMap}
                 disabled={isSaving || !mapTitle.trim()}
               >

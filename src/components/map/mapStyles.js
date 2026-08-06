@@ -93,8 +93,7 @@ export function getRegridParcelOutlineColorForBasemap(basemapId) {
 export function applyRegridParcelOutlineForBasemap(map, basemapId) {
   if (!map) return;
   try {
-    if (typeof map.isStyleLoaded === 'function' && !map.isStyleLoaded()) return;
-    if (!map.getStyle?.()) return;
+    if (!map.getStyle?.()?.layers) return;
     if (!map.getLayer('regrid-parcels-outline')) return;
     map.setPaintProperty(
       'regrid-parcels-outline',

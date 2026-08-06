@@ -62,15 +62,6 @@ const PAGES = [
     body: 'Answers about parcel research, listing maps, property tours, trials, and billing.',
   },
   {
-    route: '/tutorial',
-    file: path.join('tutorial', 'index.html'),
-    title: 'Tutorial — How to Use Community View',
-    description:
-      'Learn how to explore parcels, map layers, listing maps, and property tours in Community View.',
-    h1: 'How to use Community View',
-    body: 'Learn parcel search, map layers, listing maps, and property tours.',
-  },
-  {
     route: '/map',
     file: path.join('map', 'index.html'),
     title: 'Interactive Parcel Map | Community View',

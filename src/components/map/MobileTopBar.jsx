@@ -9,6 +9,7 @@ import SaveDefaultCountyPrompt from '../search/SaveDefaultCountyPrompt';
 import MobileAccountControls from '../account/MobileAccountControls';
 import { useUser } from '../../contexts/UserContext';
 import { normalizePathname } from '../../utils/mapBackedRoutes';
+import { normalizeToGeoJsonFeatures } from '../../utils/normalizeMapFeature';
 
 const MOBILE_SEARCH_LIMIT = DEFAULT_PARCEL_SEARCH_LIMIT;
 
@@ -68,6 +69,7 @@ export default function MobileTopBar() {
     mapRef,
     mobileMapsSearchQuery,
     setMobileMapsSearchQuery,
+    setLayerStatus,
   } = useMapContext();
 
   const { user } = useUser();
@@ -215,7 +217,10 @@ export default function MobileTopBar() {
     if (result?.path) {
       applyMapCountyFromParcelPath(result.path);
     }
-    const features = Array.isArray(result) ? result.flat() : [result];
+    const features = normalizeToGeoJsonFeatures(
+      Array.isArray(result) ? result.flat() : [result]
+    );
+    setLayerStatus((prev) => ({ ...prev, ownership: true }));
     setFocusFeatures(features);
     setIsMapTriggeredFromSearch((prev) => !prev);
     setTimeout(() => {

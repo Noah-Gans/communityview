@@ -1,10 +1,11 @@
 import React from 'react';
 import { useUser } from '../../contexts/UserContext';
-import { Navigate } from 'react-router-dom';
+import { Navigate, useLocation } from 'react-router-dom';
 import MapLoadingOverlay from '../loading/MapLoadingOverlay';
 
 function ProtectedRoute({ children }) {
   const { user, subscriptionStatus, loading } = useUser();
+  const location = useLocation();
 
   console.log('🔒 ProtectedRoute check:', { user: !!user, subscriptionStatus, loading });
 
@@ -17,9 +18,13 @@ function ProtectedRoute({ children }) {
   console.log('🔒 hasActiveSubscription:', hasActiveSubscription);
   
   if (!user || !hasActiveSubscription) {
-    console.log('🔒 Redirecting to /login');
-    return <Navigate to="/login" replace />;
-    // or /login, or a "subscribe" route—your choice
+    const returnTo = `${location.pathname}${location.search}`;
+    const loginPath =
+      returnTo && returnTo !== '/'
+        ? `/login?returnTo=${encodeURIComponent(returnTo)}`
+        : '/login';
+    console.log('🔒 Redirecting to', loginPath);
+    return <Navigate to={loginPath} replace />;
   }
 
   // Otherwise, render the protected page

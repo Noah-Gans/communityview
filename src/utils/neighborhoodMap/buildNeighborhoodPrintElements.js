@@ -76,37 +76,47 @@ export function buildParcelBoundaryElements(snapshots) {
   return elements;
 }
 
-/** Main home icon at parcel centroid(s) — brighter + larger than amenity discs. */
-export function buildHomeMarkerElements(snapshots, { zoom } = {}) {
+/** Main home icon — dark disc + white house (matches amenity-map HTML pin). */
+export function buildHomeMarkerElements(snapshots, { zoom, homePosition } = {}) {
   const amenitySize = amenityPinSizeForZoom(zoom);
-  const size = Math.round(Math.max(amenitySize * 1.55, 68));
+  const size = Math.round(Math.max(amenitySize * 1.05, 44));
+
+  const makeHome = (lng, lat, id, label = '') => ({
+    id,
+    type: 'shape',
+    svgKey: 'houseChimney',
+    label: label || '',
+    showLabelOnMap: false,
+    hiddenOnMap: false,
+    geometry: { type: 'Point', coordinates: [lng, lat] },
+    width: size,
+    height: size,
+    fill: '#111827',
+    fillOpacity: 1,
+    stroke: '#ffffff',
+    strokeOpacity: 1,
+    strokeWidth: 2.5,
+    iconOpacity: 1,
+    iconColor: '#ffffff',
+    labelFontSize: 13,
+    labelColor: '#0f172a',
+    labelBackgroundColor: 'rgba(255,255,255,0.95)',
+    labelAlignH: 'center',
+    labelAlignV: 'top',
+    labelFontFamily: 'Inter, system-ui, sans-serif',
+  });
+
+  const homeLat = Number(homePosition?.lat);
+  const homeLng = Number(homePosition?.lng);
+  if (Number.isFinite(homeLat) && Number.isFinite(homeLng)) {
+    return [makeHome(homeLng, homeLat, 'nbhd_home')];
+  }
+
   const elements = [];
   (snapshots || []).forEach((snap, idx) => {
     const c = centroidOfSnapshot(snap);
     if (!c) return;
-    elements.push({
-      id: `nbhd_home_${idx}`,
-      type: 'shape',
-      svgKey: 'houseChimney',
-      label: snap.address || 'Home',
-      showLabelOnMap: Boolean(snap.address),
-      hiddenOnMap: false,
-      geometry: { type: 'Point', coordinates: [c.lng, c.lat] },
-      width: size,
-      height: size,
-      fill: '#ef4444',
-      fillOpacity: 1,
-      stroke: '#ffffff',
-      strokeOpacity: 1,
-      strokeWidth: 3.5,
-      iconOpacity: 1,
-      labelFontSize: 13,
-      labelColor: '#0f172a',
-      labelBackgroundColor: 'rgba(255,255,255,0.95)',
-      labelAlignH: 'center',
-      labelAlignV: 'top',
-      labelFontFamily: 'Inter, system-ui, sans-serif',
-    });
+    elements.push(makeHome(c.lng, c.lat, `nbhd_home_${idx}`, snap.address || ''));
   });
   return elements;
 }
@@ -157,6 +167,9 @@ export function buildNeighborhoodPrintElements(snapshots, amenities, options = {
   return [
     ...buildParcelBoundaryElements(snapshots),
     ...buildNumberedAmenityElements(amenities, options),
-    ...buildHomeMarkerElements(snapshots, { zoom }),
+    ...buildHomeMarkerElements(snapshots, {
+      zoom,
+      homePosition: options.homePosition || null,
+    }),
   ];
 }

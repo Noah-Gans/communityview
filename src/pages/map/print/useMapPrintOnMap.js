@@ -29,6 +29,11 @@ import {
   PRINT_GALLERY_DRAG_MIME,
   takePrintGalleryDragPayload,
 } from '../../../utils/printGalleryDragBuffer';
+import {
+  PRINT_CATALOG_DRAG_MIME,
+  takePrintCatalogDragPayload,
+  isPointLikeCatalogTool,
+} from '../../../utils/printCatalogDragBuffer';
 import { getPhotoSrcListFromElement } from '../../../utils/mapPhotoStorage';
 import {
   focusPrintElementBirdEye,
@@ -80,6 +85,7 @@ export default function useMapPrintOnMap(deps) {
   const [propertyTourSlideId, setPropertyTourSlideId] = useState(null);
   const [printSharePanelVisible, setPrintSharePanelVisible] = useState(false);
   const [printParcelsOverlayVisible, setPrintParcelsOverlayVisible] = useState(true);
+  const [propertyMapWizardBusy, setPropertyMapWizardBusy] = useState(false);
   const [overlayRenderVersion, setOverlayRenderVersion] = useState(0);
 
   const [polygonDraftPoints, setPolygonDraftPoints] = useState([]);
@@ -229,11 +235,11 @@ export default function useMapPrintOnMap(deps) {
       setIsPanelOpen(true);
       return;
     }
-    if (printSharePanelVisible || printLayoutMode) {
+    if (printSharePanelVisible || printLayoutMode || propertyMapWizardActive) {
       setIsPanelOpen(false);
       return;
     }
-    setIsPanelOpen(!propertyMapWizardActive);
+    setIsPanelOpen(true);
   }, [isPrinting, propertyMapWizardActive, printSharePanelVisible, printLayoutMode, setIsPanelOpen]);
 
   useEffect(() => {
@@ -856,31 +862,59 @@ export default function useMapPrintOnMap(deps) {
   const handlePrintMapDragOver = useCallback(
     (e) => {
       if (!isPrinting) return;
-      if (!e.dataTransfer?.types?.includes(PRINT_GALLERY_DRAG_MIME)) return;
+      const types = Array.from(e.dataTransfer?.types || []);
+      const ok =
+        types.includes(PRINT_GALLERY_DRAG_MIME) || types.includes(PRINT_CATALOG_DRAG_MIME);
+      if (!ok) return;
       e.preventDefault();
       e.dataTransfer.dropEffect = 'copy';
+      if (
+        types.includes(PRINT_CATALOG_DRAG_MIME) &&
+        isPrintShapeIconPlacingTool(activePrintTool) &&
+        mapRef.current
+      ) {
+        const rect = mapRef.current.getCanvas().getBoundingClientRect();
+        setPrintIconPlaceCursorPx({
+          x: e.clientX - rect.left,
+          y: e.clientY - rect.top,
+        });
+      }
     },
-    [isPrinting]
+    [isPrinting, activePrintTool, mapRef]
   );
 
   const handlePrintMapDrop = useCallback(
     (e) => {
       if (!isPrinting || !mapRef.current) return;
-      const id = e.dataTransfer?.getData(PRINT_GALLERY_DRAG_MIME);
-      const photoEntry = takePrintGalleryDragPayload(id);
-      if (!photoEntry?.url) return;
-      e.preventDefault();
       const map = mapRef.current;
       const rect = map.getCanvas().getBoundingClientRect();
       const x = e.clientX - rect.left;
       const y = e.clientY - rect.top;
       const lngLat = map.unproject([x, y]);
-      addPrintElementFromTool(
-        'shape_camera',
-        { photoGallery: [photoEntry], label: 'Photo point' },
-        { lng: lngLat.lng, lat: lngLat.lat }
-      );
-      setActivePrintTool('select');
+
+      const galleryId = e.dataTransfer?.getData(PRINT_GALLERY_DRAG_MIME);
+      const photoEntry = takePrintGalleryDragPayload(galleryId);
+      if (photoEntry?.url) {
+        e.preventDefault();
+        addPrintElementFromTool(
+          'shape_camera',
+          { photoGallery: [photoEntry], label: 'Photo point' },
+          { lng: lngLat.lng, lat: lngLat.lat }
+        );
+        setActivePrintTool('select');
+        return;
+      }
+
+      const catalogId = e.dataTransfer?.getData(PRINT_CATALOG_DRAG_MIME);
+      const catalog = takePrintCatalogDragPayload(catalogId);
+      if (!catalog?.tool) return;
+      e.preventDefault();
+      if (isPointLikeCatalogTool(catalog.tool)) {
+        addPrintElementFromTool(catalog.tool, {}, { lng: lngLat.lng, lat: lngLat.lat });
+        setActivePrintTool('select');
+        return;
+      }
+      setActivePrintTool(catalog.tool);
     },
     [isPrinting, mapRef, addPrintElementFromTool, setActivePrintTool]
   );
@@ -918,18 +952,24 @@ export default function useMapPrintOnMap(deps) {
 
   const handlePropertyMapWizardContinue = useCallback(async () => {
     const parcels = (selectedFeature || []).filter(isRegridParcelPolygonFeature);
-    if (parcels.length === 0) return;
-    const merged = await mergeRegridParcelFeaturesPreferApi(parcels);
-    if (!merged) return;
-    addPolygonBoundariesFromMergedFeature(merged);
-    setPropertyMapWizardActive(false);
-    setPropertyMapWizardIntent(null);
-    setSelectedFeatures([]);
-    removeHighlight();
-    setActivePrintTool('select');
-    setActiveSidePanelTab('print');
+    if (parcels.length === 0 || propertyMapWizardBusy) return;
+    setPropertyMapWizardBusy(true);
+    try {
+      const merged = await mergeRegridParcelFeaturesPreferApi(parcels);
+      if (!merged) return;
+      addPolygonBoundariesFromMergedFeature(merged);
+      setPropertyMapWizardActive(false);
+      setPropertyMapWizardIntent(null);
+      setSelectedFeatures([]);
+      removeHighlight();
+      setActivePrintTool('select');
+      setActiveSidePanelTab('print');
+    } finally {
+      setPropertyMapWizardBusy(false);
+    }
   }, [
     selectedFeature,
+    propertyMapWizardBusy,
     addPolygonBoundariesFromMergedFeature,
     setPropertyMapWizardActive,
     setPropertyMapWizardIntent,
@@ -940,12 +980,42 @@ export default function useMapPrintOnMap(deps) {
   ]);
 
   const handlePropertyMapWizardCancel = useCallback(() => {
+    if (propertyMapWizardBusy) return;
     setPropertyMapWizardActive(false);
     setPropertyMapWizardIntent(null);
     setSelectedFeatures([]);
     removeHighlight();
     window.dispatchEvent(new CustomEvent('print-exit-edit'));
-  }, [setPropertyMapWizardActive, setPropertyMapWizardIntent, setSelectedFeatures, removeHighlight]);
+  }, [
+    propertyMapWizardBusy,
+    setPropertyMapWizardActive,
+    setPropertyMapWizardIntent,
+    setSelectedFeatures,
+    removeHighlight,
+  ]);
+
+  const handlePropertyMapWizardSearchSelect = useCallback(
+    (feature) => {
+      if (!feature?.geometry || propertyMapWizardBusy) return;
+      const existing = (selectedFeature || []).filter(isRegridParcelPolygonFeature);
+      const id = feature.properties?.ll_uuid;
+      let next;
+      if (propertyMapWizardIntent === 'single') {
+        next = [feature];
+      } else if (id && existing.some((f) => f.properties?.ll_uuid === id)) {
+        next = existing;
+      } else {
+        next = [...existing, feature];
+      }
+      setSelectedFeatures(next);
+    },
+    [
+      propertyMapWizardBusy,
+      propertyMapWizardIntent,
+      selectedFeature,
+      setSelectedFeatures,
+    ]
+  );
 
   return {
     printParcelsOverlayVisible,
@@ -981,6 +1051,8 @@ export default function useMapPrintOnMap(deps) {
     handlePrintMapDrop,
     handlePropertyMapWizardContinue,
     handlePropertyMapWizardCancel,
+    handlePropertyMapWizardSearchSelect,
+    propertyMapWizardBusy,
     getPolygonDraftStyle: () => getPolygonDraftStyle(activePrintTool),
     getPolylineDraftStyle: () => getPolylineDraftStyle(activePrintTool),
     withGeoProjectedFrame: (el) => withGeoProjectedFrame(mapRef.current, el),

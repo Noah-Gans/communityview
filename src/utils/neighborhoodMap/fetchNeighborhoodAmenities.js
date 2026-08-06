@@ -3,14 +3,22 @@
  * Then Gemini curates a rational 12–18 for the map (heuristic fallback).
  */
 import { mapService } from '../../services/mapService';
+import { normalizeTourNearbyCacheFromFirestore } from '../tourNearbyFirestore';
 import { TOUR_NEARBY_DATA_VERSION } from '../tourNearbyRanking';
 import { TOUR_NEARBY_SEARCH_RADIUS_METERS } from '../propertyTourSlides';
-import { getAmenitySearchRadiusMeters, normalizeTourSettings } from '../tourSettings';
+import {
+  byAmenityVisibleForListing,
+  getAmenitySearchRadiusMeters,
+  mapHasTourNearbyData,
+  normalizeTourSettings,
+  tourNearbyCacheLooksCurated,
+} from '../tourSettings';
 import { curateNeighborhoodAmenitiesWithAi } from '../../services/neighborhoodAmenityCurateService';
 import {
   amenityGridCellKey,
   NEIGHBORHOOD_AMENITY_KEYS,
   selectNeighborhoodAmenities,
+  selectedAmenitiesFromVisibleByAmenity,
   buildNeighborhoodCandidatePool,
   applyCuratedNeighborhoodIds,
 } from './neighborhoodAmenities';
@@ -82,7 +90,15 @@ async function curateSelected(byAmenity, { address, placeLabel, onStatus } = {})
 
 /**
  * @param {{ lat: number, lng: number }} center
- * @param {{ onStatus?: Function, forceRefresh?: boolean, amenityKeys?: string[], radiusMeters?: number, address?: string, placeLabel?: string }} [options]
+ * @param {{
+ *   onStatus?: Function,
+ *   forceRefresh?: boolean,
+ *   amenityKeys?: string[],
+ *   radiusMeters?: number,
+ *   address?: string,
+ *   placeLabel?: string,
+ *   existingTourNearbyCache?: object|null,
+ * }} [options]
  */
 export async function fetchNeighborhoodAmenities(center, options = {}) {
   const lat = Number(center?.lat);
@@ -99,6 +115,40 @@ export async function fetchNeighborhoodAmenities(center, options = {}) {
   }
 
   const cell = amenityGridCellKey(lat, lng);
+
+  // Listing source of truth: amenity map / tour / neighborhood share one Firestore cache.
+  if (!options.forceRefresh && mapHasTourNearbyData(options.existingTourNearbyCache)) {
+    const root = normalizeTourNearbyCacheFromFirestore(options.existingTourNearbyCache);
+    const visible = byAmenityVisibleForListing(root.byAmenity);
+    const report = typeof options.onStatus === 'function' ? options.onStatus : () => {};
+    let selected;
+    let curationSource;
+    let curationNotes = '';
+    if (tourNearbyCacheLooksCurated(root)) {
+      report('Using amenities curated on this listing…');
+      selected = selectedAmenitiesFromVisibleByAmenity(visible);
+      curationSource = 'listing_curated';
+    } else {
+      const curated = await curateSelected(visible, options);
+      selected = curated.selected;
+      curationSource = curated.curationSource;
+      curationNotes = curated.curationNotes;
+    }
+    return {
+      searchCenter: root.searchCenter || { lat, lng },
+      byAmenity: root.byAmenity,
+      selected,
+      curationSource,
+      curationNotes,
+      fetchErrors: [],
+      searchRadiusMeters: root.searchRadiusMeters,
+      dataVersion: root.dataVersion || TOUR_NEARBY_DATA_VERSION,
+      fromCache: true,
+      fromListingCache: true,
+      gridCell: cell,
+    };
+  }
+
   if (!options.forceRefresh) {
     const cached = readSession(cell);
     if (cached?.byAmenity && Array.isArray(cached.selected) && cached.selected.length) {

@@ -57,12 +57,6 @@ export const PAGE_SEO = {
     description:
       'Answers about Community View nationwide parcel research, listing maps, property tours, sharing with buyers, trials, and billing.',
   },
-  '/tutorial': {
-    path: '/tutorial',
-    title: 'Tutorial — How to Use Community View',
-    description:
-      'Learn how to explore parcels, map layers, listing maps, and property tours in Community View.',
-  },
   '/map': {
     path: '/map',
     title: 'Interactive Parcel Map | Community View',

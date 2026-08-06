@@ -9,7 +9,6 @@ import Print from './pages/print/Print';
 import SharedMapViewPage from './pages/print/SharedMapViewPage';
 import AmenityMapPage from './pages/print/AmenityMapPage';
 import MainHeader from './pages/MainHeader';
-import Tutorial from './components/ui/Tutorial'; // Import the new Tutorial page
 import Pricing from './pages/landingPages/Pricing';
 import Features from './pages/landingPages/Features';
 import FAQ from './pages/landingPages/FAQ';
@@ -103,7 +102,6 @@ function AppRoutes({ activeTab, setActiveTab }) {
                       </ProtectedRoute>
                     }
                   />
-                  <Route path="/tutorial" element={<Tutorial />} />
                   <Route path="/pricing" element={<Pricing />} />
                   <Route path="/features" element={<Features />} />
                   <Route path="/faq" element={<FAQ />} />

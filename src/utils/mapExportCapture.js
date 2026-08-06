@@ -875,9 +875,29 @@ async function drawPointShapeLogosForExport(
     }
     if (!img) continue;
     const pad = Math.max(2, Math.round(size * 0.23));
+    const glyphW = size - pad * 2;
+    const glyphH = size - pad * 2;
+    const iconColor = el.iconColor || el.logoColor || null;
     ctx.save();
     ctx.globalAlpha = Math.max(0, Math.min(1, Number(el.iconOpacity ?? 1)));
-    ctx.drawImage(img, x + pad, y + pad, size - pad * 2, size - pad * 2);
+    if (iconColor) {
+      // Tint glyph (e.g. white house on dark amenity-map home disc).
+      const tint = document.createElement('canvas');
+      tint.width = Math.max(1, glyphW);
+      tint.height = Math.max(1, glyphH);
+      const tintCtx = tint.getContext('2d');
+      if (tintCtx) {
+        tintCtx.drawImage(img, 0, 0, glyphW, glyphH);
+        tintCtx.globalCompositeOperation = 'source-in';
+        tintCtx.fillStyle = iconColor;
+        tintCtx.fillRect(0, 0, glyphW, glyphH);
+        ctx.drawImage(tint, x + pad, y + pad, glyphW, glyphH);
+      } else {
+        ctx.drawImage(img, x + pad, y + pad, glyphW, glyphH);
+      }
+    } else {
+      ctx.drawImage(img, x + pad, y + pad, glyphW, glyphH);
+    }
     ctx.restore();
   }
 }
@@ -1123,6 +1143,12 @@ const POINT_ICON_FILE = {
   skiingNordic: 'skiing-nordic.svg',
   swimmer: 'swimmer.svg',
   tablePicnic: 'table-picnic.svg',
+  // Document / tour amenity markers (same logos as tour vicinity)
+  shoppingCart: 'shopping-cart.png',
+  gym: 'gym.svg',
+  mugHotAlt: 'mug-hot-alt.svg',
+  subway: 'subway.svg',
+  tools: 'tools.svg',
 };
 
 async function loadImage(url) {
