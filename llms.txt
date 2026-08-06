@@ -14,23 +14,21 @@ Allow: /
 # Sitemap location
 Sitemap: https://communityview.ai/sitemap.xml
 
-# Main public marketing pages (trailing slashes match GitHub Pages shells)
+# Main public marketing pages
 Allow: /
-Allow: /map/
-Allow: /tutorial/
-Allow: /features/
-Allow: /pricing/
-Allow: /faq/
-Allow: /use-cases/
-Allow: /use-cases/parcel-search/
-Allow: /use-cases/find-property-owner/
-Allow: /use-cases/ownership-details/
-Allow: /use-cases/parcel-maps/
-Allow: /use-cases/listing-maps/
-Allow: /use-cases/property-tours/
-Allow: /use-cases/map-layers/
-Allow: /use-cases/embedded-maps/
-Allow: /compare/land-id/
+Allow: /map
+Allow: /tutorial
+Allow: /features
+Allow: /pricing
+Allow: /faq
+Allow: /use-cases
+Allow: /use-cases/parcel-search
+Allow: /use-cases/ownership-details
+Allow: /use-cases/listing-maps
+Allow: /use-cases/property-tours
+Allow: /use-cases/map-layers
+Allow: /use-cases/embedded-maps
+Allow: /compare/land-id
 
 # Disallow private / gated / auth pages
 Disallow: /report
