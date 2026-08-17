@@ -1066,17 +1066,6 @@ function moveTourVicinityNearbyLayersToTop(map) {
 
 /** Call after basemap restack / label promotion so amenity badges stay visible. */
 export function ensureTourVicinityNearbyLayersOnTop(map) {
-  if (!map) return;
-  TOUR_VICINITY_NEARBY_LAYER_IDS.forEach((id) => {
-    if (!map.getLayer?.(id)) return;
-    try {
-      if (map.getLayoutProperty(id, 'visibility') === 'none') {
-        map.setLayoutProperty(id, 'visibility', 'visible');
-      }
-    } catch (_) {
-      /* ignore */
-    }
-  });
   moveTourVicinityNearbyLayersToTop(map);
 }
 

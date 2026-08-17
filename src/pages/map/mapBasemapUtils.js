@@ -50,7 +50,6 @@ export function hasVisibleMapboxStyleUnderlay(map) {
         return false;
       }
       if (id.startsWith('gl-draw-') || id.includes('regrid') || id.endsWith('-layer')) return false;
-      if (id.startsWith('tour-vicinity-') || id.startsWith('tour-builder-')) return false;
       if (id.startsWith('cv-') || id.includes('contour') || id === 'terrain-colors' || id === 'sky') {
         return false;
       }

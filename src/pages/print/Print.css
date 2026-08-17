@@ -3447,8 +3447,11 @@ html.shared-embed-mode.shared-public-map .shared-left-dock {
 }
 
 /* ——— Tour link: distinct from shared “explorer” map ——— */
-/* Do not put CSS filter/opacity on .map-container — Mapbox WebGL canvases
-   go fully black when an ancestor is filtered (editor + shared tour). */
+html.shared-tour-mode .app-container > .map-container {
+  filter: saturate(0.88) contrast(1.02);
+  transition: filter 0.4s ease;
+}
+
 html.shared-tour-mode .app-container > .map-container::after {
   content: '';
   pointer-events: none;
