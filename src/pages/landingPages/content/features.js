@@ -58,8 +58,8 @@ export const marketingFeatures = [
       '3D terrain view',
       'Foundation for tours and listing maps',
     ],
-    learnMoreTo: '/use-cases/parcel-maps',
-    learnMoreLabel: 'Parcel maps use case',
+    learnMoreTo: '/use-cases/public-land-map',
+    learnMoreLabel: 'Public land map use case',
   },
   {
     id: 'maps',
