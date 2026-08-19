@@ -49,6 +49,10 @@ const Features = () => {
           {' · '}
           <Link to="/use-cases/ownership-details">Ownership details</Link>
           {' · '}
+          <Link to="/use-cases/ownership-map">Ownership map</Link>
+          {' · '}
+          <Link to="/use-cases/public-land-map">Public land map</Link>
+          {' · '}
           <Link to="/use-cases/parcel-maps">Parcel maps</Link>
           {' · '}
           <Link to="/use-cases">All use cases</Link>

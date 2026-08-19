@@ -5,6 +5,8 @@
  * 1. Parcel search
  * 2. Find property owner
  * 3. Ownership & property details
+ * 3b. Ownership map
+ * 3c. Public land map
  * 4. Parcel maps
  * 5. Listing maps
  * 6. Property tours
@@ -16,7 +18,7 @@ export const useCasesHub = {
   path: '/use-cases',
   seoTitle: 'Use Cases — Parcel Search, Ownership & Parcel Maps | Community View',
   seoDescription:
-    'How real estate agents use Community View for parcel search, finding property owners, ownership details, parcel maps, listing maps, property tours, and embeds.',
+    'How real estate agents use Community View for parcel search, ownership maps, public land maps, listing maps, property tours, and embeds.',
   h1: 'What agents use Community View for',
   lede:
     'From finding who owns a parcel to sending a buyer-ready map — jobs agents actually do on one platform.',
@@ -90,9 +92,9 @@ export const useCases = [
     cardTitle: 'Find a property owner',
     cardBlurb:
       'Look up who owns a property by address, owner name, or parcel ID — then open the record on the map.',
-    seoTitle: 'Find Property Owner by Address or Name | Community View',
+    seoTitle: 'Find Property Owner by Address | Community View',
     seoDescription:
-      'Find a property owner nationwide for real estate research. Search by address, owner name, or APN, then open ownership details and mailing address on an interactive map.',
+      'Find a property owner by address, name, or APN. Search nationwide, map the parcel, and open ownership details. Start with a free trial — no county-site hopping.',
     h1: 'Find a property owner — by address, name, or parcel ID',
     lede:
       'Stop bouncing between county assessor sites. Search, map the parcel, and see who owns it — built for agents who need answers before they list or call.',
@@ -141,6 +143,11 @@ export const useCases = [
         question: 'Is this the same as county assessor lookup?',
         answer:
           'You get assessor-style ownership and parcel details on the map when the source data includes them — without hopping between separate county websites for every market you work.',
+      },
+      {
+        question: 'Can I find a property owner by address for free?',
+        answer:
+          'County sites are often free and slow. Community View is a paid agent tool with a 14-day free trial: search by address, map the parcel, and open ownership details without hopping counties.',
       },
     ],
     ctaLabel: 'Find a property owner',
@@ -205,6 +212,128 @@ export const useCases = [
       },
     ],
     ctaLabel: 'Explore ownership details',
+  },
+  {
+    slug: 'ownership-map',
+    navLabel: 'Ownership map',
+    cardTitle: 'Ownership map',
+    cardBlurb:
+      'See who owns what on the map — parcel boundaries plus owner names and details when you click a lot.',
+    seoTitle: 'Ownership Map — See Who Owns Land on a Parcel Map | Community View',
+    seoDescription:
+      'An ownership map for real estate agents: nationwide parcel boundaries, owner names, and property details on one interactive map. Click a parcel to confirm who owns it.',
+    h1: 'Ownership map for real estate agents',
+    lede:
+      'An ownership map shows parcels and who owns them in one view — not a spreadsheet of assessor rows. Toggle ownership on the map, then click a lot for the record.',
+    image: '/slide_photos/property-info.png',
+    imageAlt: 'Community View ownership map with parcel boundaries and owner details',
+    sections: [
+      {
+        heading: 'What an ownership map is',
+        body:
+          'County assessor sites often give you a table. An ownership map puts parcel boundaries on the land and lets you see neighboring owners in context — useful when you are farming a street, checking a listing, or explaining the neighborhood to a buyer.',
+      },
+      {
+        heading: 'What you see on the map',
+        body:
+          'Turn on ownership and parcel boundaries, then click any lot for owner name, mailing address, APN, acreage, and assessed values when the source county has them. Search by owner or address if you are not starting from the map.',
+      },
+      {
+        heading: 'Different from a public land map',
+        body:
+          'An ownership map answers who owns private parcels. A public land map shows BLM, Forest Service, state, and other public ownership. Agents usually need both: private owners around a listing, plus public land that affects access, recreation, and the pitch.',
+      },
+      {
+        heading: 'From map to a listing deliverable',
+        body:
+          'Once you have the ownership picture, build a listing map or property tour from the same workspace so buyers see the land, not just a flyer.',
+      },
+    ],
+    bullets: [
+      'Parcel boundaries on the map',
+      'Owner names and click-through details',
+      'Nationwide coverage',
+      'Pairs with listing maps and tours',
+    ],
+    faqs: [
+      {
+        question: 'What is an ownership map?',
+        answer:
+          'An ownership map shows land parcels and property ownership on an interactive map. In Community View you toggle ownership boundaries, then click a parcel for owner and assessor-style details when available.',
+      },
+      {
+        question: 'Can I see neighboring owners on the map?',
+        answer:
+          'Yes. Ownership and parcel layers let you inspect lots around a listing so you can see who owns adjacent land, not just the subject property.',
+      },
+      {
+        question: 'Is this the same as finding a property owner by address?',
+        answer:
+          'Finding an owner by address starts in search. An ownership map is the map view: boundaries, nearby lots, and click-to-open records. Use both in one workflow.',
+      },
+    ],
+    ctaLabel: 'Open the ownership map',
+  },
+  {
+    slug: 'public-land-map',
+    navLabel: 'Public land map',
+    cardTitle: 'Public land map',
+    cardBlurb:
+      'See public land next to private parcels — useful for access, recreation, and listing context.',
+    seoTitle: 'Public Land Map for Real Estate Agents | Community View',
+    seoDescription:
+      'A public land map for real estate listings: see public land, parcel boundaries, and ownership context on one interactive map so you can pitch access, recreation, and neighbors accurately.',
+    h1: 'Public land map for real estate listings',
+    lede:
+      'Buyers ask what is public around the property. A public land map answers that on the same map as the parcel — not in a separate government GIS tab.',
+    image: '/slide_photos/environmental-layers.png',
+    imageAlt: 'Community View map with public land and parcel layers',
+    sections: [
+      {
+        heading: 'Why listings need a public land map',
+        body:
+          'Public land changes the story: trailheads, hunting, forest access, inholdings, and “you back up to BLM.” Agents who can show that on a map close location better than a paragraph in the remarks.',
+      },
+      {
+        heading: 'What you can toggle',
+        body:
+          'Turn on public land with parcel boundaries and ownership so you see private lots against public ownership. Stack other layers (conservation easements, water, wildfire) when the listing needs more land context.',
+      },
+      {
+        heading: 'Not a replacement for agency maps',
+        body:
+          'Agency sites remain the source for official designations and rules. Community View is the agent workspace: public land next to the listing parcel, then a shareable map or tour for buyers.',
+      },
+      {
+        heading: 'Use it with an ownership map',
+        body:
+          'Public land is who the government holds. Ownership map is who holds the private parcels. Toggle both, click the listing, then send a listing map that matches what you just researched.',
+      },
+    ],
+    bullets: [
+      'Public land on the listing map',
+      'Parcel boundaries for context',
+      'Stack with ownership and hazards',
+      'Share or embed for buyers',
+    ],
+    faqs: [
+      {
+        question: 'What is a public land map?',
+        answer:
+          'A public land map shows land held by public agencies (federal, state, and related ownership) on a map. In Community View you toggle public land next to parcel boundaries so agents can explain access and recreation around a listing.',
+      },
+      {
+        question: 'Can I see public land next to a private parcel?',
+        answer:
+          'Yes. That is the point for listing work — the subject parcel plus nearby public land on one interactive map.',
+      },
+      {
+        question: 'Is this the same as an ownership map?',
+        answer:
+          'No. An ownership map highlights private parcel owners. A public land map highlights public ownership. Use both when a listing sits against forest, BLM, or other public ground.',
+      },
+    ],
+    ctaLabel: 'Open the public land map',
   },
   {
     slug: 'parcel-maps',
