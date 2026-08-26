@@ -25,6 +25,8 @@ Allow: /use-cases/
 Allow: /use-cases/parcel-search/
 Allow: /use-cases/find-property-owner/
 Allow: /use-cases/ownership-details/
+Allow: /use-cases/ownership-map/
+Allow: /use-cases/public-land-map/
 Allow: /use-cases/parcel-maps/
 Allow: /use-cases/listing-maps/
 Allow: /use-cases/property-tours/
