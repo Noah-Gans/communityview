@@ -188,7 +188,6 @@ export async function fetchNeighborhoodAmenities(center, options = {}) {
         'trailheads',
         'essentials',
         'coffee',
-        'transit',
         'airport',
         'dining',
       ].includes(k)

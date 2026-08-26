@@ -16,19 +16,27 @@ const CONTENT_W_IN = PAGE_W_IN - MARGIN_IN * 2;
 const MAP_H_IN = 5.55;
 const PNG_DPI = 170;
 
-/** Logical basemap size — exact half of letter map slot pixels (1:1 draw, no scale). */
+/** Logical basemap size — half of letter map slot (1:1 draw when possible). */
 const MAP_SLOT_PX_W = Math.round(CONTENT_W_IN * PNG_DPI);
 const MAP_SLOT_PX_H = Math.round(MAP_H_IN * PNG_DPI);
-const LOGICAL_MAP_W = Math.round(MAP_SLOT_PX_W / 2);
-const LOGICAL_MAP_H = Math.round(MAP_SLOT_PX_H / 2);
+/**
+ * Mapbox Static max is 1280px per side for @2x output. Keep logical ≤ 640
+ * so Mapbox does not silently rescale (which desyncs pin projection).
+ */
+const MAPBOX_MAX_LOGICAL = 640;
+const LOGICAL_MAP_W = Math.min(Math.round(MAP_SLOT_PX_W / 2), MAPBOX_MAX_LOGICAL);
+const LOGICAL_MAP_H = Math.min(
+  Math.round(MAP_SLOT_PX_H / 2),
+  Math.round(MAPBOX_MAX_LOGICAL * (MAP_SLOT_PX_H / MAP_SLOT_PX_W))
+);
 
 const CATEGORY_META = {
   dining: { label: "Dining", fill: "#f97316", rgb: [249, 115, 22] },
   coffee: { label: "Coffee & Bakeries", fill: "#a16207", rgb: [161, 98, 7] },
   grocery: { label: "Groceries & Essentials", fill: "#eab308", rgb: [234, 179, 8] },
+  schools: { label: "Schools", fill: "#2563eb", rgb: [37, 99, 235] },
   fitness: { label: "Fitness & Wellness", fill: "#f43f5e", rgb: [244, 63, 94] },
   parks_rec: { label: "Parks & Recreation", fill: "#22c55e", rgb: [34, 197, 94] },
-  transit: { label: "Transit", fill: "#6366f1", rgb: [99, 102, 241] },
   essentials: { label: "Essentials", fill: "#78716c", rgb: [120, 113, 108] },
 };
 
@@ -36,9 +44,9 @@ const CATEGORY_ORDER = [
   "dining",
   "coffee",
   "grocery",
+  "schools",
   "fitness",
   "parks_rec",
-  "transit",
   "essentials",
 ];
 
@@ -101,120 +109,103 @@ function simplifyRing(ring, maxPoints = 40) {
 }
 
 /**
- * Fit viewport to home + amenities. Caps far outliers so one distant park
- * doesn't zoom the whole frame out.
+ * Fit camera like Mapbox GL fitBounds: include home + every amenity + parcel
+ * in the same Web-Mercator space used to project pins onto the Static image.
+ * Never force a high min-zoom — that crops pins/parcel off the page.
  */
 function computeViewport(lat, lng, amenities, geometry, logicalW, logicalH) {
   const homeLat = Number(lat);
   const homeLng = Number(lng);
+  const pts = [];
 
-  const distMiles = (plat, plng) => {
-    const toRad = (d) => (d * Math.PI) / 180;
-    const dLat = toRad(plat - homeLat);
-    const dLng = toRad(plng - homeLng);
-    const a =
-      Math.sin(dLat / 2) ** 2 +
-      Math.cos(toRad(homeLat)) *
-        Math.cos(toRad(plat)) *
-        Math.sin(dLng / 2) ** 2;
-    return 3958.8 * 2 * Math.asin(Math.min(1, Math.sqrt(a)));
-  };
+  if (Number.isFinite(homeLat) && Number.isFinite(homeLng)) {
+    pts.push({ lat: homeLat, lng: homeLng });
+  }
 
-  // Frame to every selected amenity so none fall outside the map.
-  const framePts = (amenities || [])
-    .map((a) => ({ lat: Number(a.lat), lng: Number(a.lng) }))
-    .filter((p) => Number.isFinite(p.lat) && Number.isFinite(p.lng));
+  for (const a of amenities || []) {
+    const plat = Number(a.lat);
+    const plng = Number(a.lng);
+    if (Number.isFinite(plat) && Number.isFinite(plng)) {
+      pts.push({ lat: plat, lng: plng });
+    }
+  }
 
-  let west = homeLng;
-  let east = homeLng;
-  let south = homeLat;
-  let north = homeLat;
-
-  const expand = (plat, plng) => {
-    if (!Number.isFinite(plat) || !Number.isFinite(plng)) return;
-    west = Math.min(west, plng);
-    east = Math.max(east, plng);
-    south = Math.min(south, plat);
-    north = Math.max(north, plat);
-  };
-
-  for (const p of framePts) expand(p.lat, p.lng);
-
-  // Parcel only if small / near home (don't let huge multipolygon blow zoom)
   const ring = ringFromGeometry(geometry);
   if (ring && ring.length) {
-    let rWest = Infinity;
-    let rEast = -Infinity;
-    let rSouth = Infinity;
-    let rNorth = -Infinity;
     for (const c of ring) {
       const plng = Number(c[0]);
       const plat = Number(c[1]);
-      if (!Number.isFinite(plat) || !Number.isFinite(plng)) continue;
-      rWest = Math.min(rWest, plng);
-      rEast = Math.max(rEast, plng);
-      rSouth = Math.min(rSouth, plat);
-      rNorth = Math.max(rNorth, plat);
-    }
-    if (
-      Number.isFinite(rWest) &&
-      distMiles((rSouth + rNorth) / 2, (rWest + rEast) / 2) < 0.2 &&
-      rEast - rWest < 0.01 &&
-      rNorth - rSouth < 0.01
-    ) {
-      expand(rSouth, rWest);
-      expand(rNorth, rEast);
+      if (Number.isFinite(plat) && Number.isFinite(plng)) {
+        pts.push({ lat: plat, lng: plng });
+      }
     }
   }
 
-  const minSpanLng = 0.0018;
-  const minSpanLat = 0.0015;
-  if (east - west < minSpanLng) {
-    const mid = (east + west) / 2;
-    west = mid - minSpanLng / 2;
-    east = mid + minSpanLng / 2;
-  }
-  if (north - south < minSpanLat) {
-    const mid = (north + south) / 2;
-    south = mid - minSpanLat / 2;
-    north = mid + minSpanLat / 2;
+  if (!pts.length) {
+    return {
+      centerLng: homeLng || -110.76,
+      centerLat: homeLat || 43.48,
+      zoom: 13,
+    };
   }
 
-  // Tight padding (~4%)
-  const padLng = (east - west) * 0.04;
-  const padLat = (north - south) * 0.04;
-  west -= padLng;
-  east += padLng;
-  south -= padLat;
-  north += padLat;
+  let minX = Infinity;
+  let maxX = -Infinity;
+  let minY = Infinity;
+  let maxY = -Infinity;
+  for (const p of pts) {
+    const w = lngLatToWorld(p.lng, p.lat);
+    minX = Math.min(minX, w.x);
+    maxX = Math.max(maxX, w.x);
+    minY = Math.min(minY, w.y);
+    maxY = Math.max(maxY, w.y);
+  }
 
-  const centerLng = (west + east) / 2;
-  const centerLat = (south + north) / 2;
+  // Minimum span so a single condo pin isn't absurdly zoomed in (~0.4 mi)
+  const minSpan = 0.00035; // world units ≈ neighborhood block cluster
+  if (maxX - minX < minSpan) {
+    const mid = (maxX + minX) / 2;
+    minX = mid - minSpan / 2;
+    maxX = mid + minSpan / 2;
+  }
+  if (maxY - minY < minSpan) {
+    const mid = (maxY + minY) / 2;
+    minY = mid - minSpan / 2;
+    maxY = mid + minSpan / 2;
+  }
 
-  const latRad = (la) => {
-    const s = Math.sin((la * Math.PI) / 180);
-    const c = Math.max(-0.9999, Math.min(0.9999, s));
-    return Math.log((1 + c) / (1 - c)) / 2;
-  };
+  // Padding in mercator space (~18%) so edge pins aren't clipped
+  const padX = (maxX - minX) * 0.18;
+  const padY = (maxY - minY) * 0.18;
+  minX -= padX;
+  maxX += padX;
+  minY -= padY;
+  maxY += padY;
 
-  let fractionX = (east - west) / 360;
-  if (fractionX <= 0) fractionX = 1e-6;
-  const fractionY = Math.abs(latRad(north) - latRad(south)) / (2 * Math.PI);
-  const safeY = Math.max(fractionY, 1e-6);
+  const midX = (minX + maxX) / 2;
+  const midY = (minY + maxY) / 2;
+  // Inverse Web Mercator → lng/lat for Static API center
+  const centerLng = midX * 360 - 180;
+  const n = Math.PI * (1 - 2 * midY);
+  const centerLat = (180 / Math.PI) * Math.atan(0.5 * (Math.exp(n) - Math.exp(-n)));
 
-  const zoomX = Math.log2(logicalW / 256 / fractionX);
-  const zoomY = Math.log2(logicalH / 256 / safeY);
-  // Slight pullback so edge pins aren't clipped
-  const zoom = Math.min(Math.min(zoomX, zoomY) - 0.12, 16);
+  const spanX = Math.max(maxX - minX, 1e-9);
+  const spanY = Math.max(maxY - minY, 1e-9);
+  // Same scale as projectLngLat: scale = 256 * 2^zoom
+  const zoomX = Math.log2(logicalW / 256 / spanX);
+  const zoomY = Math.log2(logicalH / 256 / spanY);
+  // Slight pullback; allow zooming out for mountain/ranch spreads
+  let zoom = Math.min(zoomX, zoomY) - 0.08;
+  zoom = Math.max(9.5, Math.min(15.5, zoom));
 
   return {
     centerLng,
     centerLat,
-    zoom: Math.max(13, zoom),
-    west,
-    south,
-    east,
-    north,
+    zoom,
+    west: null,
+    south: null,
+    east: null,
+    north: null,
   };
 }
 
@@ -225,6 +216,7 @@ function groupAmenitiesByCategory(amenities) {
     byKey.set(key, { key, label: meta.label, rgb: meta.rgb, items: [] });
   }
   for (const a of amenities || []) {
+    if (a.amenityKey === "transit") continue;
     const g = byKey.get(a.amenityKey);
     if (g) g.items.push(a);
   }
@@ -237,9 +229,10 @@ function categoryFill(amenityKey) {
 
 function drawHouseIcon(ctx, x, y, size) {
   const r = size / 2;
+  // Match digital listing home marker: black disc + white house
   ctx.beginPath();
   ctx.arc(x, y, r, 0, Math.PI * 2);
-  ctx.fillStyle = "#ef4444";
+  ctx.fillStyle = "#111827";
   ctx.fill();
   ctx.lineWidth = Math.max(2, size * 0.08);
   ctx.strokeStyle = "#ffffff";
@@ -277,10 +270,13 @@ function drawAmenityDisc(ctx, x, y, size, fill, number) {
 }
 
 async function fetchBasemapImage({ centerLng, centerLat, zoom, logicalW, logicalH, token }) {
+  // Clamp so @2x never exceeds Mapbox's 1280px side limit.
+  const w = Math.max(1, Math.min(MAPBOX_MAX_LOGICAL, Math.round(logicalW)));
+  const h = Math.max(1, Math.min(MAPBOX_MAX_LOGICAL, Math.round(logicalH)));
   const url =
     `https://api.mapbox.com/styles/v1/mapbox/streets-v11/static/` +
     `${centerLng.toFixed(5)},${centerLat.toFixed(5)},${zoom.toFixed(2)},0/` +
-    `${logicalW}x${logicalH}@2x` +
+    `${w}x${h}@2x` +
     `?access_token=${encodeURIComponent(token)}`;
   const res = await fetch(url);
   if (!res.ok) {
@@ -303,17 +299,20 @@ async function composeMapFrame({
   logicalW = LOGICAL_MAP_W,
   logicalH = LOGICAL_MAP_H,
 }) {
-  const viewport = computeViewport(lat, lng, amenities, geometry, logicalW, logicalH);
+  const reqW = Math.max(1, Math.min(MAPBOX_MAX_LOGICAL, Math.round(logicalW)));
+  const reqH = Math.max(1, Math.min(MAPBOX_MAX_LOGICAL, Math.round(logicalH)));
+  const viewport = computeViewport(lat, lng, amenities, geometry, reqW, reqH);
   const basemap = await fetchBasemapImage({
     centerLng: viewport.centerLng,
     centerLat: viewport.centerLat,
     zoom: viewport.zoom,
-    logicalW,
-    logicalH,
+    logicalW: reqW,
+    logicalH: reqH,
     token,
   });
 
-  // Use actual returned pixels (avoids stretch if Mapbox resizes)
+  // Use actual returned pixels. If Mapbox ever resizes, re-derive logical
+  // size from the bitmap so projection stays locked to the image.
   const pxW = basemap.width;
   const pxH = basemap.height;
   const usedLogicalW = pxW / 2;
@@ -354,14 +353,15 @@ async function composeMapFrame({
   const discSize = Math.round(Math.min(pxW, pxH) * 0.038);
   const homeSize = Math.round(discSize * 1.55);
 
+  // Home under amenity discs so numbers stay readable on overlap.
+  const home = project(Number(lat), Number(lng));
+  drawHouseIcon(ctx, home.x, home.y, homeSize);
+
   for (const a of amenities || []) {
     if (!Number.isFinite(Number(a.lat)) || !Number.isFinite(Number(a.lng))) continue;
     const pt = project(Number(a.lat), Number(a.lng));
     drawAmenityDisc(ctx, pt.x, pt.y, discSize, categoryFill(a.amenityKey), a.number);
   }
-
-  const home = project(Number(lat), Number(lng));
-  drawHouseIcon(ctx, home.x, home.y, homeSize);
 
   return canvas;
 }
@@ -492,10 +492,10 @@ async function composeLetterPagePng({
   const dy = mapTop;
   ctx.fillStyle = "#f8fafc";
   ctx.fillRect(dx, dy, mapW, mapH);
-  if (mapFrame.width === MAP_SLOT_PX_W && mapFrame.height === MAP_SLOT_PX_H) {
-    ctx.drawImage(mapFrame, dx, dy);
-  } else {
-    const ir = mapFrame.width / mapFrame.height;
+  // Contain: keep entire fitted basemap+pins visible (letterbox ok).
+  // Cover was cropping edge pins/parcel off the letter page.
+  {
+    const ir = mapFrame.width / Math.max(1, mapFrame.height);
     const tr = mapW / mapH;
     let w;
     let h;

@@ -6,9 +6,9 @@ export const NEIGHBORHOOD_AMENITY_CATEGORIES = [
   { key: 'dining', label: 'Dining', max: 5, min: 2 },
   { key: 'coffee', label: 'Coffee & Bakeries', max: 4, min: 1 },
   { key: 'grocery', label: 'Groceries & Essentials', max: 3, min: 1 },
+  { key: 'schools', label: 'Schools', max: 4, min: 1 },
   { key: 'fitness', label: 'Fitness & Wellness', max: 4, min: 1 },
   { key: 'parks_rec', label: 'Parks & Recreation', max: 5, min: 2 },
-  { key: 'transit', label: 'Transit', max: 3, min: 1 },
   { key: 'essentials', label: 'Essentials', max: 3, min: 1 },
 ];
 
@@ -97,7 +97,7 @@ function rankedForCategory(byAmenity, cat) {
 }
 
 function passesSoftQuality(row) {
-  if (row.amenityKey === 'transit' || row.amenityKey === 'parks_rec') return true;
+  if (row.amenityKey === 'parks_rec') return true;
   if (row.rating != null && row.rating < 3.6 && row.reviews < 25) return false;
   return true;
 }
@@ -133,7 +133,7 @@ export function numberedAmenitiesFromFeatures(features, options = {}) {
   for (const f of features || []) {
     if (rows.length >= maxTotal) break;
     const key = String(f?.properties?.amenityKey || '').trim();
-    if (!allowed.has(key)) continue;
+    if (key === 'transit' || !allowed.has(key)) continue;
     const cat =
       NEIGHBORHOOD_AMENITY_CATEGORIES.find((c) => c.key === key) || {
         key,

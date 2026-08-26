@@ -61,15 +61,6 @@ export const AMENITY_MAP_CATEGORIES = [
     badgeFile: 'fitness-badge.png',
   },
   {
-    key: 'transit',
-    label: 'Transit',
-    singular: 'transit stop',
-    color: '#4f46e5',
-    googleTypes: ['subway_station', 'train_station', 'bus_station', 'transit_station'],
-    defaultRadiusMiles: 2,
-    badgeFile: 'transit-badge.png',
-  },
-  {
     key: 'essentials',
     label: 'Essentials',
     singular: 'essential',
@@ -115,6 +106,14 @@ export const AMENITY_MAP_CATEGORY_KEYS = AMENITY_MAP_CATEGORIES.map(({ key }) =>
 export const AMENITY_MAP_CATEGORY_BY_KEY = Object.fromEntries(
   AMENITY_MAP_CATEGORIES.map((category) => [category.key, category])
 );
+
+/** Drop transit from a tourNearbyCache.byAmenity blob (legacy amenity maps). */
+export function withoutTransitByAmenity(byAmenity) {
+  if (!byAmenity || typeof byAmenity !== 'object') return {};
+  const next = { ...byAmenity };
+  delete next.transit;
+  return next;
+}
 
 export function amenityRadiusMilesToMeters(miles) {
   return Math.round(Math.max(0.5, Math.min(25, Number(miles) || 1)) * MILES_TO_METERS);

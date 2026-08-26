@@ -1,0 +1,271 @@
+{
+  "skipCategories": [
+    "transit",
+    "essentials"
+  ],
+  "maxMilesByCategory": {
+    "parks_rec": 8,
+    "schools": 6,
+    "coffee": 6,
+    "grocery": 6,
+    "dining": 6,
+    "fitness": 6
+  },
+  "byCategory": {
+    "parks_rec": [
+      {
+        "name": "R Park",
+        "placeId": "ChIJnVmQpyQQU1MRy0jHtmmSf2Q",
+        "lat": 43.5034,
+        "lng": -110.84299999999999,
+        "rating": 4.8,
+        "reviews": 339,
+        "address": "4270 River Springs Dr, Wilson, WY 83014, USA"
+      },
+      {
+        "name": "National Elk Refuge & Greater Yellowstone Visitor Center",
+        "placeId": "ChIJz34xa_caU1MRTYmKudqURVQ",
+        "lat": 43.4862937,
+        "lng": -110.7617667,
+        "rating": 4.7,
+        "reviews": 1972,
+        "address": "532 N Cache St, Jackson, WY 83001, USA"
+      },
+      {
+        "name": "Jackson Town Square",
+        "placeId": "ChIJKTCuykIaU1MRt4nAulfd7qs",
+        "lat": 43.4799559,
+        "lng": -110.7617792,
+        "rating": 4.7,
+        "reviews": 4116,
+        "address": "10 E Broadway Ave, Jackson, WY 83001, USA"
+      },
+      {
+        "name": "Emily Stevens Park",
+        "placeId": "ChIJm9tG0z0QU1MRQFAEX6AFCTo",
+        "lat": 43.499061,
+        "lng": -110.83657489999999,
+        "rating": 4.7,
+        "reviews": 170,
+        "address": "1300 Emily Stevens Park Rd, Jackson, WY 83001, USA"
+      }
+    ],
+    "schools": [
+      {
+        "name": "Teton Science Schools",
+        "placeId": "ChIJaQlG4XAQU1MRavrOLhLjTyk",
+        "lat": 43.490947899999995,
+        "lng": -110.81082939999999,
+        "rating": 4.9,
+        "reviews": 34,
+        "address": "700 Coyote Canyon Rd, Jackson, WY 83001, USA"
+      },
+      {
+        "name": "Jackson Hole Middle School",
+        "placeId": "ChIJNdF_2b8QU1MRUWHZwOAhyeU",
+        "lat": 43.462689499999996,
+        "lng": -110.8040121,
+        "rating": null,
+        "reviews": null,
+        "address": "1230 S Park Loop Rd, Jackson, WY 83001, USA"
+      },
+      {
+        "name": "Jackson Hole High School",
+        "placeId": "ChIJ68u9kbgQU1MR3BJgO1QrMDo",
+        "lat": 43.456916899999996,
+        "lng": -110.8020899,
+        "rating": null,
+        "reviews": null,
+        "address": "1910 High School Rd, Jackson, WY 83001, USA"
+      },
+      {
+        "name": "Wilson Elementary School",
+        "placeId": "ChIJBYYTFdIRU1MRgJpPjaEoAdY",
+        "lat": 43.499156899999996,
+        "lng": -110.866867,
+        "rating": null,
+        "reviews": null,
+        "address": "5200 HHR Ranch Rd, Wilson, WY 83014, USA"
+      },
+      {
+        "name": "Jackson Elementary School",
+        "placeId": "ChIJbwkBVFsaU1MRs4SmvZJtiDI",
+        "lat": 43.4828415,
+        "lng": -110.7586386,
+        "rating": null,
+        "reviews": null,
+        "address": "200 N Willow St, Jackson, WY 83001, USA"
+      }
+    ],
+    "coffee": [
+      {
+        "name": "Picnic",
+        "placeId": "ChIJNQcPhJ4QU1MRrzKCjZ0MDOo",
+        "lat": 43.470150499999995,
+        "lng": -110.78723149999999,
+        "rating": 4.7,
+        "reviews": 924,
+        "address": "1110 Maple Way b, Jackson, WY 83001, USA"
+      },
+      {
+        "name": "Snake River Roasting Company",
+        "placeId": "ChIJT2aE2WoXU1MRx23pgwgsvFE",
+        "lat": 43.4794334,
+        "lng": -110.76317379999999,
+        "rating": 4.6,
+        "reviews": 725,
+        "address": "50 W Broadway, Jackson, WY 83001, USA"
+      },
+      {
+        "name": "Cowboy Coffee Co.",
+        "placeId": "ChIJR4-nOF0aU1MRX7uav02kY38",
+        "lat": 43.480485900000005,
+        "lng": -110.7625674,
+        "rating": 4.3,
+        "reviews": 1487,
+        "address": "125 N Cache St, Jackson, WY 83001, USA"
+      },
+      {
+        "name": "Persephone Bakery",
+        "placeId": "ChIJg01QxhIXU1MRfj67DlJhaj0",
+        "lat": 43.479763,
+        "lng": -110.760007,
+        "rating": 4.6,
+        "reviews": 2636,
+        "address": "145 E Broadway Ave, Jackson, WY 83001, USA"
+      }
+    ],
+    "grocery": [
+      {
+        "name": "Albertsons",
+        "placeId": "ChIJ2yynVZwQU1MRzk4ozkYXsh8",
+        "lat": 43.472479899999996,
+        "lng": -110.78926899999999,
+        "rating": 4.3,
+        "reviews": 2336,
+        "address": "105 Buffalo Way, Jackson, WY 83001, USA"
+      },
+      {
+        "name": "Whole Foods Market",
+        "placeId": "ChIJ20d49ZYRU1MRbvkRONb3U68",
+        "lat": 43.4635932,
+        "lng": -110.7942106,
+        "rating": 4.2,
+        "reviews": 457,
+        "address": "1155 US-89, Jackson, WY 83001, USA"
+      }
+    ],
+    "dining": [
+      {
+        "name": "Annie's Thai Kitchen",
+        "placeId": "ChIJM-1etP4bU1MRilfzu9Dvj0U",
+        "lat": 43.4797241,
+        "lng": -110.7658154,
+        "rating": 4.2,
+        "reviews": 591,
+        "address": "265 W Broadway, Jackson, WY 83001, USA"
+      },
+      {
+        "name": "Bin22",
+        "placeId": "ChIJOROjdWgaU1MRBM3HXmQHOz0",
+        "lat": 43.479279999999996,
+        "lng": -110.76538,
+        "rating": 4.6,
+        "reviews": 1082,
+        "address": "200 W Broadway, Jackson, WY 83001, USA"
+      },
+      {
+        "name": "Pica's Mexican Taqueria",
+        "placeId": "ChIJ0VLXsZ0QU1MR6otu4BuUFDQ",
+        "lat": 43.4719194,
+        "lng": -110.78735839999999,
+        "rating": 3.9,
+        "reviews": 683,
+        "address": "1160 Alpine Ln, Jackson, WY 83001, USA"
+      },
+      {
+        "name": "Noodle Kitchen",
+        "placeId": "ChIJ59SPoXcaU1MR4CClB_CNIvU",
+        "lat": 43.4745549,
+        "lng": -110.783663,
+        "rating": 4.1,
+        "reviews": 535,
+        "address": "945 W Broadway, Jackson, WY 83001, USA"
+      },
+      {
+        "name": "Calico Restaurant | Italian",
+        "placeId": "ChIJvV9jnuYPU1MR9mDQBxF1u6Y",
+        "lat": 43.5181186,
+        "lng": -110.8413104,
+        "rating": 4.3,
+        "reviews": 822,
+        "address": "2650 Moose Wilson Rd, Wilson, WY 83014, USA"
+      },
+      {
+        "name": "Teton Thai Teton Village",
+        "placeId": "ChIJwzaacXAFU1MRQtByng-luWU",
+        "lat": 43.587696699999995,
+        "lng": -110.822233,
+        "rating": 4.1,
+        "reviews": 911,
+        "address": "7342 Granite Loop Rd, Teton Village, WY 83025, USA"
+      },
+      {
+        "name": "Kampai | Sushi \u2022 Japanese",
+        "placeId": "ChIJ7WzzDigbU1MRDHQVdtxXdhE",
+        "lat": 43.4813989,
+        "lng": -110.76154439999999,
+        "rating": 4.7,
+        "reviews": 212,
+        "address": "175 Center St, Jackson, WY 83001, USA"
+      }
+    ],
+    "fitness": [
+      {
+        "name": "Inversion Yoga, Pilates & Cafe",
+        "placeId": "ChIJm7Y47l0aU1MRgnj0l7Iz7QQ",
+        "lat": 43.478384600000005,
+        "lng": -110.76593679999999,
+        "rating": 4.8,
+        "reviews": 78,
+        "address": "260 W Pearl Ave, Jackson, WY 83001, USA"
+      },
+      {
+        "name": "Gym 22",
+        "placeId": "ChIJZZj41L4QU1MRswr5_tbscJk",
+        "lat": 43.4730462,
+        "lng": -110.78268999999999,
+        "rating": 4.7,
+        "reviews": 38,
+        "address": "125 Scott Ln, Jackson, WY 83001, USA"
+      },
+      {
+        "name": "Core Pilates of Jackson Hole",
+        "placeId": "ChIJ6151tJ0QU1MRpcs-qxqidM4",
+        "lat": 43.4719453,
+        "lng": -110.788057,
+        "rating": 5,
+        "reviews": 11,
+        "address": "110 Buffalo Way, Jackson, WY 83001, USA"
+      },
+      {
+        "name": "Home Yoga Studio",
+        "placeId": "ChIJabjjEEIaU1MRIoVcMfz4u1g",
+        "lat": 43.476175399999995,
+        "lng": -110.75958279999999,
+        "rating": 5,
+        "reviews": 150,
+        "address": "150 E Hansen Ave, Jackson, WY 83001, USA"
+      },
+      {
+        "name": "Athletic Club at Jackson Hole",
+        "placeId": "ChIJ32DU-FobU1MR_77unIZNFp4",
+        "lat": 43.4725094,
+        "lng": -110.7846582,
+        "rating": 4.9,
+        "reviews": 59,
+        "address": "980 W Broadway, Jackson, WY 83001, USA"
+      }
+    ]
+  }
+}

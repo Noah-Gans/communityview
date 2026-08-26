@@ -2248,6 +2248,8 @@ const { marketingUnsubscribe } = require("./marketingUnsubscribe");
 exports.marketingUnsubscribe = marketingUnsubscribe;
 exports.curateNeighborhoodAmenities =
   require("./neighborhoodAmenityCurate").curateNeighborhoodAmenities;
+exports.generateListingMarketingAssets =
+  require("./listingMarketingAssets").generateListingMarketingAssets;
 exports.generateNeighborhoodMapHttp =
   require("./neighborhoodMapGenerate").generateNeighborhoodMapHttp;
 exports.generateNeighborhoodMapPreview =

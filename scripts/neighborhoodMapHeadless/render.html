@@ -1,0 +1,609 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Neighborhood map headless render</title>
+  <link href="https://api.mapbox.com/mapbox-gl-js/v3.9.0/mapbox-gl.css" rel="stylesheet" />
+  <script src="https://api.mapbox.com/mapbox-gl-js/v3.9.0/mapbox-gl.js"></script>
+  <style>
+    html, body { margin: 0; padding: 0; background: #fff; }
+    #map {
+      position: absolute;
+      left: 0;
+      top: 0;
+      width: 1292px;
+      height: 944px;
+    }
+  </style>
+</head>
+<body>
+  <div id="map"></div>
+  <script>
+    const CATEGORY_META = {
+      dining: { label: 'Dining', fill: '#f97316', rgb: [249, 115, 22] },
+      coffee: { label: 'Coffee & Bakeries', fill: '#a16207', rgb: [161, 98, 7] },
+      grocery: { label: 'Groceries & Essentials', fill: '#eab308', rgb: [234, 179, 8] },
+      schools: { label: 'Schools', fill: '#2563eb', rgb: [37, 99, 235] },
+      fitness: { label: 'Fitness & Wellness', fill: '#f43f5e', rgb: [244, 63, 94] },
+      parks_rec: { label: 'Parks & Recreation', fill: '#22c55e', rgb: [34, 197, 94] },
+      essentials: { label: 'Essentials', fill: '#78716c', rgb: [120, 113, 108] },
+    };
+    const CATEGORY_ORDER = [
+      'dining',
+      'coffee',
+      'grocery',
+      'schools',
+      'fitness',
+      'parks_rec',
+      'essentials',
+    ];
+
+    const PAGE_W_IN = 8.5;
+    const PAGE_H_IN = 11;
+    const MARGIN_IN = 0.45;
+    const CONTENT_W_IN = PAGE_W_IN - MARGIN_IN * 2;
+    const MAP_H_IN = 5.35;
+    const FOOTER_H_IN = 0.88;
+    const PNG_DPI = 170;
+
+    function str(v) {
+      return String(v == null ? '' : v).trim();
+    }
+
+    function sleep(ms) {
+      return new Promise((r) => setTimeout(r, ms));
+    }
+
+    function groupAmenities(amenities) {
+      const byKey = new Map();
+      for (const key of CATEGORY_ORDER) {
+        const meta = CATEGORY_META[key];
+        byKey.set(key, { key, label: meta.label, rgb: meta.rgb, items: [] });
+      }
+      for (const a of amenities || []) {
+        if (a.amenityKey === 'transit') continue;
+        const g = byKey.get(a.amenityKey);
+        if (g) g.items.push(a);
+      }
+      return [...byKey.values()].filter((g) => g.items.length > 0);
+    }
+
+    function bboxFromJob(job) {
+      const pts = [];
+      const geom = job.parcel && job.parcel.geometry;
+      if (geom && geom.type === 'Polygon') {
+        (geom.coordinates[0] || []).forEach((c) => pts.push([c[0], c[1]]));
+      } else if (geom && geom.type === 'MultiPolygon') {
+        ((geom.coordinates[0] || [])[0] || []).forEach((c) => pts.push([c[0], c[1]]));
+      }
+      pts.push([job.lng, job.lat]);
+      (job.amenities || []).forEach((a) => {
+        if (Number.isFinite(a.lng) && Number.isFinite(a.lat)) pts.push([a.lng, a.lat]);
+      });
+      let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+      pts.forEach(([x, y]) => {
+        minX = Math.min(minX, x); maxX = Math.max(maxX, x);
+        minY = Math.min(minY, y); maxY = Math.max(maxY, y);
+      });
+      const padX = Math.max((maxX - minX) * 0.04, 0.00035);
+      const padY = Math.max((maxY - minY) * 0.04, 0.00035);
+      return [
+        [minX - padX, minY - padY],
+        [maxX + padX, maxY + padY],
+      ];
+    }
+
+    /**
+     * Letter maps often fit near+far amenities, so downtown pins stack on the home icon.
+     * Keep camera from the full set, but only draw pins that clear the home (and each other)
+     * in screen space at the final zoom.
+     */
+    function thinAmenitiesForLetter(map, amenities, homeLng, homeLat) {
+      const list = Array.isArray(amenities) ? amenities : [];
+      if (!list.length) return [];
+      const homePt = map.project([homeLng, homeLat]);
+      if (!Number.isFinite(homePt.x) || !Number.isFinite(homePt.y)) return list;
+
+      const rows = [];
+      for (const a of list) {
+        const lng = Number(a.lng);
+        const lat = Number(a.lat);
+        if (!Number.isFinite(lng) || !Number.isFinite(lat)) continue;
+        const p = map.project([lng, lat]);
+        if (!Number.isFinite(p.x) || !Number.isFinite(p.y)) continue;
+        rows.push({
+          a,
+          p,
+          distHome: Math.hypot(p.x - homePt.x, p.y - homePt.y),
+        });
+      }
+
+      const pick = (homeClearPx, pinSepPx) => {
+        // Prefer spread (farther from home first) so local pile-ups lose to neighborhood coverage.
+        const sorted = [...rows].sort((x, y) => y.distHome - x.distHome);
+        const kept = [];
+        for (const row of sorted) {
+          if (row.distHome < homeClearPx) continue;
+          if (
+            kept.some(
+              (k) => Math.hypot(k.p.x - row.p.x, k.p.y - row.p.y) < pinSepPx
+            )
+          ) {
+            continue;
+          }
+          kept.push(row);
+        }
+        return kept;
+      };
+
+      const minKeep = Math.min(10, rows.length);
+      let kept = pick(52, 32);
+      if (kept.length < minKeep) kept = pick(40, 26);
+      if (kept.length < minKeep) kept = pick(32, 22);
+      // Hard floor: never draw on top of the house icon.
+      kept = kept.filter((k) => k.distHome >= 28);
+      kept.sort(
+        (x, y) => (Number(x.a.number) || 0) - (Number(y.a.number) || 0)
+      );
+      return kept.map((k, i) => ({ ...k.a, number: i + 1 }));
+    }
+
+    function loadImageEl(src) {
+      return new Promise((resolve) => {
+        if (!src) return resolve(null);
+        const img = new Image();
+        if (/^https?:/i.test(src)) img.crossOrigin = 'anonymous';
+        img.onload = () => resolve(img);
+        img.onerror = () => resolve(null);
+        img.src = src;
+      });
+    }
+
+    function fitImage(img, maxW, maxH) {
+      const ratio = img.naturalWidth / Math.max(1, img.naturalHeight);
+      let h = maxH;
+      let w = h * ratio;
+      if (w > maxW) {
+        w = maxW;
+        h = w / ratio;
+      }
+      return { w, h };
+    }
+
+    function truncateToWidth(ctx, text, maxW) {
+      let draw = String(text || '');
+      while (ctx.measureText(draw).width > maxW && draw.length > 4) {
+        draw = `${draw.slice(0, -2)}…`;
+      }
+      return draw;
+    }
+
+    async function composeLetterPage(job, mapDataUrl, cvLogoImg) {
+      const inch = (n) => n * PNG_DPI;
+      const pxW = Math.round(PAGE_W_IN * PNG_DPI);
+      const pxH = Math.round(PAGE_H_IN * PNG_DPI);
+      const canvas = document.createElement('canvas');
+      canvas.width = pxW;
+      canvas.height = pxH;
+      const ctx = canvas.getContext('2d');
+      ctx.fillStyle = '#ffffff';
+      ctx.fillRect(0, 0, pxW, pxH);
+      ctx.textAlign = 'left';
+      ctx.textBaseline = 'alphabetic';
+
+      const brand = job.brand || {};
+      const [photoImg, firmLogoImg] = await Promise.all([
+        loadImageEl(brand.photoUrl || (brand.photoBase64 ? `data:image/png;base64,${brand.photoBase64}` : '')),
+        loadImageEl(brand.logoUrl || (brand.logoBase64 ? `data:image/png;base64,${brand.logoBase64}` : '')),
+      ]);
+
+      const agentName = str(brand.name) || 'Listing agent';
+      const agentEmail = str(brand.email);
+      const agentPhone = str(brand.phone);
+
+      const headerTop = inch(MARGIN_IN);
+      const agentBlockW = inch(2.55);
+      const agentRight = inch(PAGE_W_IN - MARGIN_IN);
+      const agentLeft = agentRight - agentBlockW;
+      const titleMaxW = agentLeft - inch(MARGIN_IN) - inch(0.12);
+
+      const photoSize = photoImg ? inch(0.52) : 0;
+      let contactX = agentLeft + (photoImg ? photoSize + inch(0.1) : 0);
+      let contactMaxW = agentRight - contactX;
+      if (!photoImg) {
+        // Right-align text block when there is no photo.
+        ctx.font = `700 ${Math.round(inch(0.125))}px Helvetica, Arial, sans-serif`;
+        const nameW = ctx.measureText(agentName).width;
+        ctx.font = `400 ${Math.round(inch(0.095))}px Helvetica, Arial, sans-serif`;
+        const emailW = agentEmail ? ctx.measureText(agentEmail).width : 0;
+        const phoneW = agentPhone ? ctx.measureText(agentPhone).width : 0;
+        contactMaxW = Math.min(agentBlockW, Math.max(nameW, emailW, phoneW) + inch(0.02));
+        contactX = agentRight - contactMaxW;
+      }
+
+      if (photoImg) {
+        const cx = agentLeft + photoSize / 2;
+        const cy = headerTop + photoSize / 2;
+        ctx.save();
+        ctx.beginPath();
+        ctx.arc(cx, cy, photoSize / 2, 0, Math.PI * 2);
+        ctx.closePath();
+        ctx.clip();
+        ctx.drawImage(photoImg, agentLeft, headerTop, photoSize, photoSize);
+        ctx.restore();
+        ctx.strokeStyle = '#0f172a';
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.arc(cx, cy, photoSize / 2, 0, Math.PI * 2);
+        ctx.stroke();
+      }
+
+      let contactY = headerTop + inch(0.16);
+      ctx.fillStyle = '#0f172a';
+      ctx.font = `700 ${Math.round(inch(0.125))}px Helvetica, Arial, sans-serif`;
+      ctx.fillText(truncateToWidth(ctx, agentName, contactMaxW), contactX, contactY);
+      contactY += inch(0.15);
+      ctx.fillStyle = '#475569';
+      ctx.font = `400 ${Math.round(inch(0.095))}px Helvetica, Arial, sans-serif`;
+      if (agentEmail) {
+        ctx.fillText(truncateToWidth(ctx, agentEmail, contactMaxW), contactX, contactY);
+        contactY += inch(0.13);
+      }
+      if (agentPhone) ctx.fillText(agentPhone, contactX, contactY);
+
+      const titleText = str(job.title || job.address || 'Neighborhood map').toUpperCase();
+      ctx.fillStyle = '#0f172a';
+      ctx.font = `700 ${Math.round(inch(0.26))}px Helvetica, Arial, sans-serif`;
+      ctx.fillText(truncateToWidth(ctx, titleText, titleMaxW), inch(MARGIN_IN), headerTop + inch(0.22));
+
+      let y = headerTop + inch(0.4);
+      const sub = (str(job.placeLabel) || titleText).toUpperCase();
+      ctx.fillStyle = '#64748b';
+      ctx.font = `400 ${Math.round(inch(0.13))}px Helvetica, Arial, sans-serif`;
+      ctx.fillText(truncateToWidth(ctx, sub, titleMaxW), inch(MARGIN_IN), y);
+      y += inch(0.18);
+
+      const headerBottom = Math.max(
+        y,
+        headerTop + (photoImg ? photoSize : inch(0.55)) + inch(0.08)
+      );
+
+      const mapTop = headerBottom + inch(0.06);
+      const mapH = inch(MAP_H_IN);
+      const mapW = inch(CONTENT_W_IN);
+      const mapX = inch(MARGIN_IN);
+      await new Promise((resolve) => {
+        const img = new Image();
+        img.onload = () => {
+          ctx.drawImage(img, mapX, mapTop, mapW, mapH);
+          resolve();
+        };
+        img.onerror = () => resolve();
+        img.src = mapDataUrl;
+      });
+      ctx.strokeStyle = '#0f172a';
+      ctx.lineWidth = 3;
+      ctx.strokeRect(mapX + 1.5, mapTop + 1.5, mapW - 3, mapH - 3);
+
+      const footerReserve = inch(FOOTER_H_IN + 0.12);
+      const legendOuterTop = mapTop + mapH + inch(0.14);
+      const legendOuterBottom = inch(PAGE_H_IN - MARGIN_IN) - footerReserve;
+      const legendPad = inch(0.12);
+      const legendInnerLeft = mapX + legendPad;
+      const legendContentW = mapW - legendPad * 2;
+
+      ctx.strokeStyle = '#0f172a';
+      ctx.lineWidth = 3;
+      ctx.strokeRect(mapX + 1.5, legendOuterTop + 1.5, mapW - 3, legendOuterBottom - legendOuterTop - 3);
+
+      let legendY = legendOuterTop + legendPad + inch(0.14);
+      ctx.fillStyle = '#0f172a';
+      ctx.font = `700 ${Math.round(inch(0.15))}px Helvetica, Arial, sans-serif`;
+      ctx.fillText('Neighborhood amenities', legendInnerLeft, legendY);
+      legendY += inch(0.18);
+
+      const groups = groupAmenities(job.amenities);
+      const colW = (legendContentW - inch(0.18)) / 2;
+      const colGap = inch(0.18);
+      let col = 0;
+      const colY = [legendY, legendY];
+      const legendBottom = legendOuterBottom - legendPad;
+      const lineH = inch(0.125);
+      const swatch = inch(0.095);
+
+      groups.forEach((group) => {
+        let cy = colY[col];
+        const x0 = legendInnerLeft + col * (colW + colGap);
+        const rgb = group.rgb;
+        ctx.fillStyle = `rgb(${rgb[0]},${rgb[1]},${rgb[2]})`;
+        ctx.beginPath();
+        ctx.arc(x0 + swatch / 2, cy - inch(0.035), swatch / 2, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.font = `700 ${Math.round(inch(0.105))}px Helvetica, Arial, sans-serif`;
+        ctx.fillText(String(group.label).toUpperCase(), x0 + swatch + inch(0.06), cy);
+        cy += inch(0.15);
+        group.items.forEach((item) => {
+          if (cy > legendBottom) return;
+          ctx.fillStyle = `rgb(${rgb[0]},${rgb[1]},${rgb[2]})`;
+          ctx.font = `700 ${Math.round(inch(0.11))}px Helvetica, Arial, sans-serif`;
+          const num = `${item.number}.`;
+          ctx.fillText(num, x0, cy);
+          const numW = ctx.measureText(num).width;
+          ctx.fillStyle = '#1e293b';
+          ctx.font = `400 ${Math.round(inch(0.11))}px Helvetica, Arial, sans-serif`;
+          ctx.fillText(
+            truncateToWidth(ctx, item.name || '', colW - numW - inch(0.06)),
+            x0 + numW + inch(0.035),
+            cy
+          );
+          cy += lineH;
+        });
+        colY[col] = cy + inch(0.08);
+        col = colY[0] <= colY[1] ? 0 : 1;
+      });
+
+      const footerTop = legendOuterBottom + inch(0.1);
+      ctx.strokeStyle = '#0f172a';
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      ctx.moveTo(mapX, footerTop);
+      ctx.lineTo(mapX + mapW, footerTop);
+      ctx.stroke();
+
+      const footerInnerTop = footerTop + inch(0.08);
+      const footerH = inch(FOOTER_H_IN) - inch(0.1);
+      const qrImg = await loadImageEl(job.tourQrDataUrl || '');
+
+      let rightX = mapX + mapW;
+      if (firmLogoImg) {
+        const { w, h } = fitImage(firmLogoImg, inch(1.35), footerH);
+        rightX -= w;
+        ctx.drawImage(firmLogoImg, rightX, footerInnerTop + (footerH - h) / 2, w, h);
+        rightX -= inch(0.12);
+      }
+
+      if (qrImg) {
+        const qrSize = Math.min(footerH, inch(0.62));
+        rightX -= qrSize;
+        ctx.drawImage(qrImg, rightX, footerInnerTop + (footerH - qrSize) / 2, qrSize, qrSize);
+        rightX -= inch(0.12);
+      }
+
+      if (cvLogoImg) {
+        const { w, h } = fitImage(cvLogoImg, inch(2.35), footerH);
+        ctx.drawImage(cvLogoImg, mapX, footerInnerTop + (footerH - h) / 2, w, h);
+      }
+
+      return canvas.toDataURL('image/png');
+    }
+
+    function makeHouseIcon() {
+      const size = 128;
+      const c = document.createElement('canvas');
+      c.width = size;
+      c.height = size;
+      const ctx = c.getContext('2d');
+      const r = size / 2 - 4;
+      // Match digital listing / amenity home marker: black disc + white house
+      ctx.beginPath();
+      ctx.arc(size / 2, size / 2, r, 0, Math.PI * 2);
+      ctx.fillStyle = '#111827';
+      ctx.fill();
+      ctx.lineWidth = 8;
+      ctx.strokeStyle = '#ffffff';
+      ctx.stroke();
+      const s = size * 0.28;
+      const x = size / 2;
+      const y = size / 2;
+      ctx.fillStyle = '#ffffff';
+      ctx.beginPath();
+      ctx.moveTo(x, y - s * 0.9);
+      ctx.lineTo(x + s * 0.85, y - s * 0.05);
+      ctx.lineTo(x + s * 0.55, y - s * 0.05);
+      ctx.lineTo(x + s * 0.55, y + s * 0.75);
+      ctx.lineTo(x - s * 0.55, y + s * 0.75);
+      ctx.lineTo(x - s * 0.55, y - s * 0.05);
+      ctx.lineTo(x - s * 0.85, y - s * 0.05);
+      ctx.closePath();
+      ctx.fill();
+      // Mapbox addImage rejects raw canvases ("mismatched image size"); pass ImageData.
+      return ctx.getImageData(0, 0, size, size);
+    }
+
+    function hideBasemapTransit(map) {
+      const hideIds = ['transit-label', 'airport-label'];
+      hideIds.forEach((id) => {
+        if (map.getLayer(id)) {
+          map.setLayoutProperty(id, 'visibility', 'none');
+        }
+      });
+      const layers = (map.getStyle() && map.getStyle().layers) || [];
+      layers.forEach((layer) => {
+        const id = String(layer.id || '');
+        const src = String(layer['source-layer'] || '');
+        const icon = JSON.stringify((layer.layout && layer.layout['icon-image']) || '');
+        if (
+          hideIds.includes(id) ||
+          /transit/i.test(id) ||
+          /transit/i.test(src) ||
+          /"network"/i.test(icon)
+        ) {
+          if (map.getLayer(id)) {
+            map.setLayoutProperty(id, 'visibility', 'none');
+          }
+        }
+      });
+      if (map.getLayer('poi-label')) {
+        const exclude = [
+          'match',
+          ['get', 'maki'],
+          ['bus', 'rail', 'rail-metro', 'rail-light', 'ferry', 'airfield', 'heliport'],
+          false,
+          true,
+        ];
+        const prev = map.getFilter('poi-label');
+        map.setFilter('poi-label', prev ? ['all', prev, exclude] : exclude);
+      }
+    }
+
+    async function renderJob(job) {
+      mapboxgl.accessToken = job.mapboxToken;
+      const map = new mapboxgl.Map({
+        container: 'map',
+        style: 'mapbox://styles/mapbox/streets-v11',
+        center: [job.lng, job.lat],
+        zoom: 14,
+        preserveDrawingBuffer: true,
+        attributionControl: false,
+        fadeDuration: 0,
+      });
+
+      await new Promise((resolve, reject) => {
+        const t = setTimeout(() => reject(new Error('Map style load timeout')), 45000);
+        map.once('load', () => {
+          clearTimeout(t);
+          resolve();
+        });
+        map.once('error', (e) => {
+          clearTimeout(t);
+          reject(e && e.error ? e.error : e);
+        });
+      });
+      hideBasemapTransit(map);
+      map.resize();
+
+      const amenityFeatures = (job.amenities || []).map((a) => ({
+        type: 'Feature',
+        properties: {
+          number: String(a.number),
+          color: CATEGORY_META[a.amenityKey]?.fill || '#0f172a',
+        },
+        geometry: { type: 'Point', coordinates: [a.lng, a.lat] },
+      }));
+
+      if (job.parcel && job.parcel.geometry) {
+        map.addSource('parcel', {
+          type: 'geojson',
+          data: { type: 'Feature', geometry: job.parcel.geometry, properties: {} },
+        });
+        map.addLayer({
+          id: 'parcel-fill',
+          type: 'fill',
+          source: 'parcel',
+          paint: { 'fill-color': '#2563eb', 'fill-opacity': 0.16 },
+        });
+        map.addLayer({
+          id: 'parcel-line',
+          type: 'line',
+          source: 'parcel',
+          paint: { 'line-color': '#2563eb', 'line-width': 3 },
+        });
+      }
+
+      // Home under amenities so numbered pins stay readable when they overlap.
+      map.addSource('home', {
+        type: 'geojson',
+        data: {
+          type: 'Feature',
+          geometry: { type: 'Point', coordinates: [job.lng, job.lat] },
+          properties: {},
+        },
+      });
+      if (!map.hasImage('home-icon')) {
+        map.addImage('home-icon', makeHouseIcon());
+      }
+      map.addLayer({
+        id: 'home-icon',
+        type: 'symbol',
+        source: 'home',
+        layout: {
+          'icon-image': 'home-icon',
+          'icon-size': 0.42,
+          'icon-allow-overlap': true,
+          'icon-ignore-placement': true,
+        },
+      });
+
+      map.addSource('amenities', {
+        type: 'geojson',
+        data: { type: 'FeatureCollection', features: amenityFeatures },
+      });
+      map.addLayer({
+        id: 'amenity-circles',
+        type: 'circle',
+        source: 'amenities',
+        paint: {
+          'circle-radius': 14,
+          'circle-color': ['get', 'color'],
+          'circle-stroke-width': 3,
+          'circle-stroke-color': '#ffffff',
+        },
+      });
+      map.addLayer({
+        id: 'amenity-labels',
+        type: 'symbol',
+        source: 'amenities',
+        layout: {
+          'text-field': ['get', 'number'],
+          'text-size': 13,
+          'text-font': ['Open Sans Bold', 'Arial Unicode MS Bold'],
+          'text-allow-overlap': true,
+          'text-ignore-placement': true,
+        },
+        paint: { 'text-color': '#ffffff' },
+      });
+
+      const bounds = bboxFromJob(job);
+      map.fitBounds(bounds, { padding: 48, duration: 0, maxZoom: 16 });
+      map.resize();
+
+      // Keep the full amenity set on the letter (no screen-space thinning).
+      const thinned = job.amenities || [];
+      const thinnedFeatures = thinned.map((a) => ({
+        type: 'Feature',
+        properties: {
+          number: String(a.number),
+          color: CATEGORY_META[a.amenityKey]?.fill || '#0f172a',
+        },
+        geometry: { type: 'Point', coordinates: [a.lng, a.lat] },
+      }));
+      if (map.getSource('amenities')) {
+        map.getSource('amenities').setData({
+          type: 'FeatureCollection',
+          features: thinnedFeatures,
+        });
+      }
+
+      async function waitIdle(ms) {
+        await Promise.race([
+          new Promise((resolve) => map.once('idle', resolve)),
+          sleep(ms),
+        ]);
+      }
+      await waitIdle(8000);
+      await sleep(1100);
+      hideBasemapTransit(map);
+      if (typeof map.triggerRepaint === 'function') map.triggerRepaint();
+      await waitIdle(4000);
+      await sleep(300);
+
+      const mapDataUrl = map.getCanvas().toDataURL('image/png');
+      const cvLogoImg = await loadImageEl(job.cvLogoDataUrl || '');
+      const pageDataUrl = await composeLetterPage(job, mapDataUrl, cvLogoImg);
+      map.remove();
+      return pageDataUrl;
+    }
+
+    window.__renderNeighborhoodMap = async function (job) {
+      try {
+        const dataUrl = await renderJob(job);
+        return { ok: true, pngDataUrl: dataUrl };
+      } catch (err) {
+        return { ok: false, error: String(err && err.message ? err.message : err) };
+      }
+    };
+
+    window.__READY__ = true;
+  </script>
+</body>
+</html>

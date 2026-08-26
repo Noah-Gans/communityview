@@ -53,6 +53,14 @@ const CATEGORIES = [
     color: "0xEAB308",
   },
   {
+    key: "schools",
+    label: "Schools",
+    max: 4,
+    min: 1,
+    types: ["primary_school", "secondary_school", "school"],
+    color: "0x2563EB",
+  },
+  {
     key: "fitness",
     label: "Fitness",
     max: 4,
@@ -67,14 +75,6 @@ const CATEGORIES = [
     min: 2,
     types: ["park"],
     color: "0x22C55E",
-  },
-  {
-    key: "transit",
-    label: "Transit",
-    max: 3,
-    min: 1,
-    types: ["subway_station", "train_station", "bus_station", "transit_station"],
-    color: "0x6366F1",
   },
   {
     key: "essentials",

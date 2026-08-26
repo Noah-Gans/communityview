@@ -28,6 +28,7 @@ import {
   amenityRadiusMetersToMiles,
   amenityRadiusMilesToMeters,
   defaultAmenityRadiusMeters,
+  withoutTransitByAmenity,
 } from '../../utils/amenityMapCatalog';
 import {
   fitTourBuilderRadiusBounds,
@@ -828,7 +829,7 @@ export default function AmenityMapPage() {
           description: data.description || '',
           ...buildSharedMapAgentMeta(data),
         });
-        const loadedEntries = data.tourNearbyCache?.byAmenity || {};
+        const loadedEntries = withoutTransitByAmenity(data.tourNearbyCache?.byAmenity || {});
         setEntries(loadedEntries);
         const populatedKeys = AMENITY_MAP_CATEGORIES.filter(
           ({ key }) => Array.isArray(loadedEntries[key]?.features) && loadedEntries[key].features.length

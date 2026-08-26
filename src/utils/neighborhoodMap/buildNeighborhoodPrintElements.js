@@ -9,9 +9,9 @@ export const NEIGHBORHOOD_CATEGORY_COLORS = {
   dining: { fill: '#f97316', stroke: '#c2410c', rgb: [249, 115, 22] },
   coffee: { fill: '#a16207', stroke: '#854d0e', rgb: [161, 98, 7] },
   grocery: { fill: '#eab308', stroke: '#ca8a04', rgb: [234, 179, 8] },
+  schools: { fill: '#2563eb', stroke: '#1d4ed8', rgb: [37, 99, 235] },
   fitness: { fill: '#f43f5e', stroke: '#e11d48', rgb: [244, 63, 94] },
   parks_rec: { fill: '#22c55e', stroke: '#16a34a', rgb: [34, 197, 94] },
-  transit: { fill: '#6366f1', stroke: '#4f46e5', rgb: [99, 102, 241] },
   essentials: { fill: '#78716c', stroke: '#57534e', rgb: [120, 113, 108] },
 };
 
@@ -151,10 +151,11 @@ export function buildNumberedAmenityElements(amenities, { forShare = false, zoom
         strokeWidth: 3,
         iconOpacity: 0,
         labelFontSize: forShare ? Math.max(10, labelSize - 1) : labelSize,
-        labelColor: '#0f172a',
-        labelBackgroundColor: 'rgba(255,255,255,0.95)',
+        // Center white numerals on the pin disc (schools + all categories).
+        labelColor: '#ffffff',
+        labelBackgroundColor: 'rgba(255,255,255,0)',
         labelAlignH: 'center',
-        labelAlignV: 'top',
+        labelAlignV: 'middle',
         labelFontFamily: 'Inter, system-ui, sans-serif',
       };
     })

@@ -2,8 +2,7 @@
  * Region grid cache for Places Nearby results.
  * Dense areas (e.g. SF) reuse the same cell so repeat neighborhood maps stay cheap.
  *
- * Cell size ~0.005° ≈ 550m N–S / ~440m E–W in SF (tighter than the old ~1.1km grid).
- * Roughly ~5–6 short SF blocks (~⅓ mile).
+ * Default cell ~0.005° ≈ 550m (SF). Jackson Hole uses ~0.072° ≈ 5 mi via cellStep.
  */
 const admin = require("firebase-admin");
 
@@ -11,10 +10,12 @@ const COLLECTION = "amenityGridCache";
 const CURATED_COLLECTION = "amenityCuratedGridCache";
 /** ~500m class cells for urban mass-gen. */
 const CELL_STEP_DEG = 0.005;
+/** ~5 mi N–S at Jackson Hole latitude. */
+const JACKSON_CELL_STEP_DEG = 0.072;
 /** 30 days */
 const TTL_MS = 1000 * 60 * 60 * 24 * 30;
 /** Bump when curated pick rules / density change. */
-const CURATED_CACHE_VERSION = "v2";
+const CURATED_CACHE_VERSION = "v3";
 
 function gridCellKey(lat, lng, step = CELL_STEP_DEG) {
   const s = Number(step) || CELL_STEP_DEG;
@@ -37,9 +38,15 @@ function curatedDocId(cell, radiusMeters, version = CURATED_CACHE_VERSION) {
   return `${cell}__r${radius}__${version}`;
 }
 
-async function readAmenityGridCache(lat, lng, amenityKey, radiusMeters) {
+function resolveCellStep(options) {
+  const step = Number(options && options.cellStep);
+  return Number.isFinite(step) && step > 0 ? step : CELL_STEP_DEG;
+}
+
+async function readAmenityGridCache(lat, lng, amenityKey, radiusMeters, options = {}) {
   try {
-    const cell = gridCellKey(lat, lng);
+    const cellStep = resolveCellStep(options);
+    const cell = gridCellKey(lat, lng, cellStep);
     const id = docId(cell, amenityKey, radiusMeters);
     const snap = await admin.firestore().collection(COLLECTION).doc(id).get();
     if (!snap.exists) return null;
@@ -59,9 +66,18 @@ async function readAmenityGridCache(lat, lng, amenityKey, radiusMeters) {
   }
 }
 
-async function writeAmenityGridCache(lat, lng, amenityKey, radiusMeters, featureCollection, nearbyDataVersion) {
+async function writeAmenityGridCache(
+  lat,
+  lng,
+  amenityKey,
+  radiusMeters,
+  featureCollection,
+  nearbyDataVersion,
+  options = {}
+) {
   try {
-    const cell = gridCellKey(lat, lng);
+    const cellStep = resolveCellStep(options);
+    const cell = gridCellKey(lat, lng, cellStep);
     const id = docId(cell, amenityKey, radiusMeters);
     const features = Array.isArray(featureCollection?.features)
       ? featureCollection.features.slice(0, 40)
@@ -78,7 +94,7 @@ async function writeAmenityGridCache(lat, lng, amenityKey, radiusMeters, feature
         },
         searchCenter: { lat: Number(lat), lng: Number(lng) },
         savedAt: admin.firestore.FieldValue.serverTimestamp(),
-        cellStepDeg: CELL_STEP_DEG,
+        cellStepDeg: cellStep,
       },
       { merge: true }
     );
@@ -89,9 +105,10 @@ async function writeAmenityGridCache(lat, lng, amenityKey, radiusMeters, feature
   }
 }
 
-async function readCuratedAmenityGridCache(lat, lng, radiusMeters) {
+async function readCuratedAmenityGridCache(lat, lng, radiusMeters, options = {}) {
   try {
-    const cell = gridCellKey(lat, lng);
+    const cellStep = resolveCellStep(options);
+    const cell = gridCellKey(lat, lng, cellStep);
     const id = curatedDocId(cell, radiusMeters);
     const snap = await admin.firestore().collection(CURATED_COLLECTION).doc(id).get();
     if (!snap.exists) return null;
@@ -111,11 +128,26 @@ async function readCuratedAmenityGridCache(lat, lng, radiusMeters) {
   }
 }
 
-async function writeCuratedAmenityGridCache(lat, lng, radiusMeters, amenities, curateSource) {
+async function writeCuratedAmenityGridCache(
+  lat,
+  lng,
+  radiusMeters,
+  amenities,
+  curateSource,
+  options = {}
+) {
   try {
-    const cell = gridCellKey(lat, lng);
+    const cellStep = resolveCellStep(options);
+    const cell = gridCellKey(lat, lng, cellStep);
     const id = curatedDocId(cell, radiusMeters);
-    const list = Array.isArray(amenities) ? amenities.slice(0, 40) : [];
+    const list = (Array.isArray(amenities) ? amenities.slice(0, 40) : []).map((a) => {
+      const out = {};
+      if (!a || typeof a !== "object") return out;
+      for (const [k, v] of Object.entries(a)) {
+        if (v !== undefined) out[k] = v;
+      }
+      return out;
+    });
     await admin.firestore().collection(CURATED_COLLECTION).doc(id).set(
       {
         cell,
@@ -125,7 +157,7 @@ async function writeCuratedAmenityGridCache(lat, lng, radiusMeters, amenities, c
         amenities: list,
         searchCenter: { lat: Number(lat), lng: Number(lng) },
         savedAt: admin.firestore.FieldValue.serverTimestamp(),
-        cellStepDeg: CELL_STEP_DEG,
+        cellStepDeg: cellStep,
       },
       { merge: true }
     );
@@ -138,6 +170,7 @@ async function writeCuratedAmenityGridCache(lat, lng, radiusMeters, amenities, c
 
 module.exports = {
   CELL_STEP_DEG,
+  JACKSON_CELL_STEP_DEG,
   CURATED_CACHE_VERSION,
   gridCellKey,
   readAmenityGridCache,

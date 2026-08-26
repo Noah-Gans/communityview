@@ -67,3 +67,6 @@ __pycache__/
 venv/
 env/
 
+
+# Generated neighborhood map output (ad-hoc sales runs, not product code)
+neighborhood-map-out/
