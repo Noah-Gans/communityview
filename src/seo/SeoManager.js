@@ -1,6 +1,13 @@
 import { useEffect } from 'react';
 import { useLocation } from 'react-router-dom';
-import { absoluteUrl, DEFAULT_OG_IMAGE, getPageSeo, SITE_ORIGIN } from './pageMeta';
+import {
+  absoluteUrl,
+  buildFaqJsonLd,
+  DEFAULT_OG_IMAGE,
+  getPageSeo,
+  normalizePathname,
+  SITE_ORIGIN,
+} from './pageMeta';
 
 function upsertMeta(attr, key, content) {
   if (content == null || content === '') return;
@@ -51,7 +58,7 @@ export function applyPageSeo({ title, description, path, noindex, image, jsonLd 
   upsertMeta('name', 'robots', noindex ? 'noindex,nofollow' : 'index,follow');
 
   upsertMeta('property', 'og:type', 'website');
-  upsertMeta('property', 'og:site_name', 'CommunityView');
+  upsertMeta('property', 'og:site_name', 'Community View');
   upsertMeta('property', 'og:title', title);
   upsertMeta('property', 'og:description', description);
   upsertMeta('property', 'og:url', url);
@@ -72,8 +79,10 @@ export default function SeoManager({ jsonLdByPath } = {}) {
   const { pathname } = useLocation();
 
   useEffect(() => {
+    const clean = normalizePathname(pathname);
     const seo = getPageSeo(pathname);
-    const jsonLd = jsonLdByPath?.[pathname] || null;
+    const jsonLd =
+      jsonLdByPath?.[clean] || jsonLdByPath?.[pathname] || buildFaqJsonLd(seo.faqs) || null;
     applyPageSeo({ ...seo, jsonLd });
   }, [pathname, jsonLdByPath]);
 

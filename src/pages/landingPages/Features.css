@@ -69,10 +69,31 @@
   font-size: clamp(1rem, 2vw, 1.3rem);
   color: rgba(255, 255, 255, 0.7);
   max-width: 700px;
-  margin: 0 auto 48px;
+  margin: 0 auto 16px;
   line-height: 1.6;
   font-weight: 400;
   animation: fadeInUp 1s ease;
+}
+
+.features-seo-links {
+  max-width: 700px;
+  margin: 0 auto 48px;
+  color: rgba(255, 255, 255, 0.65);
+  font-size: 0.95rem;
+  line-height: 1.6;
+  animation: fadeInUp 1s ease;
+}
+
+.features-seo-links a {
+  color: #00d4aa;
+  font-weight: 600;
+  text-decoration: none;
+}
+
+.features-seo-links a:hover,
+.features-seo-links a:focus-visible {
+  text-decoration: underline;
+  outline: none;
 }
 
 /* Features Content */
@@ -432,6 +453,24 @@
   transition: all 0.3s ease;
   font-family: inherit;
   box-shadow: 0 8px 24px rgba(0, 107, 69, 0.3);
+  margin-bottom: 12px;
+}
+
+.modal-learn-more {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  color: #00d4aa;
+  font-weight: 600;
+  text-decoration: none;
+  padding: 8px 0 0;
+}
+
+.modal-learn-more:hover,
+.modal-learn-more:focus-visible {
+  text-decoration: underline;
+  outline: none;
 }
 
 .modal-try-btn:hover {

@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import './Features.css';
 import './styles/marketing-layout.css';
 import MarketingLayout from './components/MarketingLayout';
@@ -44,6 +44,19 @@ const Features = () => {
           <span className="features-highlight-text">{featuresPageHero.highlight}</span>
         </h1>
         <p className="features-subtitle">{featuresPageHero.subtitle}</p>
+        <p className="features-seo-links">
+          <Link to="/use-cases/find-property-owner">Find a property owner</Link>
+          {' · '}
+          <Link to="/use-cases/ownership-details">Ownership details</Link>
+          {' · '}
+          <Link to="/use-cases/ownership-map">Ownership map</Link>
+          {' · '}
+          <Link to="/use-cases/public-land-map">Public land map</Link>
+          {' · '}
+          <Link to="/use-cases/parcel-maps">Parcel maps</Link>
+          {' · '}
+          <Link to="/use-cases">All use cases</Link>
+        </p>
       </div>
 
       <div className="features-content">
@@ -112,6 +125,15 @@ const Features = () => {
                 >
                   Get started →
                 </button>
+                {active.learnMoreTo && (
+                  <Link
+                    className="modal-learn-more"
+                    to={active.learnMoreTo}
+                    onClick={(e) => e.stopPropagation()}
+                  >
+                    {active.learnMoreLabel || 'Learn more'} →
+                  </Link>
+                )}
               </div>
             </div>
           </div>

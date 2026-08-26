@@ -64,6 +64,10 @@ export const searchBridge = {
     'Look up parcels anywhere in the country, then filter by county so you only see the results you want. Search by owner, address, or parcel ID without hopping between assessor sites.',
   imageSrc: '/new_search.png',
   imageAlt: 'Nationwide parcel search with county filters',
+  links: [
+    { label: 'Parcel search', to: '/use-cases/parcel-search' },
+    { label: 'Find a property owner', to: '/use-cases/find-property-owner' },
+  ],
 };
 
 export const ownershipDetails = {
@@ -78,6 +82,11 @@ export const ownershipDetails = {
   ],
   imageSrc: '/slide_photos/property-info.png',
   imageAlt: 'Parcel ownership and property details panel on the Community View map',
+  links: [
+    { label: 'Ownership details', to: '/use-cases/ownership-details' },
+    { label: 'Ownership map', to: '/use-cases/ownership-map' },
+    { label: 'Public land map', to: '/use-cases/public-land-map' },
+  ],
 };
 
 export const mapBuilder = {
@@ -92,6 +101,10 @@ export const mapBuilder = {
   ],
   imageSrc: '/map-builder.png',
   imageAlt: 'Community View map builder with property boundary and labeled features',
+  links: [
+    { label: 'Parcel maps', to: '/use-cases/parcel-maps' },
+    { label: 'Listing maps', to: '/use-cases/listing-maps' },
+  ],
 };
 
 export const howItWorks = {

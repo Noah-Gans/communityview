@@ -11,6 +11,10 @@ ReactDOM.render(
   document.getElementById('root')
 );
 
+// Crawlable HTML stays in the initial document for bots; remove after React mounts.
+const seoStatic = document.getElementById('cv-seo-static');
+if (seoStatic) seoStatic.remove();
+
 // Register service worker for offline functionality
 // Set to false to disable service worker (useful for development with localhost tile servers)
 const ENABLE_SERVICE_WORKER = false; // Disabled for localhost tile server development

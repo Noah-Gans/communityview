@@ -1,9 +1,7 @@
 import React from 'react';
-import { useNavigate } from 'react-router-dom';
+import { Link } from 'react-router-dom';
 
 export default function MarketingFooter() {
-  const navigate = useNavigate();
-
   return (
     <footer className="intro-footer">
       <div className="footer-content">
@@ -14,21 +12,21 @@ export default function MarketingFooter() {
           <p>Maps and property tours for agents</p>
         </div>
         <div className="footer-links">
-          <button type="button" className="footer-button" onClick={() => navigate('/pricing')}>
+          <Link className="footer-button" to="/pricing">
             Pricing
-          </button>
-          <button type="button" className="footer-button" onClick={() => navigate('/use-cases')}>
+          </Link>
+          <Link className="footer-button" to="/use-cases">
             Use cases
-          </button>
-          <button type="button" className="footer-button" onClick={() => navigate('/compare/land-id')}>
+          </Link>
+          <Link className="footer-button" to="/compare/land-id">
             vs Land id
-          </button>
-          <button type="button" className="footer-button" onClick={() => navigate('/faq')}>
+          </Link>
+          <Link className="footer-button" to="/faq">
             FAQ
-          </button>
-          <button type="button" className="footer-button" onClick={() => navigate('/features')}>
+          </Link>
+          <Link className="footer-button" to="/features">
             Features
-          </button>
+          </Link>
           <a
             className="footer-button"
             href="mailto:noahgans@communityview.ai"

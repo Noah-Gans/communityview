@@ -6,6 +6,11 @@ export const faqPageHero = {
 
 export const faqItems = [
   {
+    question: 'What is Community View?',
+    answer:
+      'Community View (communityview.ai) is parcel map software for real estate agents. Search parcels nationwide, find property owners, review ownership details, build listing maps, and send digital property tours buyers can open on any device.',
+  },
+  {
     question: 'Does Community View work nationwide?',
     answer:
       'Yes. Parcel search and mapping use nationwide Regrid data. Search across the country and filter results by county when you want to narrow results to a specific market.',
