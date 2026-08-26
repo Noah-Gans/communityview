@@ -1,0 +1,106 @@
+{
+  "jurisdictionId": "wy-jackson-town",
+  "jurisdictionName": "Town of Jackson, WY",
+  "zoneCode": "NM-2",
+  "zoneName": "Neighborhood Medium Density-2",
+  "ldrSection": "2.2.8",
+  "ldrUrl": "https://www.tetoncountywy.gov/DocumentCenter/View/1670/Town-of-Jackson-Land-Development-Regulations-PDF#page=70",
+  "confidence": "structured",
+  "geo": {
+    "primaryBuildingSetbacksFt": {
+      "primaryStreet": 20,
+      "secondaryStreet": 10,
+      "side": 10,
+      "rear": 10
+    },
+    "accessoryStructureSetbacksFt": {
+      "primaryStreet": 30,
+      "secondaryStreet": 10,
+      "side": 5,
+      "rear": 5,
+      "rearAlley": 10
+    },
+    "siteDevelopmentSetbacksFt": {
+      "street": "sameAsPrimaryBuilding",
+      "sideOrRear": 5,
+      "excludes": ["driveways", "sidewalks", "parking"]
+    },
+    "parkingSetbacksFt": {
+      "primaryStreet": 0,
+      "secondaryStreet": 0,
+      "side": 1,
+      "rear": 5,
+      "rearAlley": 0
+    },
+    "landscapeSurfaceRatioMin": {
+      "detachedDwelling": 0.45,
+      "apartmentsOrAttached": { "ratio": 0.21, "frontOfLotPct": 70 },
+      "otherAllowedUses": 0.35
+    },
+    "farMax": {
+      "detachedDwelling": 0.3,
+      "otherAllowedUses": 0.4
+    },
+    "maxHabitableFloorAreaAboveGradeSf": 10000,
+    "detachedDwellingMaxHabitableExcludingBasementSf": 8000,
+    "primaryBuildingHeight": {
+      "oneDetachedOrTwoAttached": [
+        { "roofPitch": "<=3/12", "stories": 2, "maxFt": 26 },
+        { "roofPitch": "4/12-5/12", "stories": 2, "maxFt": 28 },
+        { "roofPitch": ">=6/12", "stories": 2, "maxFt": 30 }
+      ],
+      "threeOrMoreAttached": [
+        { "roofPitch": "<=3/12", "stories": 3, "maxFt": 35 },
+        { "roofPitch": "4/12-5/12", "stories": 3, "maxFt": 37 },
+        { "roofPitch": ">=6/12", "stories": 3, "maxFt": 39 }
+      ]
+    },
+    "accessoryStructureHeightMaxFt": 14,
+    "hydroBuffersFt": {
+      "cacheCreekSouthOfCacheCreekDr": 20,
+      "flatCreekNorthOfHansenAve": 25,
+      "flatCreekSouthOfHansenAve": 50,
+      "wetland": 30,
+      "irrigationDitch": 15
+    },
+    "steepSlopeNoBuildPct": 25,
+    "parkingRates": {
+      "detachedDwelling": "2/DU",
+      "attachedOrApartment": "1/DU if <2 bedrooms and <500 sf; else 1.5/DU",
+      "groupHome": "0.5/bed",
+      "shortTermRental": "1/DU if <2 bedrooms and <500 sf; else 1.5/DU"
+    },
+    "streetSetbackRange": null,
+    "lotCoveragePct": null
+  },
+  "classification": {
+    "intent": "Medium to higher density residential; workforce housing; transitional neighborhoods.",
+    "uses": [
+      { "name": "Detached Dwelling", "permit": "Y", "parking": "2/DU" },
+      { "name": "Attached Dwelling", "permit": "B", "parking": "1/DU if <2 bed & <500 sf; else 1.5/DU" },
+      { "name": "Apartment", "permit": "B", "parking": "1/DU if <2 bed & <500 sf; else 1.5/DU" },
+      { "name": "Group Home", "permit": "C", "parking": "0.5/bed" },
+      { "name": "Assembly", "permit": "C", "parking": "independent" },
+      { "name": "Home Occupation", "permit": "B", "parking": "n/a" },
+      { "name": "Home Business", "permit": "C", "parking": "1/employee" },
+      { "name": "Short-Term Rental Unit", "permit": "B", "parking": "1/DU if <2 bed & <500 sf; else 1.5/DU" }
+    ],
+    "hillsideCupAvgSlopePct": 10,
+    "subdivisionMinLotSf": 7500,
+    "utilities": { "water": "public", "sewer": "public" },
+    "dwellingPermitPath": {
+      "lt5": "buildingPermit",
+      "5to15": "developmentPlan+buildingPermit",
+      "gt15": "sketchPlan+developmentPlan+buildingPermit"
+    }
+  },
+  "citations": {
+    "primaryStreetSetback": { "section": "2.2.8.B.1", "label": "Primary Building Setbacks" },
+    "far": { "section": "2.2.8.B.3", "label": "Scale of Development / FAR" },
+    "height": { "section": "2.2.8.B.3", "label": "Primary Building Height (Sec. 9.4.9)" },
+    "landscape": { "section": "2.2.8.B.1", "label": "Landscaping (Div. 5.5 / 9.4.6.D)" },
+    "steepSlope": { "section": "2.2.8.B.7", "label": "Steep Slopes (Sec. 5.4.1)" },
+    "hillsideCup": { "section": "2.2.8.B.7", "label": "Hillside CUP — avg cross-slope ≥ 10%" },
+    "uses": { "section": "2.2.8.C", "label": "Allowed Uses" }
+  }
+}

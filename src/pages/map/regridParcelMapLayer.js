@@ -253,8 +253,11 @@ export function setRegridParcelSelectionHighlight(map, features, settings = {}) 
 }
 
 export function clearRegridParcelSelectionHighlight(map) {
-  if (!map?.getStyle?.()) return;
+  if (!map) return;
   try {
+    // map.getStyle() throws while a style is loading — guard first.
+    if (typeof map.isStyleLoaded === 'function' && !map.isStyleLoaded()) return;
+    if (!map.getStyle?.()) return;
     if (map.getLayer(REGRID_PARCELS_SELECTION_FILL_ID)) {
       map.setFilter(REGRID_PARCELS_SELECTION_FILL_ID, REGRID_SELECTION_NOMATCH_FILTER);
       map.setLayoutProperty(REGRID_PARCELS_SELECTION_FILL_ID, 'visibility', 'none');

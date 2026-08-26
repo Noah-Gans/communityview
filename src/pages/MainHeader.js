@@ -40,7 +40,7 @@ const MainHeader = () => {
   const isMapRoute = pathname === '/map';
   const isPrintEditMode = pathname === '/print' && isPrinting;
   // Check if we're on a product page (map, search, report, print)
-  const isProductPage = ['/map', '/search', '/report', '/print'].includes(pathname);
+  const isProductPage = ['/map', '/search', '/report', '/print', '/planning'].includes(pathname);
   const inListingWizard = Boolean(propertyMapWizardActive);
   const showProductTabs = isProductPage && (!isPrintEditMode || inListingWizard);
   const showPrintEditorActions = isPrintEditMode && !inListingWizard;
@@ -64,6 +64,7 @@ const MainHeader = () => {
     if (path.includes('/search')) return 'search';
     if (path.includes('/report')) return 'report';
     if (path.includes('/print')) return 'print';
+    if (path.includes('/planning')) return 'planning';
     if (path.includes('/map')) return 'map';
     return activeTab; // Fallback to context if no match
   };
@@ -539,6 +540,15 @@ const MainHeader = () => {
               >
                 Search
               </Link>
+              {!inListingWizard && (
+                <Link
+                  className={`header-tab ${currentActiveTab === 'planning' ? 'active' : ''}`}
+                  onClick={() => handleTabChange('planning')}
+                  to="/planning"
+                >
+                  Planning
+                </Link>
+              )}
               {!inListingWizard && !isMobile && REGRID_BATCH_REPORTS_ENABLED && (
                 <Link
                   className={`header-tab ${currentActiveTab === 'report' ? 'active' : ''}`}

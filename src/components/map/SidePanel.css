@@ -2096,6 +2096,15 @@
   width: 100%;
 }
 
+.side-panel .feature-details-regrid-primary > .regrid-action-buttons .regrid-zoning-action-row {
+  margin-top: 8px;
+}
+
+.side-panel .feature-details-regrid-primary > .regrid-action-buttons .sp-show-zoning-button {
+  width: 100%;
+  flex: 1 1 auto;
+}
+
 .side-panel .feature-details-regrid-primary > .regrid-action-buttons .feature-details-regrid-mobile-actions {
   margin-top: 0;
   padding: 0;

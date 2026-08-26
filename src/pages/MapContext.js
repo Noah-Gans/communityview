@@ -63,6 +63,10 @@ export const MapProvider = ({ children }) => {
   const pendingPrintBasemapRestoreRef = useRef(null);
   /** Set from Info panel “Create Map” — Print enters editor; Map.js adds a property boundary. */
   const pendingCreateMapFromFeatureRef = useRef(null);
+  /** Set from Info panel “Show zoning” — Planning page consumes this parcel. */
+  const pendingPlanningParcelRef = useRef(null);
+  /** React state copy of the Show-zoning parcel (survives route changes; more reliable than location.state alone). */
+  const [planningTargetParcel, setPlanningTargetParcel] = useState(null);
   /** Basemap id at click time — reapplied before the editor is revealed. */
   const pendingCreateMapBasemapIdRef = useRef(null);
 
@@ -355,6 +359,9 @@ export const MapProvider = ({ children }) => {
     pendingPrintBasemapRestoreRef,
     pendingCreateMapFromFeatureRef,
     pendingCreateMapBasemapIdRef,
+    pendingPlanningParcelRef,
+    planningTargetParcel,
+    setPlanningTargetParcel,
     shareViewerReadOnly,
     setShareViewerReadOnly,
     mobileMapsSearchQuery,

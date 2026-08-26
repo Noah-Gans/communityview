@@ -8,6 +8,7 @@ import Report from './pages/report/Report';
 import Print from './pages/print/Print';
 import SharedMapViewPage from './pages/print/SharedMapViewPage';
 import AmenityMapPage from './pages/print/AmenityMapPage';
+import PlanningBuildabilityPage from './pages/planning/PlanningBuildabilityPage';
 import MainHeader from './pages/MainHeader';
 import Pricing from './pages/landingPages/Pricing';
 import Features from './pages/landingPages/Features';
@@ -75,6 +76,7 @@ function AppRoutes({ activeTab, setActiveTab }) {
         <Routes>
                   <Route path="/" element={<LandingPage onStartClick={() => setActiveTab('map')} />} />
                   <Route path="/map" element={null} />
+                  <Route path="/planning" element={<PlanningBuildabilityPage />} />
                   <Route
                     path="/search"
                     element={

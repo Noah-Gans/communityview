@@ -64,6 +64,8 @@ const SidePanel = memo(({
     setActiveTab,
     pendingCreateMapFromFeatureRef,
     pendingCreateMapBasemapIdRef,
+    pendingPlanningParcelRef,
+    setPlanningTargetParcel,
     activeBasemapIdRef,
     currentBasemapId: contextCurrentBasemapId,
   } = useMapContext();
@@ -817,6 +819,7 @@ const SidePanel = memo(({
             renderField={renderField}
             onZoomToFeature={onZoomToFeature}
             handleCreateMap={handleCreateMap}
+            handleShowZoning={handleShowZoning}
             isMobile={isMobile}
             mobileSheetState={mobileSheetState}
           />
@@ -963,6 +966,55 @@ const SidePanel = memo(({
     activeBasemapIdRef,
     contextCurrentBasemapId,
   ]);
+
+  const handleShowZoning = useCallback(
+    (featureForZoning, detailedProps = null) => {
+      if (!featureForZoning?.geometry) return;
+      const mergedProps = {
+        ...(featureForZoning.properties || {}),
+        ...(detailedProps && typeof detailedProps === 'object' ? detailedProps : {}),
+      };
+      // Deep-clone so Mapbox feature objects aren't wiped after navigation.
+      let coordinates;
+      try {
+        coordinates = JSON.parse(JSON.stringify(featureForZoning.geometry.coordinates));
+      } catch {
+        return;
+      }
+      const planningFeature = {
+        type: 'Feature',
+        geometry: {
+          type: featureForZoning.geometry.type,
+          coordinates,
+        },
+        properties: { ...mergedProps },
+        layer: { id: featureForZoning.layer?.id || 'regrid-parcels-layer' },
+      };
+      if (pendingPlanningParcelRef) {
+        pendingPlanningParcelRef.current = planningFeature;
+      }
+      if (typeof setPlanningTargetParcel === 'function') {
+        setPlanningTargetParcel(planningFeature);
+      }
+      if (typeof window !== 'undefined' && typeof window.__collapseSidePanel === 'function') {
+        window.__collapseSidePanel();
+      }
+      setActiveTab('planning');
+      navigate(
+        {
+          pathname: '/planning',
+          search: location.search || '',
+        },
+        {
+          state: {
+            fromShowZoning: Date.now(),
+            planningParcel: planningFeature,
+          },
+        }
+      );
+    },
+    [navigate, location.search, setActiveTab, pendingPlanningParcelRef, setPlanningTargetParcel]
+  );
   
   const toggleLegend = (layerName) => {
     setIsLegendOpen((prev) => {

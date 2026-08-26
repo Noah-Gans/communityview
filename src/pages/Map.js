@@ -2569,7 +2569,11 @@ useEffect(() => {
     const now = Date.now();
     if (now - mapUrlSyncThrottleRef.current < 120) return false;
     mapUrlSyncThrottleRef.current = now;
-    navigate({ pathname: routerLocation.pathname, search: searchString }, { replace: true });
+    // Preserve location.state — dropping it clears Show-zoning / other in-flight route state.
+    navigate(
+      { pathname: routerLocation.pathname, search: searchString },
+      { replace: true, state: routerLocation.state }
+    );
     return true;
   };
 
@@ -5615,27 +5619,32 @@ useEffect(() => {
 
     const map = mapRef.current;
     if (!map?.getStyle) return;
+    if (typeof map.isStyleLoaded === 'function' && !map.isStyleLoaded()) return;
 
-    clearRegridParcelSelectionHighlight(map);
-    hideGeoJsonSelectionHighlight(map);
+    try {
+      clearRegridParcelSelectionHighlight(map);
+      hideGeoJsonSelectionHighlight(map);
 
-    // Legacy dynamic highlight-layer-* cleanup
-    (map.getStyle().layers || []).forEach((layer) => {
-      if (!layer.id.startsWith(highlightLayerId) || layer.id.startsWith('cv-map-selection')) return;
-      try {
-        if (map.getLayer(layer.id)) map.removeLayer(layer.id);
-      } catch (_) {
-        /* ignore */
-      }
-    });
-    Object.keys(map.style?.sourceCaches || {}).forEach((sourceId) => {
-      if (!sourceId.startsWith(highlightLayerId) || sourceId.startsWith('cv-map-selection')) return;
-      try {
-        if (map.getSource(sourceId)) map.removeSource(sourceId);
-      } catch (_) {
-        /* ignore */
-      }
-    });
+      // Legacy dynamic highlight-layer-* cleanup
+      (map.getStyle().layers || []).forEach((layer) => {
+        if (!layer.id.startsWith(highlightLayerId) || layer.id.startsWith('cv-map-selection')) return;
+        try {
+          if (map.getLayer(layer.id)) map.removeLayer(layer.id);
+        } catch (_) {
+          /* ignore */
+        }
+      });
+      Object.keys(map.style?.sourceCaches || {}).forEach((sourceId) => {
+        if (!sourceId.startsWith(highlightLayerId) || sourceId.startsWith('cv-map-selection')) return;
+        try {
+          if (map.getSource(sourceId)) map.removeSource(sourceId);
+        } catch (_) {
+          /* ignore */
+        }
+      });
+    } catch (_) {
+      /* style may still be loading */
+    }
   };
 
   /** Ownership parcel labels require the ownership layer; clear label state when layer is off. */

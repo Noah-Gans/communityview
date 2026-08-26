@@ -85,6 +85,7 @@ export default function RegridParcelFeatureDetails({
   renderDetailField: renderDetailFieldProp,
   onZoomToFeature,
   handleCreateMap,
+  handleShowZoning,
   isMobile,
   mobileSheetState = 'hidden',
 }) {
@@ -350,6 +351,18 @@ export default function RegridParcelFeatureDetails({
             </button>
           )}
         </div>
+        {handleShowZoning && (
+          <div className="action-buttons-row regrid-zoning-action-row">
+            <button
+              type="button"
+              className="sp-property-button sp-show-zoning-button"
+              onClick={() => handleShowZoning(feature, detailedData)}
+              title="Open zoning panel and draw setbacks for this parcel"
+            >
+              Show zoning
+            </button>
+          </div>
+        )}
       </div>
 
       <div
