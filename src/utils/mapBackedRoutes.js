@@ -19,7 +19,7 @@ export function isMapBackedRoute(pathname = '') {
   if (path === '/print') return true;
   if (path === '/report') return true;
   if (path.startsWith('/view/')) return true;
-  if (path.startsWith('/cloud/')) return true;
+  if (path.startsWith('/tour/')) return true;
   if (path.startsWith('/amenities/')) return true;
   return false;
 }

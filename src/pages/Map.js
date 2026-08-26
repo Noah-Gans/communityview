@@ -3780,6 +3780,7 @@ useEffect(() => {
     if (id.includes('regrid')) return true;
     if (id.endsWith('-layer')) return true;
     if (id.startsWith('cv-')) return true;
+    if (id.startsWith('tour-vicinity-') || id.startsWith('tour-builder-')) return true;
     if (id.includes('contour') || id === 'terrain-colors' || id === 'sky') return true;
     return false;
   };

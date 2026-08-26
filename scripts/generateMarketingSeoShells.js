@@ -17,6 +17,8 @@ const NAV_LINKS = [
   { href: `${SITE}/features/`, label: 'Features' },
   { href: `${SITE}/use-cases/`, label: 'Use cases' },
   { href: `${SITE}/use-cases/find-property-owner/`, label: 'Find property owner' },
+  { href: `${SITE}/use-cases/ownership-map/`, label: 'Ownership map' },
+  { href: `${SITE}/use-cases/public-land-map/`, label: 'Public land map' },
   { href: `${SITE}/use-cases/parcel-maps/`, label: 'Parcel maps' },
   { href: `${SITE}/pricing/`, label: 'Pricing' },
   { href: `${SITE}/faq/`, label: 'FAQ' },
@@ -93,9 +95,9 @@ const PAGES = [
   {
     route: '/use-cases/find-property-owner',
     file: path.join('use-cases', 'find-property-owner', 'index.html'),
-    title: 'Find Property Owner by Address or Name | Community View',
+    title: 'Find Property Owner by Address | Community View',
     description:
-      'Find a property owner nationwide for real estate research. Search by address, owner name, or APN, then open ownership details and mailing address on an interactive map.',
+      'Find a property owner by address, name, or APN. Search nationwide, map the parcel, and open ownership details. Start with a free trial — no county-site hopping.',
     h1: 'Find a property owner — by address, name, or parcel ID',
     body:
       'Search by address, owner name, or APN. Map the parcel and open ownership details for agents.',
@@ -109,6 +111,26 @@ const PAGES = [
     h1: 'Ownership and property details on every parcel',
     body:
       'Owner, mailing address, APN, acreage, and assessed values on every parcel when available.',
+  },
+  {
+    route: '/use-cases/ownership-map',
+    file: path.join('use-cases', 'ownership-map', 'index.html'),
+    title: 'Ownership Map — See Who Owns Land on a Parcel Map | Community View',
+    description:
+      'An ownership map for real estate agents: nationwide parcel boundaries, owner names, and property details on one interactive map. Click a parcel to confirm who owns it.',
+    h1: 'Ownership map for real estate agents',
+    body:
+      'See parcel boundaries and who owns them on one map. Click a lot for owner, mailing address, APN, and acreage when available.',
+  },
+  {
+    route: '/use-cases/public-land-map',
+    file: path.join('use-cases', 'public-land-map', 'index.html'),
+    title: 'Public Land Map for Real Estate Agents | Community View',
+    description:
+      'A public land map for real estate listings: see public land, parcel boundaries, and ownership context on one interactive map so you can pitch access, recreation, and neighbors accurately.',
+    h1: 'Public land map for real estate listings',
+    body:
+      'Toggle public land next to private parcels on the same map you use for listings, ownership, and buyer-ready maps.',
   },
   {
     route: '/use-cases/parcel-maps',

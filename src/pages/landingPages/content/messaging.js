@@ -84,7 +84,8 @@ export const ownershipDetails = {
   imageAlt: 'Parcel ownership and property details panel on the Community View map',
   links: [
     { label: 'Ownership details', to: '/use-cases/ownership-details' },
-    { label: 'Parcel maps', to: '/use-cases/parcel-maps' },
+    { label: 'Ownership map', to: '/use-cases/ownership-map' },
+    { label: 'Public land map', to: '/use-cases/public-land-map' },
   ],
 };
 

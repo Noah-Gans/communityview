@@ -32,9 +32,21 @@
   </url>
   <url>
     <loc>https://communityview.ai/use-cases/ownership-details/</loc>
-    <lastmod>2026-08-03</lastmod>
+    <lastmod>2026-08-19</lastmod>
     <changefreq>monthly</changefreq>
     <priority>0.9</priority>
+  </url>
+  <url>
+    <loc>https://communityview.ai/use-cases/ownership-map/</loc>
+    <lastmod>2026-08-19</lastmod>
+    <changefreq>monthly</changefreq>
+    <priority>0.9</priority>
+  </url>
+  <url>
+    <loc>https://communityview.ai/use-cases/public-land-map/</loc>
+    <lastmod>2026-08-19</lastmod>
+    <changefreq>monthly</changefreq>
+    <priority>0.85</priority>
   </url>
   <url>
     <loc>https://communityview.ai/use-cases/parcel-maps/</loc>
@@ -85,8 +97,8 @@
     <priority>0.8</priority>
   </url>
   <url>
-    <loc>https://communityview.ai/map</loc>
-    <lastmod>2026-07-28</lastmod>
+    <loc>https://communityview.ai/map/</loc>
+    <lastmod>2026-08-19</lastmod>
     <changefreq>weekly</changefreq>
     <priority>0.7</priority>
   </url>
