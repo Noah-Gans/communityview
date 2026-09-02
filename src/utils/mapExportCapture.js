@@ -318,8 +318,10 @@ export async function captureMapStackToPngDataUrl(
     Array.isArray(textNotes) && textNotes.length
       ? textNotes
       : collectTextNotesForExport(map, printElements);
+  const hasTextNotes = notesForExport.some((el) => el && isTextNoteElement(el));
+  await waitForExportFonts();
 
-  if (preferOffscreen) {
+  if (preferOffscreen && !hasTextNotes) {
     try {
       const hasNonGeo = (printElements || []).some(
         (el) => el && !el.hiddenOnMap && (!el.geometry || !el.geometry.type)
@@ -941,6 +943,28 @@ async function drawPointShapeLogosForExport(
 
 /** Matches the live note textarea in DraggableNote so PDF wrapping breaks at the same words. */
 const NOTE_FONT_STACK = 'Inter, system-ui, sans-serif';
+/** Canvas fillText in a production build often has no loaded Inter face and draws empty glyphs. */
+const NOTE_CANVAS_FONT_STACK = 'Arial, Helvetica, sans-serif';
+
+function canvasSafeColor(value, fallback = '#111827') {
+  const raw = String(value || '').trim();
+  if (!raw) return fallback;
+  if (/^#([0-9a-f]{3}|[0-9a-f]{4}|[0-9a-f]{6}|[0-9a-f]{8})$/i.test(raw)) return raw;
+  if (/^rgba?\(\s*\d{1,3}\s*,\s*\d{1,3}\s*,\s*\d{1,3}(?:\s*,\s*(?:0|1|0?\.\d+))?\s*\)$/i.test(raw)) {
+    return raw;
+  }
+  return fallback;
+}
+
+async function waitForExportFonts() {
+  try {
+    if (typeof document !== 'undefined' && document.fonts?.ready) {
+      await Promise.race([document.fonts.ready, waitMs(800)]);
+    }
+  } catch (_) {
+    /* canvas will fall back to Arial */
+  }
+}
 
 function hexToRgba(hex, alpha = 1) {
   const raw = String(hex || '#ffffff').replace(/^#/, '');
@@ -993,7 +1017,7 @@ function isTextNoteElement(el) {
   return t === 'note' || t === 'text';
 }
 
-function getNoteLngLat(el, map) {
+function getNoteLngLat(el, map, { allowScreenFallback = true } = {}) {
   const c = el?.geometry?.coordinates;
   if (Array.isArray(c) && c.length >= 2) {
     const lng = Number(c[0]);
@@ -1005,7 +1029,12 @@ function getNoteLngLat(el, map) {
     const lat = Number(c.lat ?? c.latitude);
     if (Number.isFinite(lng) && Number.isFinite(lat)) return { lng, lat };
   }
-  if (map && Number.isFinite(Number(el?.x)) && Number.isFinite(Number(el?.y))) {
+  if (
+    allowScreenFallback &&
+    map &&
+    Number.isFinite(Number(el?.x)) &&
+    Number.isFinite(Number(el?.y))
+  ) {
     const s = getPrintPixelScale(map);
     const w = (Number(el.width) || 220) * s;
     const h = (Number(el.height) || 120) * s;
@@ -1050,8 +1079,8 @@ function paintNoteBox(ctx, el, x, y, boxW, boxH, fontPx, pad) {
   ctx.rect(x + pad, y + pad, Math.max(1, boxW - pad * 2), Math.max(1, boxH - pad * 2));
   ctx.clip();
 
-  ctx.font = `${Math.round(fontPx)}px ${el.fontFamily || NOTE_FONT_STACK}`;
-  ctx.fillStyle = el.fontColor || '#111827';
+  ctx.font = `${Math.round(fontPx)}px ${NOTE_CANVAS_FONT_STACK}`;
+  ctx.fillStyle = canvasSafeColor(el.fontColor, '#111827');
   ctx.textBaseline = 'top';
   const align = el.textAlign || 'left';
   ctx.textAlign = align === 'center' || align === 'right' ? align : 'left';
@@ -1113,9 +1142,9 @@ function collectTextNotesForExport(map, printElements = []) {
             wrapCs.backgroundColor && !/rgba\(\s*\d+\s*,\s*\d+\s*,\s*\d+\s*,\s*0/.test(wrapCs.backgroundColor)
               ? wrapCs.backgroundColor
               : '#ffffff',
-          fontColor: taCs.color || '#111827',
+          fontColor: canvasSafeColor(taCs.color, '#111827'),
           fontSize: parseFloat(taCs.fontSize) || 14,
-          fontFamily: taCs.fontFamily || NOTE_FONT_STACK,
+          fontFamily: NOTE_FONT_STACK,
           textAlign: taCs.textAlign || 'left',
         });
       });
@@ -1136,7 +1165,7 @@ function collectTextNotesForExport(map, printElements = []) {
       stroke: '#111827',
       strokeWidth: 1,
       strokeOpacity: 0.2,
-      fontColor: d.fontColor,
+      fontColor: canvasSafeColor(d.fontColor, '#111827'),
       fontSize: d.fontSize,
       fontFamily: d.fontFamily || NOTE_FONT_STACK,
       textAlign: d.textAlign,
@@ -1155,7 +1184,7 @@ function collectTextNotesForExport(map, printElements = []) {
       screenCssWidth: match?.screenCssWidth,
       screenCssHeight: match?.screenCssHeight,
       fill: match?.fill || el.fill || '#ffffff',
-      fontColor: match?.fontColor || el.fontColor || '#111827',
+      fontColor: canvasSafeColor(el.fontColor, canvasSafeColor(match?.fontColor, '#111827')),
       fontFamily: match?.fontFamily || el.fontFamily || NOTE_FONT_STACK,
     };
   });
@@ -1195,7 +1224,7 @@ function drawTextNotesForExport(
 
   for (const el of printElements) {
     if (!el || el.hiddenOnMap || !isTextNoteElement(el)) continue;
-    const ll = getNoteLngLat(el, map);
+    const ll = getNoteLngLat(el, map, { allowScreenFallback: !layoutFallback });
     if (!ll) continue;
     let projected;
     try {
