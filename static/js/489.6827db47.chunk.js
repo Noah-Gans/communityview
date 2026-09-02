@@ -1,0 +1,2 @@
+"use strict";(self.webpackChunkteton_county_gis=self.webpackChunkteton_county_gis||[]).push([[489],{8489:(t,c,e)=>{e.r(c),e.d(c,{default:()=>o});var s=e(5124),n=e(5983);const o=()=>(0,n.jsx)(s.C5,{to:"/map?accountSection=subscription",replace:!0})}}]);
+//# sourceMappingURL=489.6827db47.chunk.js.map
