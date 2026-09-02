@@ -318,10 +318,9 @@ export async function captureMapStackToPngDataUrl(
     Array.isArray(textNotes) && textNotes.length
       ? textNotes
       : collectTextNotesForExport(map, printElements);
-  const hasTextNotes = notesForExport.some((el) => el && isTextNoteElement(el));
   await waitForExportFonts();
 
-  if (preferOffscreen && !hasTextNotes) {
+  if (preferOffscreen) {
     try {
       const hasNonGeo = (printElements || []).some(
         (el) => el && !el.hiddenOnMap && (!el.geometry || !el.geometry.type)
@@ -416,16 +415,18 @@ export async function captureMapStackToPngDataUrl(
     }
     const destW = out.width;
     const destH = out.height;
-    await drawPointShapeLogosForExport(ctx, map, mapCanvas, printElements, overlayScale, destW, destH);
-    drawVectorElementsForExport(ctx, map, mapCanvas, printElements, overlayScale, destW, destH);
-    drawMapLabelsForExport(ctx, map, mapCanvas, printElements, overlayScale, destW, destH);
+    // Live bitmap is already screen-resolution; the 1.2–1.7 overlayScale is
+    // only for the offscreen high-res clone.
+    await drawPointShapeLogosForExport(ctx, map, mapCanvas, printElements, 1, destW, destH);
+    drawVectorElementsForExport(ctx, map, mapCanvas, printElements, 1, destW, destH);
+    drawMapLabelsForExport(ctx, map, mapCanvas, printElements, 1, destW, destH);
     if (paintTextNotes) {
       drawTextNotesForExport(
         ctx,
         map,
         mapCanvas,
         notesForExport,
-        overlayScale,
+        1,
         destW,
         destH,
         null,
@@ -1238,13 +1239,16 @@ function drawTextNotesForExport(
 
     const liveW = Number(el.screenCssWidth);
     const liveH = Number(el.screenCssHeight);
+    // Offscreen dest is the crop; live dest is the full map canvas. Only use
+    // crop/dest when this bitmap is already fitted to the print frame.
+    const fittedToCrop = Boolean(layoutFallback);
     const boxW =
       Number.isFinite(liveW) && liveW > 2
-        ? Math.max(24, (liveW / cropW) * destW)
+        ? Math.max(24, fittedToCrop ? (liveW / cropW) * destW : liveW * sx)
         : Math.max(48, (Number(el.width) || 220) * sx);
     const boxH =
       Number.isFinite(liveH) && liveH > 2
-        ? Math.max(18, (liveH / cropH) * destH)
+        ? Math.max(18, fittedToCrop ? (liveH / cropH) * destH : liveH * sy)
         : Math.max(32, (Number(el.height) || 120) * sy);
     const x = cx * sx - boxW / 2;
     const y = cy * sy - boxH / 2;
