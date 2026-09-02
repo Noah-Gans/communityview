@@ -155,6 +155,7 @@ export default function DraggableNote({ note, onNoteChange, onDelete, featurePoi
 
       <div
         className="print-note-wrapper"
+        data-print-note={note.id}
         title={note.label || note.type || 'feature'}
         style={{
           position: 'relative',

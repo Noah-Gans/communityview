@@ -26,6 +26,27 @@ export function amenityHasBadge(amenityKey) {
   return Boolean(category?.badgeFile || category?.logoFile);
 }
 
+export const AMENITY_MAP_LAYER_IDS = [
+  'cv-amenity-map-points',
+  'cv-amenity-map-badges',
+  'cv-amenity-map-labels',
+];
+
+export function isAmenityMapLayerId(layerId) {
+  return String(layerId || '').startsWith('cv-amenity-map-');
+}
+
+export function ensureAmenityMapLayersOnTop(map) {
+  if (!map?.moveLayer) return;
+  AMENITY_MAP_LAYER_IDS.forEach((id) => {
+    try {
+      if (map.getLayer?.(id)) map.moveLayer(id);
+    } catch (_) {
+      /* style may still be swapping */
+    }
+  });
+}
+
 function loadImageElement(url) {
   return new Promise((resolve, reject) => {
     const img = new Image();
@@ -101,10 +122,14 @@ async function registerImage(map, imageId, loader) {
  * The property home pin is an HTML overlay (above print boundaries), not a Mapbox symbol.
  */
 export async function loadAmenityMapIcons(map) {
-  if (!map) return;
+  const loaded = new Set();
+  if (!map) return loaded;
   await Promise.all(
-    AMENITY_MAP_CATEGORIES.map((category) =>
-      registerImage(map, amenityBadgeImageId(category.key), async () => {
+    AMENITY_MAP_CATEGORIES.map(async (category) => {
+      const ok = await registerImage(map, amenityBadgeImageId(category.key), async () => {
+        if (category.recolorBadge && category.logoFile) {
+          return buildCompositedBadge(category.logoFile, { fill: category.color || '#334155' });
+        }
         if (category.badgeFile) {
           try {
             return await loadImageElement(`${BADGE_BASE_PATH}/${category.badgeFile}`);
@@ -116,7 +141,9 @@ export async function loadAmenityMapIcons(map) {
           return buildCompositedBadge(category.logoFile, { fill: category.color || '#334155' });
         }
         throw new Error(`No badge asset for ${category.key}`);
-      })
-    )
+      });
+      if (ok) loaded.add(category.key);
+    })
   );
+  return loaded;
 }

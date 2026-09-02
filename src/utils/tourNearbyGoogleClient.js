@@ -15,18 +15,28 @@ import { fetchTourGroceryPlacesNew, fetchTourNearbyPlacesNew } from './tourPlace
 /** Place types for Places API (New) `includedTypes` — see Google Place Types (New). */
 const AMENITY_PLACE_TYPES = {
   parks_rec: ['park'],
-  grocery: ['supermarket', 'grocery_store', 'food_store'],
-  schools: ['primary_school', 'secondary_school', 'school'],
+  grocery: ['supermarket', 'grocery_store'],
+  schools: ['primary_school', 'secondary_school'],
   fitness: ['gym'],
-  trailheads: ['hiking_area', 'gym'],
+  trailheads: ['hiking_area'],
   essentials: ['pharmacy', 'drugstore', 'hardware_store', 'bank'],
   coffee: ['cafe', 'coffee_shop', 'bakery'],
   dining: ['restaurant', 'pizza_restaurant', 'seafood_restaurant', 'meal_takeaway'],
-  fire_station: ['fire_station'],
-  police_station: ['police'],
-  library: ['library'],
-  transit: ['subway_station', 'train_station', 'bus_station', 'transit_station'],
   airport: ['airport'],
+};
+
+/** Table A types to drop on the Nearby request (same call, not a second query). */
+const AMENITY_EXCLUDED_TYPES = {
+  schools: ['university', 'preschool'],
+};
+
+/**
+ * Schools: match primary type only (still one Nearby Search).
+ * Generic `includedTypes: school` also matches tutors/studios that list school as a side type.
+ * Unclaimed K–12 listings (e.g. Jackson Hole Middle School) often have primary type `school`.
+ */
+const AMENITY_PRIMARY_TYPES = {
+  schools: ['primary_school', 'secondary_school', 'school'],
 };
 
 function isRealAirportGoogleResult(place) {
@@ -42,10 +52,19 @@ function isRealAirportGoogleResult(place) {
  * @param {unknown} r
  * @param {string} amenityKey
  */
-function googlePlaceResultToFeature(r, amenityKey) {
-  const loc = r.geometry?.location;
-  const lat = Number(loc?.lat);
-  const lng = Number(loc?.lng);
+function readPlaceCoord(value) {
+  if (typeof value === 'function') return Number(value());
+  return Number(value);
+}
+
+export function googlePlaceResultToFeature(r, amenityKey) {
+  const loc = r?.geometry?.location || r?.location || {};
+  const lat = readPlaceCoord(
+    loc.lat ?? loc.latitude ?? r?.lat ?? r?.latitude
+  );
+  const lng = readPlaceCoord(
+    loc.lng ?? loc.longitude ?? r?.lng ?? r?.longitude
+  );
   if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null;
 
   const name = String(r.name || '').trim();
@@ -113,13 +132,18 @@ export async function fetchNearbyTourAmenityGoogleMapsJs(params) {
     all = groceryResult.results;
     apiError = groceryResult.apiError || '';
   } else {
+    const primaryTypes = AMENITY_PRIMARY_TYPES[amenityKey];
     const nearbyResult = await fetchTourNearbyPlacesNew(
       lat,
       lng,
       fetchRadiusMeters,
       apiKey,
-      types,
-      { basicFields: params?.basicFields === true }
+      primaryTypes ? [] : types,
+      {
+        basicFields: params?.basicFields === true,
+        excludedTypes: AMENITY_EXCLUDED_TYPES[amenityKey],
+        includedPrimaryTypes: primaryTypes,
+      }
     );
     all = nearbyResult.results;
     apiError = nearbyResult.apiError || '';

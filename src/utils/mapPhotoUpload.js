@@ -1,6 +1,6 @@
 import { ref, uploadBytes, getDownloadURL, deleteObject } from 'firebase/storage';
 import { storage } from '../firebase/firebaseConfig';
-import { validateMapPhotoFile } from './mapPhotoStorage';
+import { prepareMapPhotoForUpload } from './mapPhotoStorage';
 
 const extensionForType = (type) => {
   if (type === 'image/png') return 'png';
@@ -15,22 +15,21 @@ const extensionForType = (type) => {
  * @returns {Promise<{ url: string, storagePath: string }>}
  */
 export async function uploadMapPhoto(uid, file, options = {}) {
-  const validationError = validateMapPhotoFile(file);
-  if (validationError) throw new Error(validationError);
+  const prepared = await prepareMapPhotoForUpload(file);
 
   const userId = String(uid || '').trim();
   if (!userId) throw new Error('You must be signed in to upload images.');
 
   const mapId = options.mapId ? String(options.mapId).trim() : '';
   const assetId = `photo_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 9)}`;
-  const ext = extensionForType(file.type);
+  const ext = extensionForType(prepared.type);
   const storagePath = mapId
     ? `users/${userId}/maps/${mapId}/photos/${assetId}.${ext}`
     : `users/${userId}/map-assets/${assetId}.${ext}`;
 
   const storageRef = ref(storage, storagePath);
-  await uploadBytes(storageRef, file, {
-    contentType: file.type,
+  await uploadBytes(storageRef, prepared, {
+    contentType: prepared.type || 'image/jpeg',
     cacheControl: 'public,max-age=86400',
   });
   const url = await getDownloadURL(storageRef);

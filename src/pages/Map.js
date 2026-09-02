@@ -103,6 +103,10 @@ import {
 import { getPhotoSrcListFromElement } from '../utils/mapPhotoStorage';
 import { ensureTourEditRadiusLayersOnTop } from '../utils/tourBuilderMapLayers';
 import {
+  ensureAmenityMapLayersOnTop,
+  isAmenityMapLayerId,
+} from '../utils/amenityMapIcons';
+import {
   ensureTourVicinityNearbyLayersOnTop,
   focusPrintElementBirdEye,
   isPropertyBoundaryPrintElement,
@@ -4035,7 +4039,7 @@ useEffect(() => {
     const styleLayers = map.getStyle().layers || [];
     styleLayers.forEach((layer) => {
       if (layer.type !== 'symbol') return;
-      if (isTourVicinityMapLayerId(layer.id)) return;
+      if (isTourVicinityMapLayerId(layer.id) || isAmenityMapLayerId(layer.id)) return;
       try {
         const live = map.getLayer(layer.id);
         if (!live?.layout) return;
@@ -4046,6 +4050,9 @@ useEffect(() => {
     });
     if (propertyTourSlideIdRef.current === 'vicinity' || isPropertyTourVicinitySlideActive()) {
       ensureTourVicinityNearbyLayersOnTop(map);
+    }
+    if (document.documentElement.classList.contains('amenity-map-mode')) {
+      ensureAmenityMapLayersOnTop(map);
     }
     ensureTourEditRadiusLayersOnTop(map);
   }, [mapRef]);

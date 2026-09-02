@@ -37,7 +37,9 @@ import { TOUR_NEARBY_DATA_VERSION } from '../../utils/tourNearbyRanking';
 import {
   buildTourNearbyCacheForSave,
 } from '../../utils/tourNearbyFirestore';
+import { amenityFeatureKey } from '../../utils/amenityMapCatalog';
 import {
+  amenityKeysWithSavedFeatures,
   getEnabledTourAmenityOrder,
   getAmenitySearchRadiusMeters,
   materializeTourSettingsSlidePlan,
@@ -46,6 +48,7 @@ import {
   resolveTourSettingsFromMap,
   hydrateTourBuilderAmenityState,
   mapHasCuratedTourData,
+  mergePlaceVisibilityFromPrior,
   visibleTourNearbyFeatures,
 } from '../../utils/tourSettings';
 import {
@@ -75,6 +78,8 @@ import {
 } from '../../utils/sharedMapAgentMeta';
 import { getPhotoSrcListFromElement } from '../../utils/mapPhotoStorage';
 import { waitForMapIdle, waitForMapRef } from '../../utils/waitForMapIdle';
+import { autoGeneratePropertyTour } from '../../utils/tourAutoGenerate';
+import { isShareCreateInFlight, runShareCreateOnce } from '../../utils/amenityMapAutoGenerate';
 import {
   waitUntilTourBasemapReady,
   waitUntilTourImagery3DActive,
@@ -109,6 +114,22 @@ async function waitForTourBasemapApply(applyTourPropertyBasemapRef, maxMs = 1500
 
 function sleepMs(ms) {
   return new Promise((resolve) => window.setTimeout(resolve, ms));
+}
+
+function stripSearchParam(name) {
+  try {
+    const params = new URLSearchParams(window.location.search);
+    if (!params.has(name)) return;
+    params.delete(name);
+    const qs = params.toString();
+    window.history.replaceState(
+      window.history.state,
+      '',
+      qs ? `${window.location.pathname}?${qs}` : window.location.pathname
+    );
+  } catch (_) {
+    /* ignore */
+  }
 }
 
 async function raceWithTimeout(promise, timeoutMs) {
@@ -344,6 +365,9 @@ export default function SharedMapViewPage() {
   const [error, setError] = useState(null);
   const [loading, setLoading] = useState(true);
   const [mapRevealReady, setMapRevealReady] = useState(false);
+  const [tourBootGenerate] = useState(
+    () => new URLSearchParams(window.location.search).get('generate') === '1'
+  );
   /** Tour only: basemap + idle finished so slide 0 camera can run without racing style load. */
   const [tourBasemapReady, setTourBasemapReady] = useState(false);
   const [activeTab, setActiveTab] = useState('info');
@@ -358,6 +382,7 @@ export default function SharedMapViewPage() {
   const slidePlanRef = useRef([]);
   const slidePlanSaveTimerRef = useRef(null);
   const slidePlanUserEditedRef = useRef(false);
+  const tourEditLockSavedRef = useRef(false);
   const nearbyContextByAmenityRef = useRef({});
   const tourCuratedRef = useRef(false);
   const [nearbyContextGeoJson, setNearbyContextGeoJson] = useState(null);
@@ -593,7 +618,38 @@ export default function SharedMapViewPage() {
       setMapRevealReady(false);
       setError(null);
       try {
-        const data = await mapService.getSharedMapByToken(shareToken);
+        const wantGenerate =
+          tourRequested && new URLSearchParams(window.location.search).get('generate') === '1';
+        const createKey = shareToken ? `tour:${shareToken}` : '';
+        let data;
+        if (wantGenerate || isShareCreateInFlight(createKey)) {
+          let lastErr;
+          for (let attempt = 0; attempt < 8; attempt += 1) {
+            try {
+              data = await mapService.getSharedMapByToken(shareToken);
+              lastErr = null;
+              break;
+            } catch (err) {
+              lastErr = err;
+              await sleepMs(350 + attempt * 200);
+              if (cancelled) return;
+            }
+          }
+          if (lastErr) throw lastErr;
+          const result = await runShareCreateOnce(createKey, () =>
+            autoGeneratePropertyTour({ shareToken, mapData: data })
+          );
+          if (cancelled) return;
+          data = {
+            ...data,
+            tourNearbyCache: result.tourNearbyCache || data.tourNearbyCache,
+            tourSettings: result.tourSettings || data.tourSettings,
+            tourSlidePlan: result.tourSlidePlan || data.tourSlidePlan,
+          };
+          stripSearchParam('generate');
+        } else {
+          data = await mapService.getSharedMapByToken(shareToken);
+        }
         if (cancelled) return;
         pendingSharedDataRef.current = data;
         setMapDocId(data.id || null);
@@ -610,7 +666,8 @@ export default function SharedMapViewPage() {
             tourNearbyCache: data.tourNearbyCache,
             tourSlidePlan: data.tourSlidePlan,
           }),
-          printEls
+          printEls,
+          { availableAmenityKeys: amenityKeysWithSavedFeatures(data.tourNearbyCache) }
         );
         setTourSettings(loadedTourSettings);
         tourSettingsRef.current = loadedTourSettings;
@@ -619,7 +676,7 @@ export default function SharedMapViewPage() {
           : [];
         slidePlanRef.current = loadedPlan;
         setSlidePlan(loadedPlan);
-        slidePlanUserEditedRef.current = false;
+        slidePlanUserEditedRef.current = loadedTourSettings.slidePlanUserEdited === true;
         tourCuratedRef.current = mapHasCuratedTourData(data);
 
         const { nearbyContextByAmenity: hydratedNearby } = hydrateTourBuilderAmenityState(
@@ -995,6 +1052,7 @@ export default function SharedMapViewPage() {
     tourNearbyCacheSaveRef.current = null;
     tourCuratedRef.current = false;
     slidePlanUserEditedRef.current = false;
+    tourEditLockSavedRef.current = false;
     if (slidePlanSaveTimerRef.current) {
       clearTimeout(slidePlanSaveTimerRef.current);
       slidePlanSaveTimerRef.current = null;
@@ -1051,16 +1109,10 @@ export default function SharedMapViewPage() {
     setNearbyFetchState('success');
   }, []);
 
-  const isNearbyCacheFresh = useCallback(
-    (cached, amenityKey) => {
-      if (!cached) return false;
-      const expectedRadius = getAmenitySearchRadiusMeters(tourSettingsRef.current, amenityKey);
-      if (Number(cached.searchRadiusMeters) !== expectedRadius) return false;
-      if (Number(cached.dataVersion) !== TOUR_NEARBY_DATA_VERSION) return false;
-      return cached.fetched === true || (Array.isArray(cached.features) && cached.features.length > 0);
-    },
-    []
-  );
+  const isNearbyCacheFresh = useCallback((cached) => {
+    if (!cached) return false;
+    return Array.isArray(cached.features) && cached.features.length > 0;
+  }, []);
 
   /**
    * Keep the share-tour loading overlay up until welcome framing, amenity cache,
@@ -1126,123 +1178,11 @@ export default function SharedMapViewPage() {
     isNearbyCacheFresh,
   ]);
 
-  /** Vicinity: prefetch missing amenities as soon as the tour map is ready (not only after first amenity slide). */
+  /** Vicinity: amenity editor is the source of truth. Tour does not fetch extra Places. */
   useEffect(() => {
-    if (!tourRequested || tourEditMode || loading || error || !tourBasemapReady) return;
-    if (!nearbySearchCenter) return;
-
-    const centerKey = `${nearbySearchCenter.lat},${nearbySearchCenter.lng}`;
-    const keysToFetch = nearbyAmenityOrder.filter(
-      (key) => !isNearbyCacheFresh(nearbyContextByAmenity?.[key], key)
-    );
-    if (!keysToFetch.length) {
-      setNearbyFetchState((s) => (s === 'loading' ? 'success' : s));
-      return;
-    }
-    if (nearbyPrefetchInFlightRef.current === centerKey) return;
-
-    let cancelled = false;
-    nearbyPrefetchInFlightRef.current = centerKey;
-    setNearbyFetchState('loading');
-    setNearbyFetchError('');
-    Promise.all(
-      keysToFetch.map((amenityKey) => {
-        const radiusMeters = getAmenitySearchRadiusMeters(tourSettingsRef.current, amenityKey);
-        return mapService
-          .getNearbyGooglePlaces({
-            lat: nearbySearchCenter.lat,
-            lng: nearbySearchCenter.lng,
-            radiusMeters,
-            amenityKey,
-            shareToken,
-          })
-          .then((geojson) => ({ amenityKey, geojson, radiusMeters, error: null }))
-          .catch((err) => ({
-            amenityKey,
-            geojson: { type: 'FeatureCollection', features: [] },
-            radiusMeters: getAmenitySearchRadiusMeters(tourSettingsRef.current, amenityKey),
-            error: err,
-          }));
-      })
-    )
-      .then((results) => {
-        if (cancelled) return;
-        let firstError = '';
-        setNearbyContextByAmenity((prev) => {
-          const next = { ...prev };
-          for (const { amenityKey, geojson, radiusMeters, error } of results) {
-            const features = Array.isArray(geojson?.features) ? geojson.features : [];
-            next[amenityKey] = {
-              type: 'FeatureCollection',
-              features,
-              searchRadiusMeters: radiusMeters,
-              dataVersion: TOUR_NEARBY_DATA_VERSION,
-              fetched: true,
-            };
-            if (!firstError && error) firstError = error?.message || String(error);
-          }
-
-          const settingsForCache = normalizeTourSettings({
-            ...normalizeTourSettings(tourSettingsRef.current),
-            slidePlan: slidePlanRef.current,
-            enabledAmenityKeys: enabledAmenityKeysFromPlan(slidePlanRef.current),
-          });
-          const payload = buildTourNearbyCacheForSave(
-            nearbySearchCenter,
-            next,
-            settingsForCache.searchRadiusMeters,
-            nearbyAmenityOrder,
-            slidePlanRef.current.length
-              ? { tourSettings: settingsForCache }
-              : undefined
-          );
-          const saveKey = payload
-            ? `${shareToken}|${nearbySearchCenter.lat},${nearbySearchCenter.lng}|${TOUR_NEARBY_DATA_VERSION}`
-            : '';
-          if (
-            payload &&
-            shareToken &&
-            !tourCuratedRef.current &&
-            tourNearbyCacheSaveRef.current !== saveKey
-          ) {
-            tourNearbyCacheSaveRef.current = saveKey;
-            mapService.saveTourNearbyCache(shareToken, payload).catch((saveErr) => {
-              if (process.env.NODE_ENV === 'development') {
-                console.warn('[SharedMapViewPage] saveTourNearbyCache failed.', saveErr);
-              }
-            });
-          }
-
-          return next;
-        });
-        setNearbyFetchError(firstError);
-        setNearbyFetchState(firstError ? 'error' : 'success');
-      })
-      .finally(() => {
-        if (!cancelled && nearbyPrefetchInFlightRef.current === centerKey) {
-          nearbyPrefetchInFlightRef.current = null;
-        }
-      });
-
-    return () => {
-      cancelled = true;
-      if (nearbyPrefetchInFlightRef.current === centerKey) {
-        nearbyPrefetchInFlightRef.current = null;
-      }
-    };
-  }, [
-    tourRequested,
-    loading,
-    error,
-    tourBasemapReady,
-    nearbySearchCenter,
-    nearbyAmenityOrder,
-    nearbyContextByAmenity,
-    isNearbyCacheFresh,
-    shareToken,
-    tourSettings,
-    tourEditMode,
-  ]);
+    if (!tourRequested || loading || error || !tourBasemapReady) return;
+    setNearbyFetchState((s) => (s === 'loading' ? 'success' : s));
+  }, [tourRequested, loading, error, tourBasemapReady]);
 
   /** Active vicinity slide reads from prefetch cache (no extra Google calls on slide change). */
   useEffect(() => {
@@ -1793,6 +1733,8 @@ export default function SharedMapViewPage() {
     const currentParsed = currentPlanId ? parseSlideId(currentPlanId) : null;
     const isBirdSlide =
       currentParsed?.kind === 'intro' && currentParsed.introId === 'bird';
+    const isOrbitSlide =
+      currentParsed?.kind === 'intro' && currentParsed.introId === 'context';
 
     const applyPadding = () =>
       applyTourMobileMapPadding(map, {
@@ -1806,15 +1748,24 @@ export default function SharedMapViewPage() {
       !isMobileViewport ||
       tourAgentExpandedLayout ||
       tourInVicinityStep ||
-      isBirdSlide
+      isBirdSlide ||
+      isOrbitSlide
     ) {
       // Vicinity peek panel must reserve bottom inset immediately — delayed padding
       // mid-camera-move was freezing the photo → first-amenity zoom transition.
-      // Bird slide applies padding before flyTo; shrinking inset mid-orbit felt choppy.
+      // Bird + orbit (context) slides apply padding before the camera move; a delayed
+      // setPadding mid-orbit recenters the map and stutters the rotation.
       // Desktop always applies footer inset immediately.
       applyPadding();
     } else {
-      shrinkTimer = window.setTimeout(applyPadding, 380);
+      shrinkTimer = window.setTimeout(() => {
+        try {
+          if (typeof map.isMoving === 'function' && map.isMoving()) return;
+        } catch (_) {
+          /* still apply */
+        }
+        applyPadding();
+      }, 380);
     }
 
     const onResize = () => applyPadding();
@@ -1960,6 +1911,7 @@ export default function SharedMapViewPage() {
       const settingsPatch = normalizeTourSettings({
         ...normalizeTourSettings(tourSettingsRef.current),
         slidePlan: rawPlan,
+        slidePlanUserEdited: true,
         enabledAmenityKeys: amenityKeys.length
           ? amenityKeys
           : normalizeTourSettings(tourSettingsRef.current).enabledAmenityKeys,
@@ -2021,6 +1973,38 @@ export default function SharedMapViewPage() {
     [persistSlidePlanOrder]
   );
 
+  useEffect(() => {
+    if (!tourEditMode || loading || tourEditLockSavedRef.current) return;
+    const plan = slidePlanRef.current.length
+      ? slidePlanRef.current
+      : Array.isArray(slidePlan)
+        ? slidePlan
+        : [];
+    if (!plan.length) return;
+
+    slidePlanUserEditedRef.current = true;
+    const current = normalizeTourSettings(tourSettingsRef.current);
+    if (current.slidePlanUserEdited === true) {
+      tourEditLockSavedRef.current = true;
+      return;
+    }
+
+    const next = normalizeTourSettings({
+      ...current,
+      slidePlan: plan,
+      slidePlanUserEdited: true,
+    });
+    tourSettingsRef.current = next;
+    setTourSettings(next);
+    tourEditLockSavedRef.current = true;
+    void persistSlidePlanOrder(plan).catch((err) => {
+      tourEditLockSavedRef.current = false;
+      if (process.env.NODE_ENV === 'development') {
+        console.warn('[tour-save] could not lock tour after opening editor', err);
+      }
+    });
+  }, [tourEditMode, loading, slidePlan, persistSlidePlanOrder]);
+
   const persistTourEdit = useCallback(async () => {
     if (!shareToken) throw new Error('Share link is missing — reload and try again.');
     if (!nearbySearchCenter) throw new Error('Could not determine a search center for this property.');
@@ -2039,6 +2023,7 @@ export default function SharedMapViewPage() {
     const settingsForSave = normalizeTourSettings({
       ...normalizeTourSettings(tourSettingsRef.current),
       slidePlan: plan,
+      slidePlanUserEdited: true,
       slidePrintElements: pickSlidePrintElements(tourSettingsRef.current?.slidePrintElements),
       enabledAmenityKeys: amenityKeys.length
         ? amenityKeys
@@ -2050,7 +2035,7 @@ export default function SharedMapViewPage() {
       currentByAmenity,
       settingsForSave.searchRadiusMeters,
       settingsForSave.enabledAmenityKeys,
-      { replace: true, allowEmpty: true, tourSettings: settingsForSave }
+      { replace: false, allowEmpty: true, tourSettings: settingsForSave }
     );
     if (!payload) throw new Error('Could not build tour data to save.');
     if (!payload.tourSettings?.slidePlan?.length) {
@@ -2095,9 +2080,12 @@ export default function SharedMapViewPage() {
     }
 
     tourCuratedRef.current = true;
-    slidePlanUserEditedRef.current = false;
     const materialized = materializeTourSettingsSlidePlan(
-      { ...savedSettings, slidePlan: plan },
+      {
+        ...savedSettings,
+        slidePlan: plan,
+        slidePlanUserEdited: settingsForSave.slidePlanUserEdited,
+      },
       printElements
     );
     tourSettingsRef.current = materialized;
@@ -2170,7 +2158,6 @@ export default function SharedMapViewPage() {
       if (isLockedTourSlideIndex(slidePlan, removeIndex)) return;
       const nextPlan = slidePlan.filter((_, i) => i !== removeIndex);
       if (!nextPlan.length) return;
-      slidePlanUserEditedRef.current = true;
       const next = syncTourSettingsFromPlan(nextPlan);
       setTourSettings(next);
       queueSlidePlanSave(nextPlan);
@@ -2190,11 +2177,12 @@ export default function SharedMapViewPage() {
       const currentPlan = normalizeTourSlidePlan(
         slidePlanRef.current.length ? slidePlanRef.current : slidePlan,
         printElements,
-        normalizeTourSettings(tourSettingsRef.current).enabledAmenityKeys
+        normalizeTourSettings(tourSettingsRef.current).enabledAmenityKeys,
+        // Explicit edit — validate the plan only, never auto-append here.
+        { userEdited: true }
       );
       if (currentPlan.includes(id)) return;
       const nextPlan = [...currentPlan, id];
-      slidePlanUserEditedRef.current = true;
       const next = syncTourSettingsFromPlan(nextPlan);
       setTourSettings(next);
       queueSlidePlanSave(nextPlan);
@@ -2243,7 +2231,6 @@ export default function SharedMapViewPage() {
       const prev = slidePlanRef.current.length ? slidePlanRef.current : slidePlan;
       const nextPlan = reorderSlidePlan(prev, fromIndex, toIndex);
       if (JSON.stringify(nextPlan) === JSON.stringify(prev)) return;
-      slidePlanUserEditedRef.current = true;
       const next = syncTourSettingsFromPlan(nextPlan);
       setTourSettings(next);
       queueSlidePlanSave(nextPlan);
@@ -2278,7 +2265,15 @@ export default function SharedMapViewPage() {
         forceRefresh: true,
         editorMode: true,
       });
-      const features = Array.isArray(geojson?.features) ? geojson.features : [];
+      const searched = Array.isArray(geojson?.features) ? geojson.features : [];
+      const previousFeatures = Array.isArray(nearbyContextByAmenityRef.current?.[amenityKey]?.features)
+        ? nearbyContextByAmenityRef.current[amenityKey].features
+        : [];
+      const prevById = new Map(previousFeatures.map((f) => [getEditPlaceKey(f), f]));
+      const features = searched.map((feature) => {
+        const prior = prevById.get(getEditPlaceKey(feature));
+        return prior ? mergePlaceVisibilityFromPrior(feature, prior) : feature;
+      });
       setNearbyContextByAmenity((prev) => {
         const next = {
           ...prev,
@@ -2305,6 +2300,7 @@ export default function SharedMapViewPage() {
     shareToken,
     mapDocId,
     applyNearbyGeojsonResult,
+    getEditPlaceKey,
   ]);
 
   const handleEditTogglePlace = useCallback(
@@ -2977,7 +2973,9 @@ export default function SharedMapViewPage() {
   return (
     <>
       {!mapRevealReady && !error ? (
-        <MapLoadingOverlay phraseSet={tourRequested ? 'tour' : 'map'} />
+        <MapLoadingOverlay
+          phraseSet={tourRequested ? (tourBootGenerate ? 'createTour' : 'tour') : 'map'}
+        />
       ) : null}
       {tourRequested ? (
         <div

@@ -27,7 +27,6 @@ const GROCERY_STORE_TYPES = new Set([
   'supermarket',
   'grocery_store',
   'grocery_or_supermarket',
-  'food_store',
 ]);
 
 const SCHOOL_BLOCK_TYPES = new Set([
@@ -93,10 +92,11 @@ function isNonSupermarketFoodRetail(types) {
     (types.includes('bakery') ||
       types.includes('cafe') ||
       types.includes('coffee_shop') ||
-      types.includes('meal_takeaway')) &&
+      types.includes('meal_takeaway') ||
+      types.includes('restaurant') ||
+      types.includes('fast_food_restaurant')) &&
     !types.includes('supermarket') &&
-    !types.includes('grocery_store') &&
-    !types.includes('food_store')
+    !types.includes('grocery_store')
   );
 }
 

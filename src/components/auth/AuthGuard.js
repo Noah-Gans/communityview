@@ -3,6 +3,7 @@ import { Navigate, useLocation } from 'react-router-dom';
 import MapLoadingOverlay from '../loading/MapLoadingOverlay';
 import { useUser } from '../../contexts/UserContext';
 import { hasActiveSubscription } from '../../utils/subscriptionAccess';
+import { isPublicShareRoute } from '../../utils/mapBackedRoutes';
 
 /**
  * AuthGuard:
@@ -13,6 +14,11 @@ import { hasActiveSubscription } from '../../utils/subscriptionAccess';
 function AuthGuard({ children }) {
   const { user, subscriptionStatus, loading } = useUser();
   const location = useLocation();
+
+  // Shared maps are public documents. Do not wait on auth or redirect the viewer.
+  if (isPublicShareRoute(location.pathname)) {
+    return children;
+  }
 
   if (loading) {
     return <MapLoadingOverlay phraseSet="site" className="map-loading-overlay--app-boot" />;

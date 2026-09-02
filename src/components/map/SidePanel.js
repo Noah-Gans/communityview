@@ -143,17 +143,11 @@ const SidePanel = memo(({
         window.alert('Sign in to upload images.');
         return;
       }
-      const imageFiles = files.filter((f) => f.type?.startsWith('image/'));
+      const imageFiles = files.filter((f) => f && !validateMapPhotoFile(f));
       if (!imageFiles.length) {
-        window.alert('Please select image files.');
+        const firstErr = files.map((f) => validateMapPhotoFile(f)).find(Boolean);
+        window.alert(firstErr || 'Please select image files.');
         return;
-      }
-      for (const file of imageFiles) {
-        const err = validateMapPhotoFile(file);
-        if (err) {
-          window.alert(err);
-          return;
-        }
       }
       setPrintGalleryUploading(true);
       try {
@@ -196,7 +190,7 @@ const SidePanel = memo(({
       try {
         const fetched = await Promise.all(urls.map((u) => fetchImageUrlAsFile(u)));
         const files = [...directFiles, ...fetched.filter(Boolean)].filter(
-          (f) => f && f.type?.startsWith('image/') && !validateMapPhotoFile(f)
+          (f) => f && !validateMapPhotoFile(f)
         );
         const items = [];
         for (const file of files) {

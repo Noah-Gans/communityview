@@ -8,6 +8,12 @@ import {
 } from '../utils/printElementsFirestore';
 import { enrichNearbyTourFeatureCollection } from '../utils/tourNearbyFeatureEnrichment';
 import { fetchNearbyTourAmenityGoogleMapsJs } from '../utils/tourNearbyGoogleClient';
+import {
+  autocompletePlacesNew,
+  fetchPlaceDetailsNew,
+  namedAddBiasMeters,
+  searchTextNew,
+} from '../utils/tourPlacesApiNew';
 import { TOUR_NEARBY_SEARCH_RADIUS_METERS } from '../utils/propertyTourSlides';
 import { TOUR_NEARBY_DATA_VERSION } from '../utils/tourNearbyRanking';
 import { normalizeTourNearbyCacheFromFirestore } from '../utils/tourNearbyFirestore';
@@ -31,6 +37,7 @@ const getMapByIdFunction = httpsCallable(functions, 'getMapById');
 const deleteMapFunction = httpsCallable(functions, 'deleteMap');
 const getSharedMapByTokenFunction = httpsCallable(functions, 'getSharedMapByToken');
 const getNearbyGooglePlacesFunction = httpsCallable(functions, 'getNearbyGooglePlaces');
+const lookupNamedGooglePlaceFunction = httpsCallable(functions, 'lookupNamedGooglePlace');
 const saveTourNearbyCacheFunction = httpsCallable(functions, 'saveTourNearbyCache');
 
 function getGoogleMapsBrowserKey() {
@@ -340,6 +347,55 @@ export const mapService = {
       throw new Error(hints.filter(Boolean).join(' '));
     }
     return finalized;
+  },
+
+  /**
+   * Named amenity add: Autocomplete / Text Search / Place Details, biased to the listing.
+   * Tries the browser key first, then Cloud Function `lookupNamedGooglePlace`.
+   */
+  async lookupNamedGooglePlace(params) {
+    const mode = String(params?.mode || '').trim();
+    const lat = Number(params?.lat);
+    const lng = Number(params?.lng);
+    const radiusMeters = namedAddBiasMeters(params?.radiusMeters);
+    const query = String(params?.query || '').trim();
+    const sessionToken = String(params?.sessionToken || '').trim();
+    const placeId = String(params?.placeId || '').trim();
+    const googleBrowserKey = getGoogleMapsBrowserKey();
+
+    const tryBrowser = async () => {
+      if (typeof window === 'undefined' || !googleBrowserKey) return null;
+      if (mode === 'autocomplete') {
+        return autocompletePlacesNew(lat, lng, radiusMeters, googleBrowserKey, query, {
+          sessionToken,
+        });
+      }
+      if (mode === 'text') {
+        return searchTextNew(lat, lng, radiusMeters, googleBrowserKey, query);
+      }
+      if (mode === 'details') {
+        return fetchPlaceDetailsNew(placeId, googleBrowserKey, { sessionToken });
+      }
+      return null;
+    };
+
+    try {
+      const browser = await tryBrowser();
+      if (browser && !browser.apiError) {
+        if (mode === 'autocomplete' && Array.isArray(browser.suggestions)) return browser;
+        if (mode === 'text' && Array.isArray(browser.results)) return browser;
+        if (mode === 'details' && browser.place) return browser;
+      }
+    } catch (_) {
+      /* fall through to callable */
+    }
+
+    const payload = { mode, query, sessionToken, placeId };
+    if (Number.isFinite(lat)) payload.lat = lat;
+    if (Number.isFinite(lng)) payload.lng = lng;
+    if (Number.isFinite(radiusMeters)) payload.radiusMeters = radiusMeters;
+    const result = await lookupNamedGooglePlaceFunction(payload);
+    return result?.data || {};
   },
 
   /**

@@ -15,11 +15,9 @@ import { layerNameMappings } from '../../components/map/layerMappings';
 import MapLoadingOverlay from '../../components/loading/MapLoadingOverlay';
 import PrintDashboard from './PrintDashboard';
 import ShareMapPanel from './ShareMapPanel';
-import { runNeighborhoodMapGeneration } from '../../utils/neighborhoodMap/runNeighborhoodMapGeneration';
-import { featuresForListingParcels } from '../../utils/featuresFromPrintElements';
 import {
+  mapAmenityShareCardReady,
   mapHasShareableTour,
-  mapHasTourNearbyData,
 } from '../../utils/tourSettings';
 import {
   fetchSavedMapsSummaries,
@@ -86,9 +84,6 @@ export default function Print() {
   const [lastSavedNotice, setLastSavedNotice] = useState(null);
   const [sharePanel, setSharePanel] = useState(null);
   const [sharePanelTourMeta, setSharePanelTourMeta] = useState(null);
-  const [reportBusy, setReportBusy] = useState(false);
-  const [reportStatus, setReportStatus] = useState('');
-  const [reportError, setReportError] = useState('');
   const [sharePanelNeighborhoodAssets, setSharePanelNeighborhoodAssets] = useState(null);
   const [newMapSetupOpen, setNewMapSetupOpen] = useState(false);
   const [draftMapTitle, setDraftMapTitle] = useState('');
@@ -210,14 +205,24 @@ export default function Print() {
   );
 
   const hasAmenityData = useMemo(
-    () => mapHasTourNearbyData(resolvedTourMeta.tourNearbyCache),
+    () => mapAmenityShareCardReady(resolvedTourMeta.tourNearbyCache),
     [resolvedTourMeta]
   );
 
+  const resolvedNeighborhoodAssets = useMemo(() => {
+    if (sharePanelNeighborhoodAssets?.pdfUrl || sharePanelNeighborhoodAssets?.pngUrl) {
+      return sharePanelNeighborhoodAssets;
+    }
+    if (currentMap && sharePanelResolved?.mapId && currentMap.id === sharePanelResolved.mapId) {
+      return currentMap.neighborhoodMapAssets || null;
+    }
+    return sharePanelNeighborhoodAssets;
+  }, [sharePanelNeighborhoodAssets, currentMap, sharePanelResolved?.mapId]);
+
   const hasNeighborhoodMap = useMemo(() => {
-    const assets = sharePanelNeighborhoodAssets;
+    const assets = resolvedNeighborhoodAssets;
     return Boolean(assets?.pdfUrl || assets?.pngUrl);
-  }, [sharePanelNeighborhoodAssets]);
+  }, [resolvedNeighborhoodAssets]);
 
   const handleTourGenerated = useCallback((result) => {
     setSharePanelTourMeta({
@@ -257,23 +262,6 @@ export default function Print() {
     }
   }, [viewMode, currentMapId]);
 
-  const handleNeighborhoodGenerated = useCallback((result) => {
-    if (result?.tourNearbyCache) {
-      handleAmenityGenerated({ tourNearbyCache: result.tourNearbyCache });
-    }
-    if (result?.neighborhoodMapAssets) {
-      setSharePanelNeighborhoodAssets(result.neighborhoodMapAssets);
-    } else if (result?.pdfDataUrl || result?.pngDataUrl) {
-      // Persist failed (e.g. storage rules not deployed) — keep session Ready state.
-      setSharePanelNeighborhoodAssets({
-        pdfUrl: result.pdfDataUrl || '',
-        pngUrl: result.pngDataUrl || '',
-        generatedAt: Date.now(),
-        title: result.title || 'Neighborhood map',
-      });
-    }
-  }, [handleAmenityGenerated]);
-
   useEffect(() => {
     const mapId = sharePanelResolved?.mapId;
     if (!mapId || !sharePanel) {
@@ -284,6 +272,16 @@ export default function Print() {
       return;
     }
     let cancelled = false;
+    if (currentMap && currentMap.id === mapId) {
+      setSharePanelTourMeta({
+        tourNearbyCache: currentMap.tourNearbyCache || null,
+        tourSettings: currentMap.tourSettings || null,
+        tourSlidePlan: currentMap.tourSlidePlan || null,
+      });
+      if (currentMap.neighborhoodMapAssets) {
+        setSharePanelNeighborhoodAssets(currentMap.neighborhoodMapAssets);
+      }
+    }
     mapService
       .getMapById(mapId)
       .then((map) => {
@@ -293,7 +291,7 @@ export default function Print() {
           tourSettings: map.tourSettings || null,
           tourSlidePlan: map.tourSlidePlan || null,
         });
-        setSharePanelNeighborhoodAssets(map.neighborhoodMapAssets || null);
+        setSharePanelNeighborhoodAssets((prev) => map.neighborhoodMapAssets || prev || null);
       })
       .catch(() => {
         if (!cancelled) {
@@ -304,6 +302,8 @@ export default function Print() {
     return () => {
       cancelled = true;
     };
+    // Seed from the already-open map; don't reset on every currentMap edit.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sharePanelResolved?.mapId, sharePanel]);
 
   useEffect(() => {
@@ -726,94 +726,6 @@ export default function Print() {
     setSharePanel({ mapId: currentMapId });
   };
 
-  const handleGenerateNeighborhoodMap = useCallback(async () => {
-    setReportError('');
-    setReportStatus('Preparing neighborhood map…');
-    setReportBusy(true);
-    try {
-      let refs = listingParcelRefs;
-      let elements = printElements;
-      let title = mapTitle;
-      let existingCache = resolvedTourMeta.tourNearbyCache;
-      let mapId = sharePanel?.mapId || currentMapId;
-      let token = sharePanelResolved?.shareToken;
-
-      if (sharePanel?.mapId) {
-        setReportStatus('Loading listing…');
-        const map = await mapService.getMapById(sharePanel.mapId);
-        refs = map.listingParcelRefs || refs;
-        elements = map.printElements || elements;
-        title = map.title || title;
-        existingCache = map.tourNearbyCache || existingCache;
-        token = map.shareToken || token;
-        mapId = map.id || sharePanel.mapId;
-        if (map.neighborhoodMapAssets) {
-          setSharePanelNeighborhoodAssets(map.neighborhoodMapAssets);
-        }
-        if (viewMode !== 'edit' || sharePanel.mapId !== currentMapId) {
-          await handleLoadMap(sharePanel.mapId);
-          await waitForMapRef(mapRef, 5000);
-        }
-      }
-
-      await waitForMapRef(mapRef, 5000);
-      const features = featuresForListingParcels({
-        listingParcelRefs: refs,
-        selectedFeatures: [],
-        printElements: elements,
-      });
-      if (!features.length) {
-        throw new Error(
-          'No parcels found on this listing. Open the map, add parcel boundaries, save, then generate again.'
-        );
-      }
-
-      const result = await runNeighborhoodMapGeneration({
-        features,
-        printElements: elements,
-        title,
-        map: mapRef?.current,
-        mapRef,
-        user,
-        userProfile,
-        setLayerStatus,
-        onStatus: setReportStatus,
-        existingTourNearbyCache: existingCache,
-        existingMapId: mapId,
-        existingShareToken: token,
-        download: true,
-        saveNewShareMap: false,
-        persistAssets: true,
-      });
-
-      handleNeighborhoodGenerated(result);
-      await loadSavedMaps(true);
-      setReportStatus('Neighborhood map ready');
-      window.setTimeout(() => setReportStatus(''), 4000);
-    } catch (err) {
-      console.error('Neighborhood map generation failed:', err);
-      setReportError(err?.message || 'Failed to generate neighborhood map.');
-      setReportStatus('');
-    } finally {
-      setReportBusy(false);
-    }
-  }, [
-    listingParcelRefs,
-    printElements,
-    mapTitle,
-    sharePanel,
-    sharePanelResolved?.shareToken,
-    resolvedTourMeta.tourNearbyCache,
-    viewMode,
-    currentMapId,
-    mapRef,
-    setLayerStatus,
-    userProfile,
-    user,
-    handleNeighborhoodGenerated,
-    loadSavedMaps,
-  ]);
-
   const startPrintLayoutFlow = useCallback(() => {
     setSharePanel(null);
     setPrintLayoutMode(true);
@@ -1056,14 +968,9 @@ export default function Print() {
             hasTourData={hasTourData}
             hasAmenityData={hasAmenityData}
             hasNeighborhoodMap={hasNeighborhoodMap}
-            neighborhoodMapAssets={sharePanelNeighborhoodAssets}
+            neighborhoodMapAssets={resolvedNeighborhoodAssets}
             onTourGenerated={handleTourGenerated}
             onAmenityGenerated={handleAmenityGenerated}
-            onNeighborhoodGenerated={handleNeighborhoodGenerated}
-            onGenerateNeighborhoodMap={handleGenerateNeighborhoodMap}
-            neighborhoodBusy={reportBusy}
-            neighborhoodStatus={reportStatus}
-            neighborhoodError={reportError}
           />
         )}
         {newMapSetupOpen && !isMobileViewport && (
@@ -1195,14 +1102,9 @@ export default function Print() {
           hasTourData={hasTourData}
           hasAmenityData={hasAmenityData}
           hasNeighborhoodMap={hasNeighborhoodMap}
-          neighborhoodMapAssets={sharePanelNeighborhoodAssets}
+          neighborhoodMapAssets={resolvedNeighborhoodAssets}
           onTourGenerated={handleTourGenerated}
           onAmenityGenerated={handleAmenityGenerated}
-          onNeighborhoodGenerated={handleNeighborhoodGenerated}
-          onGenerateNeighborhoodMap={handleGenerateNeighborhoodMap}
-          neighborhoodBusy={reportBusy}
-          neighborhoodStatus={reportStatus}
-          neighborhoodError={reportError}
         />
         )}
       {printLayoutMode && (

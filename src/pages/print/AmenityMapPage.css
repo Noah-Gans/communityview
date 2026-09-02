@@ -46,11 +46,11 @@ html.amenity-map-mode .mapboxgl-canvas-container svg * {
   color: #172033;
 }
 
-/* HTML overlay sits above Map.js print boundary SVG (z-index 2) and Mapbox canvas. */
+/* Above Mapbox amenity pins and custom HTML markers; below the rail, brand, and chrome. */
 .amenity-map-home-marker {
   pointer-events: auto;
   position: fixed;
-  z-index: 10040;
+  z-index: 9202;
   box-sizing: border-box;
   margin: 0;
   padding: 0;
@@ -84,14 +84,14 @@ html.amenity-map-mode .mapboxgl-canvas-container svg * {
 
 .amenity-map-home-marker.is-draggable:active {
   cursor: grabbing;
-  z-index: 10060;
+  z-index: 9203;
 }
 
 /* Brand mark, top right, above the parcel/boundary overlays. */
 .amenity-map-brand {
   pointer-events: auto;
   position: fixed;
-  z-index: 9203;
+  z-index: 9206;
   top: var(--amenity-edge);
   right: var(--amenity-edge);
   display: inline-flex;
@@ -117,7 +117,7 @@ html.amenity-map-mode .mapboxgl-canvas-container svg * {
 .amenity-map-rail {
   pointer-events: none;
   position: fixed;
-  z-index: 9202;
+  z-index: 9208;
   top: var(--amenity-edge);
   left: var(--amenity-edge);
   bottom: var(--amenity-edge);
@@ -824,6 +824,169 @@ html.amenity-map-mode .mapboxgl-canvas-container svg * {
   opacity: 0.65;
 }
 
+.amenity-named-add {
+  margin: 14px 0 2px;
+  padding: 12px 12px 10px;
+  border: 1px solid #dce4df;
+  border-radius: 12px;
+  background: #f7faf8;
+}
+
+.amenity-named-add-heading {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-bottom: 8px;
+}
+
+.amenity-named-add-heading strong {
+  color: #1f2d28;
+  font-size: 0.78rem;
+  font-weight: 800;
+}
+
+.amenity-named-add-heading span {
+  color: #6b7872;
+  font-size: 0.64rem;
+  line-height: 1.35;
+}
+
+.amenity-named-add-row {
+  display: flex;
+  gap: 6px;
+}
+
+.amenity-named-add-row input {
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 38px;
+  border: 1px solid #c5d0cb;
+  border-radius: 9px;
+  padding: 0 10px;
+  background: #fff;
+  color: #1f2d28;
+  font: inherit;
+  font-size: 0.78rem;
+}
+
+.amenity-named-add-row input:focus {
+  outline: 2px solid #1d784f;
+  outline-offset: 1px;
+}
+
+.amenity-named-add-row button {
+  flex: 0 0 auto;
+  height: 38px;
+  border: 1px solid #17613f;
+  border-radius: 9px;
+  padding: 0 12px;
+  background: #fff;
+  color: #14532d;
+  font: inherit;
+  font-size: 0.72rem;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.amenity-named-add-row button:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.amenity-named-add-list {
+  list-style: none;
+  margin: 8px 0 0;
+  padding: 0;
+  max-height: 220px;
+  overflow: auto;
+  border: 1px solid #dce4df;
+  border-radius: 10px;
+  background: #fff;
+}
+
+.amenity-named-add-list button {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  width: 100%;
+  padding: 8px 10px;
+  border: 0;
+  border-bottom: 1px solid #eef2ef;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.amenity-named-add-copy {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  min-width: 0;
+}
+
+.amenity-named-add-action {
+  flex: 0 0 auto;
+  border-radius: 999px;
+  padding: 3px 9px;
+  background: #14532d;
+  color: #fff;
+  font-size: 0.62rem;
+  font-weight: 800;
+  letter-spacing: 0.02em;
+}
+
+.amenity-named-add-action.is-on-map {
+  background: #ecfdf5;
+  color: #166534;
+}
+
+.amenity-named-add-list li:last-child button {
+  border-bottom: 0;
+}
+
+.amenity-named-add-list button:hover {
+  background: #ecfdf5;
+}
+
+.amenity-named-add-list strong {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.76rem;
+}
+
+.amenity-named-add-list small {
+  color: #6b7872;
+  font-size: 0.62rem;
+}
+
+.amenity-named-add-have {
+  border-radius: 999px;
+  padding: 1px 6px;
+  background: #ecfdf5;
+  color: #166534;
+  font-size: 0.58rem;
+  font-weight: 800;
+}
+
+.amenity-named-add-ok {
+  margin: 8px 0 0;
+  color: #166534;
+  font-size: 0.68rem;
+  font-weight: 700;
+}
+
+.amenity-named-add-hint {
+  margin: 8px 0 0;
+  color: #6b7872;
+  font-size: 0.68rem;
+}
+
 .amenity-map-results-heading {
   margin: 19px 0 0;
 }
@@ -875,7 +1038,7 @@ html.amenity-map-mode .mapboxgl-canvas-container svg * {
 .amenity-map-custom-marker {
   pointer-events: auto;
   position: fixed;
-  z-index: 9202;
+  z-index: 9201;
   width: 34px;
   height: 34px;
   box-sizing: border-box;
@@ -903,10 +1066,34 @@ html.amenity-map-mode .mapboxgl-canvas-container svg * {
   cursor: grabbing;
 }
 
+.amenity-map-pin-remove {
+  pointer-events: auto;
+  position: fixed;
+  z-index: 9204;
+  width: 24px;
+  height: 24px;
+  margin: 0;
+  padding: 0;
+  border: 2px solid #fff;
+  border-radius: 999px;
+  background: #0f172a;
+  color: #fff;
+  font-size: 16px;
+  font-weight: 700;
+  line-height: 1;
+  cursor: pointer;
+  box-shadow: 0 2px 10px rgba(15, 23, 42, 0.35);
+  transform: translate(10px, -22px);
+}
+
+.amenity-map-pin-remove:hover {
+  background: #b91c1c;
+}
+
 .amenity-map-place-ghost {
   pointer-events: none;
   position: fixed;
-  z-index: 10050;
+  z-index: 9204;
   transform: translate(-50%, -50%);
   display: flex;
   flex-direction: column;
@@ -1118,12 +1305,55 @@ html.amenity-map-mode .mapboxgl-canvas-container svg * {
   flex-direction: column;
 }
 
+.amenity-map-rating-row {
+  display: inline-flex;
+  width: fit-content;
+  align-items: center;
+  gap: 6px;
+  margin-top: 2px;
+  flex-wrap: wrap;
+}
+
+.amenity-map-quality-tier {
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 6px;
+  border-radius: 999px;
+  font-size: 0.58rem;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  text-transform: lowercase;
+  line-height: 1.4;
+  color: #57534e;
+  background: #f5f5f4;
+}
+
+.amenity-map-quality-tier.is-strong {
+  color: #166534;
+  background: #dcfce7;
+}
+
+.amenity-map-quality-tier.is-solid {
+  color: #1e40af;
+  background: #dbeafe;
+}
+
+.amenity-map-quality-tier.is-thin {
+  color: #a16207;
+  background: #fef3c7;
+}
+
+.amenity-map-quality-tier.is-weak,
+.amenity-map-quality-tier.is-unrated {
+  color: #78716c;
+  background: #f5f5f4;
+}
+
 .amenity-map-rating {
   display: inline-flex;
   width: fit-content;
   align-items: center;
   gap: 3px;
-  margin-top: 2px;
   color: #d97706 !important;
   font-size: 0.7rem;
   font-weight: 800;
@@ -1592,6 +1822,21 @@ button.amenity-map-layer-head:hover {
   border: 2px solid #fff;
   border-radius: 999px;
   box-shadow: 0 0 0 1px rgba(15, 23, 42, 0.22);
+}
+
+.amenity-map-icon--composited {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  box-shadow: 0 0 0 1.5px #fff, 0 0 0 2.5px rgba(15, 23, 42, 0.18);
+}
+
+.amenity-map-icon--composited img {
+  width: 58%;
+  height: 58%;
+  object-fit: contain;
+  filter: brightness(0) invert(1);
 }
 
 .amenity-map-count {

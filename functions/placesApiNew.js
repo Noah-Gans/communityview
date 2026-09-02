@@ -90,10 +90,11 @@ function parsePlacesError(json, status) {
 
 async function searchNearbyNew(lat, lng, radiusMeters, apiKey, includedTypes, options = {}) {
   const types = (includedTypes || []).filter(Boolean);
-  if (!types.length) return [];
+  const includedPrimaryTypes = (options.includedPrimaryTypes || []).filter(Boolean);
+  if (!types.length && !includedPrimaryTypes.length) return [];
 
+  const excludedTypes = (options.excludedTypes || []).filter(Boolean);
   const body = {
-    includedTypes: types,
     maxResultCount: 20,
     rankPreference: options.rankPreference || "DISTANCE",
     locationRestriction: {
@@ -103,6 +104,9 @@ async function searchNearbyNew(lat, lng, radiusMeters, apiKey, includedTypes, op
       },
     },
   };
+  if (types.length) body.includedTypes = types;
+  if (includedPrimaryTypes.length) body.includedPrimaryTypes = includedPrimaryTypes;
+  if (excludedTypes.length) body.excludedTypes = excludedTypes;
 
   const res = await fetch("https://places.googleapis.com/v1/places:searchNearby", {
     method: "POST",
@@ -127,12 +131,17 @@ async function searchNearbyNew(lat, lng, radiusMeters, apiKey, includedTypes, op
     .filter((p) => p.place_id && p.name);
 }
 
-const GROCERY_NEARBY_TYPES = ["supermarket", "grocery_store", "food_store"];
+const GROCERY_NEARBY_TYPES = ["supermarket", "grocery_store"];
 
+/**
+ * Do not exclude bakery/cafe/restaurant — full-service grocers carry those
+ * extra types and Nearby Search drops any place with even one excluded type.
+ */
 async function fetchTourGroceryPlacesNew(lat, lng, radiusMeters, apiKey, options = {}) {
-  return searchNearbyNew(lat, lng, radiusMeters, apiKey, GROCERY_NEARBY_TYPES, {
+  return searchNearbyNew(lat, lng, radiusMeters, apiKey, [], {
     rankPreference: "DISTANCE",
     basicFields: options.basicFields === true,
+    includedPrimaryTypes: GROCERY_NEARBY_TYPES,
   });
 }
 
@@ -148,7 +157,128 @@ async function fetchTourNearbyPlacesNew(
   return searchNearbyNew(lat, lng, radiusMeters, apiKey, includedTypes, {
     rankPreference: "DISTANCE",
     basicFields: options.basicFields === true,
+    excludedTypes: options.excludedTypes,
+    includedPrimaryTypes: options.includedPrimaryTypes,
   });
+}
+
+function namedAddBiasMeters(radiusMeters) {
+  return Math.min(50000, Math.max(Number(radiusMeters) || 8000, 19312));
+}
+
+function locationBiasCircle(lat, lng, radiusMeters) {
+  return {
+    circle: {
+      center: { latitude: lat, longitude: lng },
+      radius: namedAddBiasMeters(radiusMeters),
+    },
+  };
+}
+
+async function autocompletePlacesNew(lat, lng, radiusMeters, apiKey, textQuery, options = {}) {
+  const query = String(textQuery || "").trim();
+  if (!query || !apiKey) return { suggestions: [], apiError: "" };
+
+  const body = {
+    input: query,
+    includedRegionCodes: ["us"],
+    locationBias: locationBiasCircle(lat, lng, radiusMeters),
+  };
+  const sessionToken = String(options.sessionToken || "").trim();
+  if (sessionToken) body.sessionToken = sessionToken;
+
+  const res = await fetch("https://places.googleapis.com/v1/places:autocomplete", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "X-Goog-Api-Key": apiKey,
+      "X-Goog-FieldMask": [
+        "suggestions.placePrediction.placeId",
+        "suggestions.placePrediction.text",
+        "suggestions.placePrediction.structuredFormat",
+      ].join(","),
+    },
+    body: JSON.stringify(body),
+  });
+  const json = await res.json();
+  if (!res.ok) return { suggestions: [], apiError: parsePlacesError(json, res.status) };
+
+  const suggestions = (Array.isArray(json.suggestions) ? json.suggestions : [])
+    .map((row) => {
+      const pred = row && row.placePrediction;
+      const placeId = String((pred && pred.placeId) || "").trim();
+      if (!placeId) return null;
+      const structured = pred && pred.structuredFormat;
+      const main = String(
+        (structured && structured.mainText && structured.mainText.text) ||
+          (pred.text && pred.text.text) ||
+          ""
+      ).trim();
+      const secondary = String(
+        (structured && structured.secondaryText && structured.secondaryText.text) || ""
+      ).trim();
+      if (!main) return null;
+      return { placeId, name: main, address: secondary };
+    })
+    .filter(Boolean);
+  return { suggestions, apiError: "" };
+}
+
+async function fetchPlaceDetailsNew(placeId, apiKey, options = {}) {
+  const id = String(placeId || "").trim();
+  if (!id || !apiKey) return { place: null, apiError: "Missing place." };
+
+  const params = new URLSearchParams();
+  const sessionToken = String(options.sessionToken || "").trim();
+  if (sessionToken) params.set("sessionToken", sessionToken);
+  const qs = params.toString();
+  const res = await fetch(
+    `https://places.googleapis.com/v1/places/${encodeURIComponent(id)}${qs ? `?${qs}` : ""}`,
+    {
+      headers: {
+        "X-Goog-Api-Key": apiKey,
+        "X-Goog-FieldMask":
+          "id,displayName,location,types,primaryType,formattedAddress,rating,userRatingCount,businessStatus",
+      },
+    }
+  );
+  const json = await res.json();
+  if (!res.ok) return { place: null, apiError: parsePlacesError(json, res.status) };
+  const place = normalizeNewPlaceToLegacy(json, apiKey);
+  if (!place.place_id || !place.name) {
+    return { place: null, apiError: "Could not load that place." };
+  }
+  return { place, apiError: "" };
+}
+
+async function searchTextNew(lat, lng, radiusMeters, apiKey, textQuery, options = {}) {
+  const query = String(textQuery || "").trim();
+  if (!query) return { results: [], apiError: "" };
+
+  const body = {
+    textQuery: query,
+    maxResultCount: Math.min(8, Math.max(1, Number(options.maxResultCount) || 8)),
+    locationBias: locationBiasCircle(lat, lng, radiusMeters),
+  };
+
+  const res = await fetch("https://places.googleapis.com/v1/places:searchText", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "X-Goog-Api-Key": apiKey,
+      "X-Goog-FieldMask": BASIC_FIELD_MASK,
+    },
+    body: JSON.stringify(body),
+  });
+  const json = await res.json();
+  if (!res.ok) return { results: [], apiError: parsePlacesError(json, res.status) };
+  const places = Array.isArray(json.places) ? json.places : [];
+  return {
+    results: places
+      .map((p) => normalizeNewPlaceToLegacy(p, apiKey))
+      .filter((p) => p.place_id && p.name),
+    apiError: "",
+  };
 }
 
 module.exports = {
@@ -156,4 +286,8 @@ module.exports = {
   fetchTourNearbyPlacesNew,
   fetchTourGroceryPlacesNew,
   normalizeNewPlaceToLegacy,
+  autocompletePlacesNew,
+  fetchPlaceDetailsNew,
+  searchTextNew,
+  namedAddBiasMeters,
 };

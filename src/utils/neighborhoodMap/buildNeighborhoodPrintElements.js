@@ -3,17 +3,33 @@
  */
 import * as turf from '@turf/turf';
 import { getRegridParcelBoundaryCoordinates } from '../regridParcelBoundary';
+import {
+  AMENITY_MAP_CATEGORIES,
+  amenityCategoryHex,
+  amenityCategoryRgb,
+} from '../amenityMapCatalog';
 
-/** Brighter category colors — easy to match pin ↔ legend. */
-export const NEIGHBORHOOD_CATEGORY_COLORS = {
-  dining: { fill: '#f97316', stroke: '#c2410c', rgb: [249, 115, 22] },
-  coffee: { fill: '#a16207', stroke: '#854d0e', rgb: [161, 98, 7] },
-  grocery: { fill: '#eab308', stroke: '#ca8a04', rgb: [234, 179, 8] },
-  fitness: { fill: '#f43f5e', stroke: '#e11d48', rgb: [244, 63, 94] },
-  parks_rec: { fill: '#22c55e', stroke: '#16a34a', rgb: [34, 197, 94] },
-  transit: { fill: '#6366f1', stroke: '#4f46e5', rgb: [99, 102, 241] },
-  essentials: { fill: '#78716c', stroke: '#57534e', rgb: [120, 113, 108] },
-};
+/** Same fills as the digital amenity-map badges / catalog. */
+export const NEIGHBORHOOD_CATEGORY_COLORS = Object.fromEntries(
+  AMENITY_MAP_CATEGORIES.map((category) => [
+    category.key,
+    {
+      fill: category.color,
+      stroke: category.color,
+      rgb: amenityCategoryRgb(category.key),
+    },
+  ])
+);
+
+export function neighborhoodCategoryColors(amenityKey) {
+  return (
+    NEIGHBORHOOD_CATEGORY_COLORS[amenityKey] || {
+      fill: amenityCategoryHex(amenityKey),
+      stroke: amenityCategoryHex(amenityKey),
+      rgb: amenityCategoryRgb(amenityKey),
+    }
+  );
+}
 
 function centroidOfSnapshot(snap) {
   if (!snap?.geometry) return null;
@@ -129,10 +145,7 @@ export function buildNumberedAmenityElements(amenities, { forShare = false, zoom
       const lat = Number(a.lat);
       const lng = Number(a.lng);
       if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null;
-      const colors = NEIGHBORHOOD_CATEGORY_COLORS[a.amenityKey] || {
-        fill: '#0f172a',
-        stroke: '#020617',
-      };
+      const colors = neighborhoodCategoryColors(a.amenityKey);
       const label = forShare ? `${a.number}. ${a.name}` : String(a.number);
       return {
         id: `nbhd_pin_${a.number}`,

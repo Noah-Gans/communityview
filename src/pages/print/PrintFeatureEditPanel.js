@@ -156,21 +156,15 @@ export default function PrintFeatureEditPanel({
   const photos = getPhotosFromElement(selectedPrintElement);
 
   const uploadPhotoFiles = async (files, { manageBusyState = true } = {}) => {
-    const imageFiles = (files || []).filter((f) => f?.type?.startsWith('image/'));
+    const imageFiles = (files || []).filter((f) => f && !validateMapPhotoFile(f));
     if (!imageFiles.length) {
-      window.alert('Please drop or select image files.');
+      const firstErr = (files || []).map((f) => validateMapPhotoFile(f)).find(Boolean);
+      window.alert(firstErr || 'Please drop or select image files.');
       return;
     }
     if (!user?.uid) {
       window.alert('Sign in to upload photos.');
       return;
-    }
-    for (const file of imageFiles) {
-      const err = validateMapPhotoFile(file);
-      if (err) {
-        window.alert(err);
-        return;
-      }
     }
     if (manageBusyState) setPhotoUploading(true);
     try {
@@ -858,7 +852,7 @@ export default function PrintFeatureEditPanel({
         <input
           ref={photoInputRef}
           type="file"
-          accept="image/jpeg,image/png,image/webp"
+          accept="image/jpeg,image/png,image/webp,image/heic,image/heif,.heic,.heif"
           multiple
           onChange={handlePhotoUpload}
           disabled={photoUploading}

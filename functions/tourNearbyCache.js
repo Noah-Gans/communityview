@@ -4,11 +4,12 @@
  */
 
 const NEARBY_FETCH_RADIUS_METERS = 25000;
-const NEARBY_TOUR_DATA_VERSION = 28;
+const NEARBY_TOUR_DATA_VERSION = 35;
 const SEARCH_CENTER_MATCH_EPSILON_DEG = 0.008;
 
 /** Keep in sync with `src/utils/tourNearbyFirestore.js`. */
 const TOUR_NEARBY_AMENITY_KEYS = [
+  "dining",
   "parks_rec",
   "grocery",
   "schools",
@@ -16,9 +17,7 @@ const TOUR_NEARBY_AMENITY_KEYS = [
   "trailheads",
   "essentials",
   "coffee",
-  "transit",
   "airport",
-  "dining",
 ];
 
 /** Amenity-map-only categories (not tour slides). Keep in sync with client. */
@@ -47,11 +46,8 @@ function tourNearbySearchCentersMatch(a, b) {
   );
 }
 
-function isRootCacheValid(cache, searchCenter, expectedRadiusMeters) {
+function isRootCacheValid(cache, searchCenter, _expectedRadiusMeters) {
   if (!cache || typeof cache !== "object") return false;
-  if (Number(cache.dataVersion) !== NEARBY_TOUR_DATA_VERSION) return false;
-  const expectedRadius = Number(expectedRadiusMeters) || NEARBY_FETCH_RADIUS_METERS;
-  if (Number(cache.searchRadiusMeters) !== expectedRadius) return false;
   if (!cache.searchCenter || !searchCenter) return false;
   if (!tourNearbySearchCentersMatch(cache.searchCenter, searchCenter)) return false;
   const byAmenity = cache.byAmenity;
@@ -59,7 +55,8 @@ function isRootCacheValid(cache, searchCenter, expectedRadiusMeters) {
 }
 
 function sanitizeFeature(feature) {
-  if (!feature || feature.type !== "Feature") return null;
+  if (!feature || typeof feature !== "object") return null;
+  if (feature.type && feature.type !== "Feature") return null;
   const coords = feature.geometry && feature.geometry.coordinates;
   if (!Array.isArray(coords) || coords.length < 2) return null;
   const lng = Number(coords[0]);
@@ -86,6 +83,12 @@ function sanitizeFeature(feature) {
     props.straightLineMiles = raw.straightLineMiles;
   }
   if (raw.photoUrl != null && String(raw.photoUrl).trim()) props.photoUrl = String(raw.photoUrl).trim();
+  if (raw.formattedAddress != null && String(raw.formattedAddress).trim()) {
+    props.formattedAddress = String(raw.formattedAddress).trim();
+  }
+  if (raw.vicinity != null && String(raw.vicinity).trim()) {
+    props.vicinity = String(raw.vicinity).trim();
+  }
   if (Array.isArray(raw.googleTypes) && raw.googleTypes.length) {
     props.googleTypes = raw.googleTypes.map((t) => String(t));
   }
@@ -104,7 +107,11 @@ function sanitizeAmenityCollection(fc) {
   const features = Array.isArray(fc && fc.features)
     ? fc.features.map(sanitizeFeature).filter(Boolean)
     : [];
-  return { type: "FeatureCollection", features, fetched: true };
+  const out = { type: "FeatureCollection", features, fetched: true };
+  if (Number.isFinite(Number(fc && fc.searchRadiusMeters))) {
+    out.searchRadiusMeters = Number(fc.searchRadiusMeters);
+  }
+  return out;
 }
 
 function sanitizeHomeMarker(raw) {
@@ -263,6 +270,8 @@ function readAmenityFromTourCache(mapData, amenityKey, searchCenter, expectedRad
 }
 
 function mergeTourNearbyCachePayload(existingRaw, incomingRaw) {
+  // replace:true wipes sibling product keys (amenity-map fire/police/library).
+  // Tour and amenity-map saves must merge so each keeps its own show flags on shared places.
   const replace = Boolean(incomingRaw && incomingRaw.replace === true);
   const existing = normalizeTourNearbyCache(existingRaw) || {
     dataVersion: NEARBY_TOUR_DATA_VERSION,
@@ -401,6 +410,7 @@ function normalizeTourSettings(raw) {
     searchRadiusMeters: clampTourSearchRadiusMeters(src.searchRadiusMeters),
     enabledAmenityKeys: resolvedAmenityKeys,
     slidePlan: slidePlan && slidePlan.length ? slidePlan : null,
+    slidePlanUserEdited: src.slidePlanUserEdited === true,
     amenityRadiusMeters:
       src.amenityRadiusMeters && typeof src.amenityRadiusMeters === "object"
         ? src.amenityRadiusMeters
@@ -451,6 +461,9 @@ function resolveTourSettingsFromMapData(mapData) {
         : null;
     return normalizeTourSettings({
       slidePlan,
+      slidePlanUserEdited:
+        (fromDoc && fromDoc.slidePlanUserEdited === true) ||
+        (fromCacheEmbedded && fromCacheEmbedded.slidePlanUserEdited === true),
       searchRadiusMeters: radius,
       enabledAmenityKeys: enabledFromDoc?.length ? enabledFromDoc : enabledFromCache,
       amenityRadiusMeters:

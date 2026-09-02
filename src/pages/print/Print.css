@@ -1721,7 +1721,46 @@ body.print-preview-active .print-scroll-wrapper {
   border-left: none;
   border-radius: 18px;
   box-shadow: 0 24px 64px rgba(15, 23, 42, 0.28);
-  padding: 22px 24px 28px;
+  /* Scrolling lives on .print-share-panel-body so the radius clips cleanly —
+     a scrollbar gutter on this element squares off the right-hand corners. */
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  padding: 22px 24px 0;
+}
+
+.print-share-panel--kit > .print-share-panel-header {
+  flex: 0 0 auto;
+}
+
+.print-share-panel-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding-bottom: 28px;
+  scrollbar-gutter: stable;
+  overscroll-behavior: contain;
+}
+
+.print-share-panel-body::-webkit-scrollbar {
+  width: 10px;
+}
+
+.print-share-panel-body::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.print-share-panel-body::-webkit-scrollbar-thumb {
+  background: rgba(15, 23, 42, 0.18);
+  border: 3px solid transparent;
+  background-clip: padding-box;
+  border-radius: 999px;
+}
+
+.print-share-panel-body::-webkit-scrollbar-thumb:hover {
+  background: rgba(15, 23, 42, 0.32);
+  background-clip: padding-box;
 }
 
 .print-share-panel--kit.print-share-panel--mobile {
@@ -4305,14 +4344,9 @@ html.shared-tour-mode:not(.shared-tour-edit-mode) .mapboxgl-ctrl-bottom-right {
     display: block;
   }
 
-  .shared-tour-footer-exit {
-    padding: 7px 9px;
-    font-size: 0.72rem;
-  }
-
-  .shared-tour-footer-brand .shared-cv-logo--tour-card {
-    height: 24px;
-    max-width: 88px;
+  .shared-tour-footer-exit,
+  .shared-tour-footer-brand {
+    display: none !important;
   }
 
   .shared-tour-footer-tab {
@@ -4321,12 +4355,16 @@ html.shared-tour-mode:not(.shared-tour-edit-mode) .mapboxgl-ctrl-bottom-right {
   }
 
   .shared-tour-footer-center {
-    gap: 6px;
-    max-width: min(100%, calc(100vw - 200px));
+    grid-column: 1 / -1;
+    justify-self: stretch;
+    width: 100%;
+    max-width: none;
+    gap: 8px;
   }
 
   .shared-tour-footer-tabs {
-    max-width: min(360px, calc(100vw - 240px));
+    flex: 1 1 auto;
+    max-width: none;
   }
 
   .shared-tour-view-footer .shared-tour-arrow {
@@ -4350,8 +4388,8 @@ html.shared-tour-mode:not(.shared-tour-edit-mode) .mapboxgl-ctrl-bottom-right {
   }
 
   .shared-tour-view-footer.shared-tour-deck-nav {
-    grid-template-columns: auto minmax(0, 1fr) auto;
-    gap: 6px;
+    grid-template-columns: minmax(0, 1fr);
+    gap: 0;
   }
 
   .shared-tour-desktop-only {

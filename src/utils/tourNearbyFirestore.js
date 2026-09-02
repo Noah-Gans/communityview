@@ -11,6 +11,7 @@ import { normalizeSlidePrintElements } from './tourSlidePrintElements';
 const SEARCH_CENTER_MATCH_EPSILON_DEG = 0.008;
 
 export const TOUR_NEARBY_AMENITY_KEYS = [
+  'dining',
   'parks_rec',
   'grocery',
   'schools',
@@ -18,11 +19,10 @@ export const TOUR_NEARBY_AMENITY_KEYS = [
   'trailheads',
   'essentials',
   'coffee',
-  'transit',
   'airport',
-  'dining',
 ];
 
+/** Legacy amenity-map keys still stored if an older map has them. */
 export const AMENITY_MAP_EXTRA_KEYS = [
   'fire_station',
   'police_station',
@@ -51,11 +51,9 @@ export function tourNearbySearchCentersMatch(a, b) {
   );
 }
 
-export function isTourNearbyFirestoreRootValid(cache, searchCenter, expectedRadiusMeters) {
+export function isTourNearbyFirestoreRootValid(cache, searchCenter, _expectedRadiusMeters) {
   if (!cache || typeof cache !== 'object') return false;
   if (Number(cache.dataVersion) !== TOUR_NEARBY_DATA_VERSION) return false;
-  const expectedRadius = Number(expectedRadiusMeters) || TOUR_NEARBY_SEARCH_RADIUS_METERS;
-  if (Number(cache.searchRadiusMeters) !== expectedRadius) return false;
   const cachedCenter = cache.searchCenter;
   if (!cachedCenter || !searchCenter) return false;
   if (!tourNearbySearchCentersMatch(cachedCenter, searchCenter)) return false;
@@ -64,7 +62,8 @@ export function isTourNearbyFirestoreRootValid(cache, searchCenter, expectedRadi
 }
 
 function sanitizeFeature(feature) {
-  if (!feature || feature.type !== 'Feature') return null;
+  if (!feature || typeof feature !== 'object') return null;
+  if (feature.type && feature.type !== 'Feature') return null;
   const coords = feature.geometry?.coordinates;
   if (!Array.isArray(coords) || coords.length < 2) return null;
   const lng = Number(coords[0]);
@@ -233,10 +232,12 @@ export function buildTourNearbyCacheForSave(
     Array.isArray(enabledAmenityKeys) && enabledAmenityKeys.length
       ? enabledAmenityKeys.filter((k) => PERSISTED_NEARBY_AMENITY_KEYS.includes(k))
       : [];
-  const cacheKeys = Object.keys(nearbyContextByAmenity || {}).filter(
-    (k) =>
-      PERSISTED_NEARBY_AMENITY_KEYS.includes(k) && nearbyContextByAmenity[k]?.fetched === true
-  );
+  const cacheKeys = Object.keys(nearbyContextByAmenity || {}).filter((k) => {
+    if (!PERSISTED_NEARBY_AMENITY_KEYS.includes(k)) return false;
+    const entry = nearbyContextByAmenity[k];
+    if (entry?.fetched === true) return true;
+    return Array.isArray(entry?.features) && entry.features.length > 0;
+  });
   const keys = [];
   for (const k of [...planKeys, ...cacheKeys]) {
     if (!keys.includes(k)) keys.push(k);
@@ -248,8 +249,10 @@ export function buildTourNearbyCacheForSave(
   const byAmenity = {};
   for (const key of keys) {
     const entry = nearbyContextByAmenity?.[key];
-    if (!entry || entry.fetched !== true) continue;
-    byAmenity[key] = sanitizeAmenityCollection(entry);
+    if (!entry) continue;
+    const hasFeatures = Array.isArray(entry.features) && entry.features.length > 0;
+    if (entry.fetched !== true && !hasFeatures) continue;
+    byAmenity[key] = sanitizeAmenityCollection({ ...entry, fetched: true });
   }
   if (!Object.keys(byAmenity).length && !options.allowEmpty) return null;
 
@@ -274,6 +277,9 @@ export function buildTourNearbyCacheForSave(
       searchRadiusMeters: radius,
       enabledAmenityKeys: enabledKeys.length ? enabledKeys : keys,
     };
+    if (options.tourSettings.slidePlanUserEdited === true) {
+      payload.tourSettings.slidePlanUserEdited = true;
+    }
     if (options.tourSettings.amenityRadiusMeters) {
       payload.tourSettings.amenityRadiusMeters = { ...options.tourSettings.amenityRadiusMeters };
     }

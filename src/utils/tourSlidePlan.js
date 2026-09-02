@@ -70,12 +70,29 @@ export function buildDefaultTourSlidePlan(printElements, enabledAmenityKeys) {
 
 /**
  * Validate and normalize a persisted slide plan.
+ *
+ * A saved plan is otherwise a closed allow-list, so amenities saved after the tour
+ * was first built never appear in it. When the plan has not been hand-edited we
+ * append any amenity that now has data, which is what makes amenity-map saves
+ * percolate into the tour. Once the user edits the tour the plan is authoritative
+ * and nothing is added behind their back.
+ *
  * @param {unknown} rawPlan
  * @param {unknown[]} printElements
  * @param {string[]} enabledAmenityKeys
+ * @param {{ userEdited?: boolean, availableAmenityKeys?: string[] }} [options]
  */
-export function normalizeTourSlidePlan(rawPlan, printElements, enabledAmenityKeys) {
-  const fallback = buildDefaultTourSlidePlan(printElements, enabledAmenityKeys);
+export function normalizeTourSlidePlan(
+  rawPlan,
+  printElements,
+  enabledAmenityKeys,
+  options = {}
+) {
+  const amenityKeysForDefault =
+    !options.userEdited && Array.isArray(options.availableAmenityKeys)
+      ? options.availableAmenityKeys.filter((k) => TOUR_NEARBY_AMENITY_KEYS.includes(k))
+      : enabledAmenityKeys;
+  const fallback = buildDefaultTourSlidePlan(printElements, amenityKeysForDefault);
   if (!Array.isArray(rawPlan) || !rawPlan.length) return fallback;
 
   const photoIds = new Set(
@@ -105,7 +122,33 @@ export function normalizeTourSlidePlan(rawPlan, printElements, enabledAmenityKey
     }
   }
 
-  return out.length ? out : fallback;
+  if (!out.length) return fallback;
+
+  if (!options.userEdited && Array.isArray(options.availableAmenityKeys)) {
+    const available = new Set(
+      options.availableAmenityKeys.map((k) => String(k || '').trim()).filter(Boolean)
+    );
+    const pruned = out.filter((id) => {
+      const parsed = parseSlideId(id);
+      if (parsed?.kind !== 'amenity') return true;
+      return available.has(parsed.amenityKey);
+    });
+    out.length = 0;
+    seen.clear();
+    for (const id of pruned) {
+      seen.add(id);
+      out.push(id);
+    }
+    for (const { key } of TOUR_NEARBY_AMENITY_ORDER) {
+      if (!available.has(key) || !TOUR_NEARBY_AMENITY_KEYS.includes(key)) continue;
+      const id = amenitySlideId(key);
+      if (seen.has(id)) continue;
+      seen.add(id);
+      out.push(id);
+    }
+  }
+
+  return out;
 }
 
 /**
