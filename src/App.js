@@ -37,6 +37,9 @@ const SignupSuccess = lazy(() => import('./components/auth/SignupSuccess'));
 const CreateAccountAfterPayment = lazy(() => import('./components/auth/CreateAccountAfterPayment'));
 const ResetPassword = lazy(() => import('./components/auth/ResetPassword'));
 const ManageSubscription = lazy(() => import('./pages/ManageSubscription'));
+const FreeCountyMapPage = lazy(() => import('./pages/FreeCountyMapPage'));
+const CountiesHub = lazy(() => import('./pages/landingPages/CountiesHub'));
+const FreeTierPaywallModal = lazy(() => import('./components/paywall/FreeTierPaywallModal'));
 
 const FAQ_JSON_LD = {
   '@context': 'https://schema.org',
@@ -85,6 +88,7 @@ function AppRoutes({ activeTab, setActiveTab }) {
           <MainHeader activeTab={activeTab} onTabChange={setActiveTab} />
           <MobileTopBar />
           <TutorialSpotlight />
+          <FreeTierPaywallModal />
         </Suspense>
       )}
 
@@ -101,6 +105,7 @@ function AppRoutes({ activeTab, setActiveTab }) {
           <Routes>
             <Route path="/" element={<LandingPage onStartClick={() => setActiveTab('map')} />} />
             <Route path="/map" element={null} />
+            <Route path="/map/:state/:countySlug" element={<FreeCountyMapPage />} />
             <Route
               path="/search"
               element={
@@ -132,6 +137,7 @@ function AppRoutes({ activeTab, setActiveTab }) {
             <Route path="/features" element={<Features />} />
             <Route path="/faq" element={<FAQ />} />
             <Route path="/use-cases" element={<UseCases />} />
+            <Route path="/counties" element={<CountiesHub />} />
             <Route path="/use-cases/:slug" element={<UseCasePage />} />
             <Route path="/compare/land-id" element={<CompareLandId />} />
             <Route path="/compare/landid" element={<CompareLandId />} />

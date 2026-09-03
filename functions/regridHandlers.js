@@ -57,6 +57,22 @@ exports.regridApi = functions.https.onCall(async (data, context) => {
     );
   }
 
+  // restGet proxies metered Regrid calls (parcel search, point/ownership lookup,
+  // typeahead, per-parcel detail) with no per-caller cost control otherwise — a
+  // signed-in check is the only thing stopping a direct, unauthenticated script
+  // from hitting this at unlimited volume, bypassing the client app entirely.
+  // Every legitimate free-tier (anonymous) code path already avoids calling this
+  // (see src/components/map/SidePanel.js fetchRegridParcelDetails, MobileTopBar.jsx
+  // search/county-filter guards) — the one known exception is a "Zoom to" bbox
+  // fallback in Map.js's zoomToIndividualFeature, already wrapped in a silent
+  // try/catch, so it degrades quietly instead of breaking for anonymous visitors.
+  if (operation === "restGet" && !context.auth) {
+    throw new functions.https.HttpsError(
+      "unauthenticated",
+      "Sign in required for this Regrid operation."
+    );
+  }
+
   if (operation === "restGet") {
     const route = String(data.route || "").replace(/^\/+/, "");
     if (!isAllowedRestGetRoute(route)) {

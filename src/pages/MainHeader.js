@@ -25,7 +25,7 @@ const MainHeader = () => {
     setPropertyMapWizardIntent,
     setIsPrinting,
   } = useMapContext();
-  const { user, logout, deleteAccount, subscriptionStatus } = useUser();
+  const { user, logout, deleteAccount, subscriptionStatus, openPaywall } = useUser();
   const [isDropdownOpen, setIsDropdownOpen] = useState(false);
   const [showAccountSettings, setShowAccountSettings] = useState(false);
   const [accountSettingsSection, setAccountSettingsSection] = useState('overview');
@@ -40,8 +40,9 @@ const MainHeader = () => {
   const isMapRoute = pathname === '/map';
   const isPrintEditMode = pathname === '/print' && isPrinting;
   // Check if we're on a product page (map, search, report, print)
-  const isProductPage = ['/map', '/search', '/report', '/print'].includes(pathname);
+  const isProductPage = isMapPage || ['/search', '/report', '/print'].includes(pathname);
   const inListingWizard = Boolean(propertyMapWizardActive);
+  const isAnonymousVisitor = !user;
   const showProductTabs = isProductPage && (!isPrintEditMode || inListingWizard);
   const showPrintEditorActions = isPrintEditMode && !inListingWizard;
   const showWizardExit = inListingWizard || isPrintEditMode;
@@ -53,7 +54,8 @@ const MainHeader = () => {
     pathname === '/faq' ||
     pathname === '/use-cases' ||
     pathname.startsWith('/use-cases/') ||
-    pathname.startsWith('/compare/');
+    pathname.startsWith('/compare/') ||
+    pathname === '/counties';
   
   // Hide header on sales one-pager
   const isOnePage = location.pathname === '/onepage';
@@ -348,8 +350,12 @@ const MainHeader = () => {
       );
     }
 
-    // Don't show Sign In button - removed per user request
-    return null;
+    // Anonymous (free-tier) visitor: encourage sign-up instead of showing nothing.
+    return (
+      <Link className="header-signup-button" to="/signup">
+        Subscribe
+      </Link>
+    );
   };
 
   useEffect(() => {
@@ -396,11 +402,12 @@ const MainHeader = () => {
               </button>
               <button
                 type="button"
-                className="mobile-tutorial-nav-btn"
+                className={`mobile-tutorial-nav-btn${isAnonymousVisitor ? ' mobile-tutorial-nav-btn--locked' : ''}`}
                 data-tour="header-tab-search"
-                onClick={() => navigate('/search')}
+                aria-disabled={isAnonymousVisitor || undefined}
+                onClick={isAnonymousVisitor ? () => openPaywall('search') : () => navigate('/search')}
               >
-                Search
+                Search{isAnonymousVisitor ? <span aria-hidden="true"> 🔒</span> : null}
               </button>
               <span className="mobile-tutorial-nav-hint">More tabs on wider screens</span>
             </div>
@@ -531,14 +538,27 @@ const MainHeader = () => {
               >
                 Map
               </Link>
-              <Link
-                className={`header-tab ${currentActiveTab === 'search' ? 'active' : ''}`}
-                onClick={() => handleTabChange('search')}
-                to="/search"
-                data-tour="header-tab-search"
-              >
-                Search
-              </Link>
+              {isAnonymousVisitor ? (
+                <button
+                  type="button"
+                  className="header-tab header-tab--locked"
+                  aria-disabled="true"
+                  title="Sign up to search"
+                  data-tour="header-tab-search"
+                  onClick={() => openPaywall('search')}
+                >
+                  Search <span aria-hidden="true">🔒</span>
+                </button>
+              ) : (
+                <Link
+                  className={`header-tab ${currentActiveTab === 'search' ? 'active' : ''}`}
+                  onClick={() => handleTabChange('search')}
+                  to="/search"
+                  data-tour="header-tab-search"
+                >
+                  Search
+                </Link>
+              )}
               {!inListingWizard && !isMobile && REGRID_BATCH_REPORTS_ENABLED && (
                 <Link
                   className={`header-tab ${currentActiveTab === 'report' ? 'active' : ''}`}
@@ -549,13 +569,25 @@ const MainHeader = () => {
                 </Link>
               )}
               {!inListingWizard && (
-                <Link
-                  className={`header-tab ${currentActiveTab === 'print' ? 'active' : ''}`}
-                  onClick={() => handleTabChange('print')}
-                  to={{ pathname: '/print', search: location.search }}
-                >
-                  Maps
-                </Link>
+                isAnonymousVisitor ? (
+                  <button
+                    type="button"
+                    className="header-tab header-tab--locked"
+                    aria-disabled="true"
+                    title="Sign up to save and print maps"
+                    onClick={() => openPaywall('maps')}
+                  >
+                    Maps <span aria-hidden="true">🔒</span>
+                  </button>
+                ) : (
+                  <Link
+                    className={`header-tab ${currentActiveTab === 'print' ? 'active' : ''}`}
+                    onClick={() => handleTabChange('print')}
+                    to={{ pathname: '/print', search: location.search }}
+                  >
+                    Maps
+                  </Link>
+                )
               )}
             </div>
           )}

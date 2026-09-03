@@ -45,7 +45,7 @@ export default function MobileTopBar() {
   const location = useLocation();
   const navigate = useNavigate();
   const pathname = normalizePathname(location.pathname);
-  const isDiscover = pathname === '/map';
+  const isDiscover = pathname === '/map' || pathname.startsWith('/map/');
   const isMaps = pathname === '/print';
 
   const [parcelQuery, setParcelQuery] = useState('');
@@ -72,7 +72,7 @@ export default function MobileTopBar() {
     setLayerStatus,
   } = useMapContext();
 
-  const { user } = useUser();
+  const { user, openPaywall } = useUser();
 
   const {
     mode: countyMode,
@@ -143,6 +143,10 @@ export default function MobileTopBar() {
   }, [isMaps]);
 
   const handleParcelSearchFocus = () => {
+    if (!user) {
+      openPaywall('search');
+      return;
+    }
     setShowCountyFilter(true);
     setShowResults(false);
     hydrateFromCache();
@@ -150,6 +154,7 @@ export default function MobileTopBar() {
   };
 
   const handleParcelSearch = async () => {
+    if (!user) return;
     const queryToRun = parcelQuery.trim();
     if (!queryToRun) return;
 
@@ -185,6 +190,7 @@ export default function MobileTopBar() {
   };
 
   const loadMoreMobileResults = async () => {
+    if (!user) return;
     if (!activeParcelQuery || !hasMoreResults || isLoadingMore || isSearching) return;
     if (nextOffsetId === null || nextOffsetId === undefined) return;
 
@@ -257,7 +263,7 @@ export default function MobileTopBar() {
           <input
             type="search"
             className="mobile-top-bar-input"
-            placeholder="Search parcels…"
+            placeholder={user ? 'Search parcels…' : 'Sign up to search parcels'}
             value={parcelQuery}
             onChange={(e) => setParcelQuery(e.target.value)}
             onFocus={handleParcelSearchFocus}
@@ -267,6 +273,7 @@ export default function MobileTopBar() {
               }
             }}
             aria-label="Search parcels"
+            readOnly={!user}
           />
         ) : (
           <input

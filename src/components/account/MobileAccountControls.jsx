@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { useLocation, useNavigate } from 'react-router-dom';
+import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { useUser } from '../../contexts/UserContext';
 import { useTutorialWalkthrough } from '../../contexts/TutorialWalkthroughContext';
 import AccountMenuDropdown from './AccountMenuDropdown';
@@ -106,7 +106,16 @@ export default function MobileAccountControls({ className = '' }) {
     }
   };
 
-  if (!user) return null;
+  if (!user) {
+    return (
+      <Link
+        to="/signup"
+        className={`mobile-account-subscribe-btn${className ? ` ${className}` : ''}`}
+      >
+        Subscribe
+      </Link>
+    );
+  }
 
   return (
     <>

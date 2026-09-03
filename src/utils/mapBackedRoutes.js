@@ -25,6 +25,7 @@ export function isMapBackedRoute(pathname = '') {
   const path = normalizePathname(pathname);
   if (!path) return false;
   if (path === '/map') return true;
+  if (path.startsWith('/map/')) return true;
   if (path === '/search') return true;
   if (path === '/print') return true;
   if (path === '/report') return true;

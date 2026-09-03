@@ -28,8 +28,26 @@ const NAV_LINKS = [
   { href: `${SITE}/use-cases/ownership-map/`, label: 'Ownership map' },
   { href: `${SITE}/use-cases/public-land-map/`, label: 'Public land map' },
   { href: `${SITE}/use-cases/parcel-maps/`, label: 'Parcel maps' },
+  { href: `${SITE}/counties/`, label: 'Counties' },
   { href: `${SITE}/pricing/`, label: 'Pricing' },
   { href: `${SITE}/faq/`, label: 'FAQ' },
+];
+
+// Mirrors src/data/freeCountyMaps.js — kept as a literal copy (not require()'d)
+// for the same reason as MAIN_FAQ_ITEMS below: this script is plain CommonJS
+// Node run against the CRA build, and the content files are ES modules bundled
+// for the React app. Update both when adding/editing a county.
+const FREE_COUNTY_MAPS = [
+  { state: 'wy', stateName: 'Wyoming', slug: 'teton-county', name: 'Teton County' },
+  { state: 'ut', stateName: 'Utah', slug: 'summit-county', name: 'Summit County' },
+  { state: 'ut', stateName: 'Utah', slug: 'wasatch-county', name: 'Wasatch County' },
+  { state: 'co', stateName: 'Colorado', slug: 'summit-county', name: 'Summit County' },
+  { state: 'co', stateName: 'Colorado', slug: 'eagle-county', name: 'Eagle County' },
+  { state: 'id', stateName: 'Idaho', slug: 'blaine-county', name: 'Blaine County' },
+  { state: 'mt', stateName: 'Montana', slug: 'gallatin-county', name: 'Gallatin County' },
+  { state: 'mt', stateName: 'Montana', slug: 'flathead-county', name: 'Flathead County' },
+  { state: 'or', stateName: 'Oregon', slug: 'hood-river-county', name: 'Hood River County' },
+  { state: 'tx', stateName: 'Texas', slug: 'gillespie-county', name: 'Gillespie County' },
 ];
 
 // FAQ content mirrors src/pages/landingPages/content/faq.js (main FAQ page).
@@ -484,6 +502,40 @@ const PAGES = [
       'Choose Community View if you prefer straightforward agent pricing and a fast path from research to a sendable deliverable',
     ],
   },
+  ...FREE_COUNTY_MAPS.map((county) => ({
+    route: `/map/${county.state}/${county.slug}`,
+    file: path.join('map', county.state, county.slug, 'index.html'),
+    title: `${county.name}, ${county.stateName} Ownership Map — Free Parcel & GIS Data | Community View`,
+    description: `Free ${county.name}, ${county.stateName} ownership map — see who owns any parcel and explore ${county.name} GIS data free, no account required.`,
+    h1: `${county.name}, ${county.stateName} Free Ownership Map`,
+    body: `Explore ${county.name}, ${county.stateName} parcel boundaries and property ownership free — the same ${county.name} GIS data real estate agents use, no account required.`,
+    bullets: [
+      'See property ownership and parcel boundaries free, no account required',
+      'Click any parcel for owner name and basic property info',
+      'Sign up for full property records — mailing address, APN, assessed value, and more',
+    ],
+  })),
+  {
+    route: '/counties',
+    file: path.join('counties', 'index.html'),
+    title: 'Free Property Ownership Maps by County | Community View',
+    description:
+      'Free, no-login ownership maps for select counties nationwide — explore parcel boundaries and property ownership free, county by county.',
+    h1: 'Free Property Ownership Maps by County',
+    body:
+      'Explore parcel boundaries and property ownership free, county by county — no account required. Pick a county to see who owns what on an interactive map, or sign up for full property details nationwide.',
+    groups: Array.from(new Set(FREE_COUNTY_MAPS.map((c) => c.stateName)))
+      .sort()
+      .map((stateName) => ({
+        heading: stateName,
+        links: FREE_COUNTY_MAPS.filter((c) => c.stateName === stateName)
+          .sort((a, b) => a.name.localeCompare(b.name))
+          .map((c) => ({
+            href: `${SITE}/map/${c.state}/${c.slug}/`,
+            label: `${c.name} Ownership Map`,
+          })),
+      })),
+  },
 ];
 
 function escapeHtml(s) {
@@ -537,11 +589,24 @@ function buildCrawlableBlock(page) {
   const jsonLdScript = jsonLd
     ? `<script type="application/ld+json">${JSON.stringify(jsonLd)}</script>`
     : '';
+  // Grouped link lists (e.g. counties by state) — { heading, links: [{label, href}] }[]
+  const groupsHtml =
+    page.groups && page.groups.length
+      ? page.groups
+          .map(
+            (g) =>
+              `<h2>${escapeHtml(g.heading)}</h2><ul>${g.links
+                .map((l) => `<li><a href="${l.href}">${escapeHtml(l.label)}</a></li>`)
+                .join('')}</ul>`
+          )
+          .join('')
+      : '';
   return [
     '<div id="cv-seo-static">',
     `<h1>${title}</h1>`,
     `<p>${body}</p>`,
     bulletsHtml,
+    groupsHtml,
     faqsHtml,
     `<nav aria-label="Site">${links}</nav>`,
     '</div>',

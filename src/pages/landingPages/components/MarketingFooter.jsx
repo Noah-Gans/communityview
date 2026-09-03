@@ -27,6 +27,9 @@ export default function MarketingFooter() {
           <Link className="footer-button" to="/features">
             Features
           </Link>
+          <Link className="footer-button" to="/counties">
+            Counties
+          </Link>
           <a
             className="footer-button"
             href="mailto:noahgans@communityview.ai"

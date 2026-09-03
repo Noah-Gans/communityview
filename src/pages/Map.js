@@ -7236,35 +7236,30 @@ useEffect(() => {
         </div>
       )}
 
-      {(subscriptionStatus !== "active" && subscriptionStatus !== "plus" && subscriptionStatus !== "regular") &&
+      {user &&
+        (subscriptionStatus !== "active" && subscriptionStatus !== "plus" && subscriptionStatus !== "regular") &&
         role !== "demo" &&
         !isClientShareMapRoute && (
         <div className="map-overlay">
-          <h2 className="overlay-title">
-            {user ? "Subscription required" : "Login to Access the Map"}
-          </h2>
+          <h2 className="overlay-title">Subscription required</h2>
           <p className="overlay-text">
-            {user
-              ? "Choose a plan and start your free trial to interact with the data."
-              : "You must have an active subscription to interact with the data."}
+            Choose a plan and start your free trial to interact with the data.
           </p>
           <button
             className="overlay-button"
             onClick={() => {
-              navigate(user ? "/signup" : "/login");
+              navigate("/signup");
             }}
           >
-            {user ? "Choose a plan" : "Sign In"}
+            Choose a plan
           </button>
-          {user && (
-            <button
-              type="button"
-              className="overlay-button overlay-button--secondary"
-              onClick={() => navigateToMarketingHome(navigate)}
-            >
-              Return home
-            </button>
-          )}
+          <button
+            type="button"
+            className="overlay-button overlay-button--secondary"
+            onClick={() => navigateToMarketingHome(navigate)}
+          >
+            Return home
+          </button>
         </div>
       )}
     </div>
