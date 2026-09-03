@@ -10,6 +10,17 @@ export function normalizePathname(pathname = '') {
   return pathname.replace(/\/+$/, '') || '/';
 }
 
+/** Public link document: /view, /tour, /amenities. Anyone with the URL; no account chrome. */
+export function isPublicShareRoute(pathname = '') {
+  const path = normalizePathname(pathname);
+  if (!path) return false;
+  return (
+    path.startsWith('/view/') ||
+    path.startsWith('/tour/') ||
+    path.startsWith('/amenities/')
+  );
+}
+
 export function isMapBackedRoute(pathname = '') {
   const path = normalizePathname(pathname);
   if (!path) return false;
@@ -18,8 +29,5 @@ export function isMapBackedRoute(pathname = '') {
   if (path === '/search') return true;
   if (path === '/print') return true;
   if (path === '/report') return true;
-  if (path.startsWith('/view/')) return true;
-  if (path.startsWith('/tour/')) return true;
-  if (path.startsWith('/amenities/')) return true;
-  return false;
+  return isPublicShareRoute(path);
 }

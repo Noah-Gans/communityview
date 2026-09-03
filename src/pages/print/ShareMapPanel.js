@@ -1,7 +1,4 @@
-import { autoGenerateAmenityMap } from '../../utils/amenityMapAutoGenerate';
-import { autoGeneratePropertyTour } from '../../utils/tourAutoGenerate';
 import { getMapShareUrls } from '../../utils/mapShareLinks';
-import MapLoadingOverlay from '../../components/loading/MapLoadingOverlay';
 import { mapService } from '../../services/mapService';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
@@ -62,6 +59,40 @@ const CONTENT_KIT_PREVIEWS = {
   embed: '/content-kit/embed-listing.jpg',
 };
 
+function copyTextBestEffort(text) {
+  const value = String(text || '');
+  if (!value) return Promise.resolve(false);
+  return navigator.clipboard.writeText(value).then(
+    () => true,
+    () => false
+  );
+}
+
+function amenityWindowName(shareToken) {
+  return shareToken ? `cv-amenity-${shareToken}` : 'cv-amenity-map';
+}
+
+function openAmenityWindow(url, shareToken) {
+  if (!url) return null;
+  // Reuse one tab per map. `_blank` + noopener boots a new Firebase Auth on
+  // every click and can briefly sign the print tab out.
+  return window.open(url, amenityWindowName(shareToken));
+}
+
+function withSearchParam(url, key, value) {
+  try {
+    const parsed = new URL(url, window.location.origin);
+    parsed.searchParams.set(key, value);
+    if (parsed.origin === window.location.origin) {
+      return `${parsed.pathname}${parsed.search}${parsed.hash}`;
+    }
+    return parsed.toString();
+  } catch {
+    const join = String(url || '').includes('?') ? '&' : '?';
+    return `${url}${join}${encodeURIComponent(key)}=${encodeURIComponent(value)}`;
+  }
+}
+
 /**
  * Full-panel Content kit: shareable outputs for one listing map.
  */
@@ -88,19 +119,14 @@ export default function ShareMapPanel({
   hasAmenityData = false,
   hasNeighborhoodMap = false,
   neighborhoodMapAssets = null,
-  onTourGenerated,
-  onAmenityGenerated,
-  onNeighborhoodGenerated: _onNeighborhoodGenerated,
-  onGenerateNeighborhoodMap,
-  neighborhoodBusy = false,
-  neighborhoodStatus: _neighborhoodStatus = '',
-  neighborhoodError = '',
+  onTourGenerated: _onTourGenerated,
+  onAmenityGenerated: _onAmenityGenerated,
 }) {
   const [copied, setCopied] = useState(false);
   const [tourCopied, setTourCopied] = useState(false);
   const [amenityCopied, setAmenityCopied] = useState(false);
-  const [generatingTour, setGeneratingTour] = useState(false);
-  const [generatingAmenity, setGeneratingAmenity] = useState(false);
+  const [amenityOpened, setAmenityOpened] = useState(false);
+  const [tourOpened, setTourOpened] = useState(false);
   const [embedCopied, setEmbedCopied] = useState(false);
   const [embedHeight, setEmbedHeight] = useState(500);
   const [busy, setBusy] = useState(false);
@@ -112,6 +138,7 @@ export default function ShareMapPanel({
   const [descriptionDraft, setDescriptionDraft] = useState(mapDescription || '');
   const [descSaveState, setDescSaveState] = useState('idle');
   const lastSavedDescriptionRef = useRef((mapDescription || '').trim());
+  const openingCreateRef = useRef({ tour: false, amenity: false });
 
   useEffect(() => {
     if (!open) return;
@@ -134,11 +161,9 @@ export default function ShareMapPanel({
   }, [mapId, open]);
 
   useEffect(() => {
-    if (!open) {
-      setGeneratingTour(false);
-      setGeneratingAmenity(false);
-    }
-  }, [open]);
+    setAmenityOpened(false);
+    setTourOpened(false);
+  }, [mapId, shareToken]);
 
   const persistTitle = useCallback(async () => {
     const trimmed = titleDraft.trim();
@@ -267,9 +292,10 @@ export default function ShareMapPanel({
   const handleOpenTour = async () => {
     if (!tourUrl) return;
     setErr(null);
+    const tab = window.open(tourUrl, '_blank', 'noopener,noreferrer');
     try {
       await ensureMapIsPublic();
-      window.open(tourUrl, '_blank', 'noopener,noreferrer');
+      if (!tab) setErr('Allow pop-ups for this site to open the tour.');
     } catch (e) {
       setErr(e?.message || 'Could not open tour');
     } finally {
@@ -280,10 +306,13 @@ export default function ShareMapPanel({
   const handleOpenTourEditor = async () => {
     if (!tourUrl) return;
     setErr(null);
+    const editUrl = tourUrl.includes('?') ? `${tourUrl}&edit=1` : `${tourUrl}?edit=1`;
+    const tab = window.open(editUrl, '_blank', 'noopener,noreferrer');
     try {
       await ensureMapIsPublic();
-      const editUrl = tourUrl.includes('?') ? `${tourUrl}&edit=1` : `${tourUrl}?edit=1`;
-      window.open(editUrl, '_blank', 'noopener,noreferrer');
+      setTourOpened(true);
+      setAmenityOpened(true);
+      if (!tab) setErr('Allow pop-ups for this site to open the tour editor.');
     } catch (e) {
       setErr(e?.message || 'Could not open tour editor');
     } finally {
@@ -295,9 +324,11 @@ export default function ShareMapPanel({
     const url = fromNeighborhood ? neighborhoodAmenityEditUrl : amenityMapEditUrl;
     if (!url) return;
     setErr(null);
+    const tab = openAmenityWindow(url, shareToken);
     try {
       await ensureMapIsPublic();
-      window.open(url, '_blank', 'noopener,noreferrer');
+      setAmenityOpened(true);
+      if (!tab) setErr('Allow pop-ups for this site to open the amenity map.');
     } catch (e) {
       setErr(e?.message || 'Could not open amenity map editor');
     } finally {
@@ -323,9 +354,11 @@ export default function ShareMapPanel({
   const handleOpenAmenityMap = async () => {
     if (!amenityMapUrl) return;
     setErr(null);
+    const tab = openAmenityWindow(amenityMapUrl, shareToken);
     try {
       await ensureMapIsPublic();
-      window.open(amenityMapUrl, '_blank', 'noopener,noreferrer');
+      setAmenityOpened(true);
+      if (!tab) setErr('Allow pop-ups for this site to open the amenity map.');
     } catch (e) {
       setErr(e?.message || 'Could not open amenity map');
     } finally {
@@ -334,62 +367,50 @@ export default function ShareMapPanel({
   };
 
   const handleGenerateTour = async () => {
-    if (!tourUrl || !mapId) return;
+    if (!tourUrl || !mapId || openingCreateRef.current.tour) return;
+    openingCreateRef.current.tour = true;
     setErr(null);
-    setGeneratingTour(true);
     const editUrl = tourUrl.includes('?') ? `${tourUrl}&edit=1` : `${tourUrl}?edit=1`;
-    let tourTab = null;
-    try {
-      await ensureMapIsPublic();
-      tourTab = window.open(editUrl, '_blank', 'noopener,noreferrer');
-      const mapData = await mapService.getMapById(mapId);
-      const result = await autoGeneratePropertyTour({ shareToken, mapData });
-      onTourGenerated?.({
-        tourNearbyCache: result.tourNearbyCache,
-        tourSettings: result.tourSettings,
-        tourSlidePlan: result.tourSlidePlan,
-      });
-      onAmenityGenerated?.({
-        tourNearbyCache: result.tourNearbyCache,
-      });
-      await onMapsUpdated?.();
-      await navigator.clipboard.writeText(tourUrl);
+    const createUrl = withSearchParam(editUrl, 'generate', '1');
+    const tourTab = window.open(createUrl, '_blank', 'noopener,noreferrer');
+    setTourOpened(true);
+    setAmenityOpened(true);
+    void copyTextBestEffort(tourUrl).then((copied) => {
+      if (!copied) return;
       setTourCopied(true);
       window.setTimeout(() => setTourCopied(false), 2200);
-      if (tourTab && !tourTab.closed) {
-        try {
-          tourTab.location.reload();
-        } catch {
-          // ignore
-        }
-      }
+    });
+    try {
+      await ensureMapIsPublic();
+      if (!tourTab) setErr('Allow pop-ups for this site so the tour can open in a new tab.');
     } catch (e) {
       setErr(e?.message || 'Could not create tour');
     } finally {
-      setGeneratingTour(false);
+      openingCreateRef.current.tour = false;
       setBusy(false);
     }
   };
 
   const handleGenerateAmenityMap = async () => {
-    if (!amenityMapUrl || !mapId) return;
+    if (!amenityMapUrl || !mapId || openingCreateRef.current.amenity) return;
+    openingCreateRef.current.amenity = true;
     setErr(null);
-    setGeneratingAmenity(true);
-    try {
-      await ensureMapIsPublic();
-      const mapData = await mapService.getMapById(mapId);
-      const result = await autoGenerateAmenityMap({ shareToken, mapData });
-      onAmenityGenerated?.({
-        tourNearbyCache: result.tourNearbyCache,
-      });
-      await onMapsUpdated?.();
-      await navigator.clipboard.writeText(amenityMapUrl);
+    const createUrl = withSearchParam(amenityMapUrl, 'generate', '1');
+    const amenityTab = openAmenityWindow(createUrl, shareToken);
+    setAmenityOpened(true);
+    setTourOpened(true);
+    void copyTextBestEffort(amenityMapUrl).then((copied) => {
+      if (!copied) return;
       setAmenityCopied(true);
       window.setTimeout(() => setAmenityCopied(false), 2200);
+    });
+    try {
+      await ensureMapIsPublic();
+      if (!amenityTab) setErr('Allow pop-ups for this site so the amenity map can open in a new tab.');
     } catch (e) {
       setErr(e?.message || 'Could not create amenity map');
     } finally {
-      setGeneratingAmenity(false);
+      openingCreateRef.current.amenity = false;
       setBusy(false);
     }
   };
@@ -412,9 +433,10 @@ export default function ShareMapPanel({
   const handleOpenEmbedPreview = async () => {
     if (!embedUrl) return;
     setErr(null);
+    const tab = window.open(embedUrl, '_blank', 'noopener,noreferrer');
     try {
       await ensureMapIsPublic();
-      window.open(embedUrl, '_blank', 'noopener,noreferrer');
+      if (!tab) setErr('Allow pop-ups for this site to open the preview.');
     } catch (e) {
       setErr(e?.message || 'Could not open preview');
     } finally {
@@ -426,19 +448,18 @@ export default function ShareMapPanel({
   const generateStatus = { tone: 'new', label: 'Generate' };
   const needsSaveStatus = { tone: 'warn', label: 'Save first' };
   const lockedStatus = needsSave ? needsSaveStatus : shareToken ? readyStatus : { tone: 'warn', label: 'No share link' };
-  const amenityReady = Boolean(hasAmenityData);
+  // Amenity map and tour share tourNearbyCache. Creating either one is enough
+  // to show Edit / Preview / Copy on both cards — do not wait for a panel reopen.
+  const placesReady =
+    Boolean(hasAmenityData) || Boolean(hasTourData) || amenityOpened || tourOpened;
+  const amenityReady = placesReady;
+  const tourReady = placesReady;
   const neighborhoodReady = Boolean(hasNeighborhoodMap);
   const neighborhoodPreviewSrc =
     neighborhoodMapAssets?.pngUrl || CONTENT_KIT_PREVIEWS.neighborhood;
 
   return (
     <>
-      {generatingTour || generatingAmenity || neighborhoodBusy ? (
-        <MapLoadingOverlay
-          phraseSet={neighborhoodBusy ? 'map' : generatingAmenity ? 'amenities' : 'createTour'}
-          className="map-loading-overlay--share-create"
-        />
-      ) : null}
       <div
         className={`print-share-panel-overlay print-share-panel-overlay--kit${
           mobileShareFocus ? ' print-share-panel-overlay--mobile' : ''
@@ -471,6 +492,7 @@ export default function ShareMapPanel({
             </button>
           </div>
 
+          <div className="print-share-panel-body">
           {!mobileShareFocus && (
             <div className="content-kit-meta">
               <section className="print-share-title-section" aria-labelledby="print-share-map-title-label">
@@ -559,9 +581,7 @@ export default function ShareMapPanel({
             </div>
           )}
 
-          {(err || neighborhoodError) && (
-            <div className="print-share-panel-error">{err || neighborhoodError}</div>
-          )}
+          {err && <div className="print-share-panel-error">{err}</div>}
           {needsSave && (
             <div className="content-kit-save-banner">
               <p>Save this listing once to unlock share links, tours, amenity maps, and neighborhood maps.</p>
@@ -627,9 +647,10 @@ export default function ShareMapPanel({
                       disabled={busy}
                       onClick={async () => {
                         setErr(null);
+                        const tab = window.open(shareUrl, '_blank', 'noopener,noreferrer');
                         try {
                           await ensureMapIsPublic();
-                          window.open(shareUrl, '_blank', 'noopener,noreferrer');
+                          if (!tab) setErr('Allow pop-ups for this site to open the preview.');
                         } catch (e) {
                           setErr(e?.message || 'Could not open preview');
                         } finally {
@@ -648,7 +669,7 @@ export default function ShareMapPanel({
               <KitCard
                 id="amenities"
                 title="Amenity map"
-                description="Interactive neighborhood map that shows off parks, schools, cafés, and more. Same amenity list as the tour and printable map."
+                description="Interactive neighborhood map of parks, schools, cafés, and more. Same nearby places as the tour; what you show here is what prints on the neighborhood PDF."
                 previewClass="content-kit-preview--amenities"
                 previewLabel="Amenities"
                 previewSrc={CONTENT_KIT_PREVIEWS.amenities}
@@ -707,19 +728,15 @@ export default function ShareMapPanel({
                       type="button"
                       className="print-share-primary-btn"
                       onClick={() => void handleGenerateAmenityMap()}
-                      disabled={busy || generatingAmenity}
+                      disabled={busy}
                     >
-                      {generatingAmenity
-                        ? 'Creating…'
-                        : amenityCopied
-                          ? 'Link copied'
-                          : 'Create Immediately'}
+                      {amenityCopied ? 'Link copied' : 'Create Immediately'}
                     </button>
                     <button
                       type="button"
                       className="print-share-secondary-btn"
                       onClick={() => void handleOpenAmenityEditor()}
-                      disabled={busy || generatingAmenity}
+                      disabled={busy}
                     >
                       Customize amenities
                     </button>
@@ -738,7 +755,7 @@ export default function ShareMapPanel({
               status={
                 needsSave || !shareToken
                   ? lockedStatus
-                  : hasTourData
+                  : tourReady
                     ? readyStatus
                     : generateStatus
               }
@@ -746,7 +763,7 @@ export default function ShareMapPanel({
             >
               {needsSave || !shareToken ? (
                 <p className="print-share-option-note">Save to build or share a tour.</p>
-              ) : hasTourData ? (
+              ) : tourReady ? (
                 <>
                   <div className="print-share-url-row">
                     <input type="text" readOnly value={tourUrl} className="print-share-url-input" aria-label="Tour link" />
@@ -774,15 +791,15 @@ export default function ShareMapPanel({
                     type="button"
                     className="print-share-primary-btn"
                     onClick={() => void handleGenerateTour()}
-                    disabled={busy || generatingTour}
+                    disabled={busy}
                   >
-                    {generatingTour ? 'Creating tour…' : tourCopied ? 'Tour link copied' : 'Create Immediately'}
+                    {tourCopied ? 'Tour link copied' : 'Create Immediately'}
                   </button>
                   <button
                     type="button"
                     className="print-share-secondary-btn"
                     onClick={() => void handleOpenTourEditor()}
-                    disabled={busy || generatingTour}
+                    disabled={busy}
                   >
                     Customize tour
                   </button>
@@ -842,34 +859,7 @@ export default function ShareMapPanel({
                       onClick={() => void handleOpenAmenityEditor({ fromNeighborhood: true })}
                       disabled={busy}
                     >
-                      Edit amenities
-                    </button>
-                    <button
-                      type="button"
-                      className="print-share-secondary-btn"
-                      onClick={() => void onGenerateNeighborhoodMap?.()}
-                      disabled={busy || neighborhoodBusy || !onGenerateNeighborhoodMap}
-                    >
-                      {neighborhoodBusy ? 'Updating…' : 'Regenerate'}
-                    </button>
-                  </div>
-                ) : amenityReady ? (
-                  <div className="content-kit-card-action-row content-kit-card-action-row--stack">
-                    <button
-                      type="button"
-                      className="print-share-primary-btn"
-                      onClick={() => void onGenerateNeighborhoodMap?.()}
-                      disabled={busy || neighborhoodBusy || !onGenerateNeighborhoodMap}
-                    >
-                      {neighborhoodBusy ? 'Generating…' : 'Generate PDF'}
-                    </button>
-                    <button
-                      type="button"
-                      className="print-share-secondary-btn"
-                      onClick={() => void handleOpenAmenityEditor({ fromNeighborhood: true })}
-                      disabled={busy || neighborhoodBusy}
-                    >
-                      Customize amenities
+                      Edit &amp; regenerate
                     </button>
                   </div>
                 ) : (
@@ -877,19 +867,15 @@ export default function ShareMapPanel({
                     <button
                       type="button"
                       className="print-share-primary-btn"
-                      onClick={() => void onGenerateNeighborhoodMap?.()}
-                      disabled={busy || neighborhoodBusy || !onGenerateNeighborhoodMap}
-                    >
-                      {neighborhoodBusy ? 'Creating…' : 'Create Immediately'}
-                    </button>
-                    <button
-                      type="button"
-                      className="print-share-secondary-btn"
                       onClick={() => void handleOpenAmenityEditor({ fromNeighborhood: true })}
-                      disabled={busy || neighborhoodBusy}
+                      disabled={busy}
                     >
-                      Customize amenities
+                      Open map to generate
                     </button>
+                    <p className="print-share-option-note">
+                      Opens the amenity map in its own window so you can choose what appears,
+                      then build the PDF there.
+                    </p>
                   </div>
                 )}
               </KitCard>
@@ -964,6 +950,7 @@ export default function ShareMapPanel({
                 )}
               </KitCard>
             )}
+          </div>
           </div>
         </aside>
       </div>

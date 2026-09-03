@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useEffect, useState } from 'react';
+import React, { createContext, useContext, useEffect, useRef, useState } from 'react';
 import { auth, db } from '../firebase/firebaseConfig';
 import { onAuthStateChanged, signOut } from 'firebase/auth';
 import { doc, setDoc, onSnapshot } from 'firebase/firestore';
@@ -6,6 +6,27 @@ import { getFunctions, httpsCallable } from 'firebase/functions';
 import { REGRID_BATCH_REPORTS_ENABLED } from '../config/featureFlags';
 import { fetchSavedMapsSummaries, invalidateSavedMapsCache } from '../utils/savedMapsCache';
 import { normalizeCountyRecord } from '../utils/searchCountyCache';
+import { hasActiveSubscription } from '../utils/subscriptionAccess';
+import { isPublicShareRoute } from '../utils/mapBackedRoutes';
+
+const AUTH_SESSION_UID_KEY = 'cv.auth.sessionUid';
+
+function readRememberedAuthUid() {
+  try {
+    return window.sessionStorage.getItem(AUTH_SESSION_UID_KEY);
+  } catch {
+    return null;
+  }
+}
+
+function rememberAuthUid(uid) {
+  try {
+    if (uid) window.sessionStorage.setItem(AUTH_SESSION_UID_KEY, uid);
+    else window.sessionStorage.removeItem(AUTH_SESSION_UID_KEY);
+  } catch {
+    // ignore
+  }
+}
 
 const UserContext = createContext(null);
 
@@ -28,17 +49,57 @@ export function UserProvider({ children }) {
   const openPaywall = (reason = null) => setPaywallReason(reason || 'default');
   const closePaywall = () => setPaywallReason(null);
 
+  // Once a paid session is confirmed, keep the print tab on the app through
+  // Firebase Auth/IndexedDB blips caused by opening more Community View tabs.
+  const [sessionTrusted, setSessionTrusted] = useState(() => Boolean(readRememberedAuthUid()));
+  const sessionTrustedRef = useRef(sessionTrusted);
+  const intentionalSignOutRef = useRef(false);
+  const userWasSetRef = useRef(false);
+
+  const markSessionTrusted = (trusted) => {
+    sessionTrustedRef.current = trusted;
+    setSessionTrusted(trusted);
+  };
+
   // User authentication with real-time subscription updates
   useEffect(() => {
     let unsubscribeAuth = null;
     let unsubscribeFirestore = null;
+    let signOutTimer = null;
+
+    const applySignedOut = () => {
+      userWasSetRef.current = false;
+      rememberAuthUid(null);
+      markSessionTrusted(false);
+      invalidateSavedMapsCache();
+      setUser(null);
+      setSubscriptionStatus(null);
+      setRole(null);
+      setHighlightSettings(null);
+      setUserProfile(null);
+      setDefaultSearchCounty(null);
+      setSearchCountyModePreferenceState(null);
+      setSearchCountySetupDismissed(false);
+      setLoading(false);
+    };
 
     unsubscribeAuth = onAuthStateChanged(auth, (firebaseUser) => {
       console.log('🔐 onAuthStateChanged fired:', firebaseUser ? firebaseUser.email : 'null');
-      
+
+      if (signOutTimer) {
+        clearTimeout(signOutTimer);
+        signOutTimer = null;
+      }
+
       if (firebaseUser) {
+        intentionalSignOutRef.current = false;
+        userWasSetRef.current = true;
+        rememberAuthUid(firebaseUser.uid);
         setUser(firebaseUser);
-        fetchSavedMapsSummaries(firebaseUser).catch(() => {});
+        // Public share links are not the viewer's workspace — skip their saved-map library.
+        if (!isPublicShareRoute(window.location.pathname)) {
+          fetchSavedMapsSummaries(firebaseUser).catch(() => {});
+        }
 
         // Clean up any existing Firestore listener
         if (unsubscribeFirestore) {
@@ -55,8 +116,8 @@ export function UserProvider({ children }) {
         // Add timeout to prevent hanging in native apps
         const firestoreTimeout = setTimeout(() => {
           console.warn('⚠️ Firestore listener timeout - setting defaults and continuing');
-          setSubscriptionStatus('none');
-          setHighlightSettings({
+          setSubscriptionStatus((prev) => prev ?? 'none');
+          setHighlightSettings((prev) => prev || {
             fillColor: 'rgba(255, 0, 0, 0.25)',
             fillOutlineColor: '#FF0000',
             lineColor: '#FF0000',
@@ -73,7 +134,13 @@ export function UserProvider({ children }) {
             if (userDoc.exists()) {
               const data = userDoc.data();
               console.log('🔄 Subscription status update:', data.subscriptionStatus);
-              setSubscriptionStatus(data.subscriptionStatus || 'none');
+              const nextStatus = data.subscriptionStatus || 'none';
+              setSubscriptionStatus(nextStatus);
+              if (hasActiveSubscription(nextStatus)) {
+                markSessionTrusted(true);
+              } else {
+                markSessionTrusted(false);
+              }
               setRole(data.role || 'none');
               setUserProfile({
                 firstName: data.firstName || '',
@@ -114,6 +181,7 @@ export function UserProvider({ children }) {
               }
             } else {
               clearTimeout(firestoreTimeout);
+              markSessionTrusted(false);
               setSubscriptionStatus('none');
               setUserProfile(null);
               setDefaultSearchCounty(null);
@@ -132,9 +200,10 @@ export function UserProvider({ children }) {
           (error) => {
             clearTimeout(firestoreTimeout);
             console.error('❌ Firestore error:', error.code, error.message);
-            setSubscriptionStatus('none');
-            // 🎯 Set defaults on error
-            setHighlightSettings({
+            // Opening more app tabs can briefly drop Auth and make this listener
+            // fail with permission-denied. Keep the last known paid status.
+            setSubscriptionStatus((prev) => prev ?? 'none');
+            setHighlightSettings((prev) => prev || {
               fillColor: 'rgba(255, 0, 0, 0.25)',
               fillOutlineColor: '#FF0000',
               lineColor: '#FF0000',
@@ -144,20 +213,33 @@ export function UserProvider({ children }) {
           }
         );
       } else {
-        invalidateSavedMapsCache();
-        setUser(null);
-        setSubscriptionStatus(null);
-        setRole(null);
-        setHighlightSettings(null);
-        setUserProfile(null);
-        setDefaultSearchCounty(null);
-        setSearchCountyModePreferenceState(null);
-        setSearchCountySetupDismissed(false);
-        setLoading(false);
+        if (intentionalSignOutRef.current) {
+          applySignedOut();
+          return;
+        }
+        // Opening another Community View tab (amenity map, tour, …) can briefly
+        // emit null here while IndexedDB auth syncs. Don't treat that as logout.
+        const waitMs = sessionTrustedRef.current || readRememberedAuthUid() ? 8000 : 800;
+        signOutTimer = setTimeout(() => {
+          signOutTimer = null;
+          if (auth.currentUser) return;
+          if (intentionalSignOutRef.current) {
+            applySignedOut();
+            return;
+          }
+          // This tab already had a live user. Keep it through IndexedDB fights
+          // from extra amenity/tour tabs. Don't leave the boot spinner up if
+          // Auth never restored on this page load.
+          if (sessionTrustedRef.current && userWasSetRef.current) {
+            return;
+          }
+          applySignedOut();
+        }, waitMs);
       }
     });
     
     return () => {
+      if (signOutTimer) clearTimeout(signOutTimer);
       if (unsubscribeAuth) unsubscribeAuth();
       if (unsubscribeFirestore) unsubscribeFirestore();
     };
@@ -229,11 +311,15 @@ export function UserProvider({ children }) {
 
   const logout = async () => {
     try {
+      intentionalSignOutRef.current = true;
+      rememberAuthUid(null);
+      markSessionTrusted(false);
       await signOut(auth);
       invalidateSavedMapsCache();
       setUser(null);
       console.log("User successfully signed out");
     } catch (error) {
+      intentionalSignOutRef.current = false;
       console.error("Error signing out:", error.message);
     }
   };
@@ -262,6 +348,9 @@ export function UserProvider({ children }) {
 
       // Clear local state after successful deletion
       console.log("🧹 Clearing local state...");
+      intentionalSignOutRef.current = true;
+      rememberAuthUid(null);
+      markSessionTrusted(false);
       setUser(null);
       setSubscriptionStatus(null);
       setRole(null);
@@ -352,7 +441,8 @@ export function UserProvider({ children }) {
       user, 
       subscriptionStatus, 
       role, 
-      loading, 
+      loading,
+      sessionTrusted,
       logout,
       deleteAccount,
       highlightSettings, 

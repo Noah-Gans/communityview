@@ -1,4 +1,5 @@
 import { mapService } from '../services/mapService';
+import { defaultAmenityRadiusMeters } from './amenityMapCatalog';
 import { normalizePrintElementsFromFirestore } from './printElementsFirestore';
 import { getTourNearbySearchCenter } from './propertyTourSlides';
 import { getBoundsFromPrintElements, getBoundsFromViewport } from './sharedMapTourBounds';
@@ -49,12 +50,10 @@ function amenityEntryHasNamedPlaces(entry) {
 }
 
 /**
- * Build a default property tour (slide plan + nearby amenities) and persist to Firestore.
- * Used from the share panel so agents get a tour link without opening the editor.
- *
- * @param {{ shareToken: string, mapData: object }} params
+ * Build a default property tour and persist nearby places.
+ * Create Immediately opens the editor, so the slide plan is locked on save.
  */
-export async function autoGeneratePropertyTour({ shareToken, mapData }) {
+export async function autoGeneratePropertyTour({ shareToken, mapData } = {}) {
   const token = String(shareToken || '').trim();
   if (!token) {
     throw new Error('This map has no share token yet. Save the map from the editor first.');
@@ -74,6 +73,8 @@ export async function autoGeneratePropertyTour({ shareToken, mapData }) {
   const tourSettings = normalizeTourSettings({
     enabledAmenityKeys: enabledAmenityKeysFromPlan(slidePlan),
     slidePlan,
+    amenityRadiusMeters: defaultAmenityRadiusMeters(),
+    slidePlanUserEdited: true,
   });
 
   const existingRoot = normalizeTourNearbyCacheFromFirestore(mapData?.tourNearbyCache);
@@ -81,9 +82,9 @@ export async function autoGeneratePropertyTour({ shareToken, mapData }) {
 
   let nearbyContextByAmenity = {};
 
-  // Reuse categories already populated (e.g. from amenity map); still fetch tour-only gaps.
   if (existingRoot?.byAmenity) {
     for (const [key, entry] of Object.entries(existingRoot.byAmenity)) {
+      if (!amenityEntryHasNamedPlaces(entry)) continue;
       nearbyContextByAmenity[key] = {
         type: 'FeatureCollection',
         features: Array.isArray(entry?.features) ? entry.features : [],
@@ -99,7 +100,6 @@ export async function autoGeneratePropertyTour({ shareToken, mapData }) {
   const fetchErrors = [];
 
   if (keysToFetch.length) {
-    // One Nearby Search per missing amenity category. Prefer browser key to spare CF quota.
     await Promise.all(
       keysToFetch.map(async (amenityKey) => {
         const radiusMeters = getAmenitySearchRadiusMeters(tourSettings, amenityKey);
@@ -109,10 +109,14 @@ export async function autoGeneratePropertyTour({ shareToken, mapData }) {
             lng: searchCenter.lng,
             radiusMeters,
             amenityKey,
+            shareToken: token,
             forceRefresh: true,
             preferBrowser: true,
           });
           const features = Array.isArray(geojson?.features) ? geojson.features : [];
+          if (!features.some((f) => String(f?.properties?.name || '').trim())) {
+            return;
+          }
           nearbyContextByAmenity[amenityKey] = {
             type: 'FeatureCollection',
             features,
@@ -134,7 +138,6 @@ export async function autoGeneratePropertyTour({ shareToken, mapData }) {
     throw new Error(summarizeFetchErrors(fetchErrors));
   }
 
-  // Merge save: keep amenity-map-only categories (fire/police/library) already on the listing.
   const payload = buildTourNearbyCacheForSave(
     existingRoot?.searchCenter || searchCenter,
     nearbyContextByAmenity,

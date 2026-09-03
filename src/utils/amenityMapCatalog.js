@@ -1,37 +1,10 @@
 const MILES_TO_METERS = 1609.344;
 
 /**
- * `badgeFile` reuses the property tour's pre-composited disc markers in
- * `public/tour_nearby_badges`. Categories without one fall back to a colored dot.
+ * Shared amenity set for the amenity map and property tour.
+ * `badgeFile` is a pre-composited disc in `public/tour_nearby_badges`.
  */
 export const AMENITY_MAP_CATEGORIES = [
-  {
-    key: 'parks_rec',
-    label: 'Parks',
-    singular: 'park',
-    color: '#2f855a',
-    googleTypes: ['park'],
-    defaultRadiusMiles: 2,
-    badgeFile: 'parks-rec-badge.png',
-  },
-  {
-    key: 'schools',
-    label: 'Schools',
-    singular: 'school',
-    color: '#2563eb',
-    googleTypes: ['primary_school', 'secondary_school', 'school'],
-    defaultRadiusMiles: 3,
-    badgeFile: 'school-badge.png',
-  },
-  {
-    key: 'coffee',
-    label: 'Cafés',
-    singular: 'café',
-    color: '#a16207',
-    googleTypes: ['cafe', 'coffee_shop', 'bakery'],
-    defaultRadiusMiles: 1.5,
-    badgeFile: 'coffee-badge.png',
-  },
   {
     key: 'dining',
     label: 'Restaurants',
@@ -43,70 +16,80 @@ export const AMENITY_MAP_CATEGORIES = [
     logoFile: 'restaurant.png',
   },
   {
+    key: 'parks_rec',
+    label: 'Parks',
+    singular: 'park',
+    color: '#2f855a',
+    googleTypes: ['park'],
+    defaultRadiusMiles: 2,
+    badgeFile: 'parks-rec-badge.png',
+  },
+  {
     key: 'grocery',
     label: 'Grocery stores',
     singular: 'grocery store',
-    color: '#ca8a04',
-    googleTypes: ['supermarket', 'grocery_store', 'food_store'],
+    color: '#2563eb',
+    googleTypes: ['supermarket', 'grocery_store'],
     defaultRadiusMiles: 1.5,
     badgeFile: 'grocery-badge.png',
+  },
+  {
+    key: 'schools',
+    label: 'Schools',
+    singular: 'school',
+    color: '#b91c1c',
+    googleTypes: ['primary_school', 'secondary_school'],
+    defaultRadiusMiles: 3,
+    badgeFile: 'school-badge.png',
   },
   {
     key: 'fitness',
     label: 'Fitness & gyms',
     singular: 'gym',
-    color: '#e11d48',
+    color: '#7c3aed',
     googleTypes: ['gym'],
     defaultRadiusMiles: 2,
     badgeFile: 'fitness-badge.png',
   },
   {
-    key: 'transit',
-    label: 'Transit',
-    singular: 'transit stop',
-    color: '#4f46e5',
-    googleTypes: ['subway_station', 'train_station', 'bus_station', 'transit_station'],
-    defaultRadiusMiles: 2,
-    badgeFile: 'transit-badge.png',
+    key: 'trailheads',
+    label: 'Trailheads',
+    singular: 'trailhead',
+    color: '#3f6212',
+    googleTypes: ['hiking_area'],
+    defaultRadiusMiles: 7,
+    logoFile: 'hiking.svg',
+    recolorBadge: true,
   },
   {
     key: 'essentials',
     label: 'Essentials',
     singular: 'essential',
-    color: '#57534e',
+    color: '#eab308',
     googleTypes: ['pharmacy', 'drugstore', 'hardware_store', 'bank'],
     defaultRadiusMiles: 1.5,
     badgeFile: 'essentials-badge.png',
+    logoFile: 'tools.svg',
+    recolorBadge: true,
   },
   {
-    key: 'fire_station',
-    label: 'Fire stations',
-    singular: 'fire station',
-    color: '#dc2626',
-    googleTypes: ['fire_station'],
-    defaultRadiusMiles: 4,
-    badgeFile: 'fire-station-badge.png',
-    logoFile: 'fire-station.png',
+    key: 'coffee',
+    label: 'Cafés',
+    singular: 'café',
+    color: '#a16207',
+    googleTypes: ['cafe', 'coffee_shop', 'bakery'],
+    defaultRadiusMiles: 1.5,
+    badgeFile: 'coffee-badge.png',
   },
   {
-    key: 'police_station',
-    label: 'Police stations',
-    singular: 'police station',
-    color: '#334155',
-    googleTypes: ['police'],
-    defaultRadiusMiles: 4,
-    badgeFile: 'police-station-badge.png',
-    logoFile: 'police.png',
-  },
-  {
-    key: 'library',
-    label: 'Libraries',
-    singular: 'library',
-    color: '#7c3aed',
-    googleTypes: ['library'],
-    defaultRadiusMiles: 3,
-    badgeFile: 'library-badge.png',
-    logoFile: 'library.png',
+    key: 'airport',
+    label: 'Airports',
+    singular: 'airport',
+    color: '#0369a1',
+    googleTypes: ['airport'],
+    defaultRadiusMiles: 15,
+    badgeFile: 'airport-badge.png',
+    logoFile: 'plane-alt.svg',
   },
 ];
 
@@ -131,6 +114,20 @@ export function defaultAmenityRadiusMeters() {
       amenityRadiusMilesToMeters(category.defaultRadiusMiles),
     ])
   );
+}
+
+export function amenityCategoryHex(amenityKey) {
+  return AMENITY_MAP_CATEGORY_BY_KEY[amenityKey]?.color || '#0f172a';
+}
+
+export function amenityCategoryRgb(amenityKey) {
+  const hex = String(amenityCategoryHex(amenityKey)).replace('#', '');
+  if (hex.length !== 6) return [15, 23, 42];
+  return [
+    parseInt(hex.slice(0, 2), 16),
+    parseInt(hex.slice(2, 4), 16),
+    parseInt(hex.slice(4, 6), 16),
+  ];
 }
 
 export function amenityFeatureKey(feature) {

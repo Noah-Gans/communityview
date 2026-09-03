@@ -6,6 +6,7 @@ import {
   getRegridParcelOutlineColorForBasemap,
 } from '../components/map/mapStyles';
 import { buildMapLabelDisplayText, labelUsesGeoOffset } from '../pages/print/mapLabelUtils';
+import { getPrintPixelScale } from '../pages/map/mapPrintHitTest';
 import { regridStyleBasemapRef } from '../pages/map/regridParcelMapLayer';
 import {
   arrowHeadPolygon,
@@ -306,11 +307,18 @@ export async function captureMapStackToPngDataUrl(
     targetPixelHeight = null,
     overlayScale = 1,
     basemapId = '',
+    paintTextNotes = true,
+    textNotes = null,
   } = {}
 ) {
   if (!map || typeof map.getCanvas !== 'function') {
     throw new Error('Map is not ready yet.');
   }
+  const notesForExport =
+    Array.isArray(textNotes) && textNotes.length
+      ? textNotes
+      : collectTextNotesForExport(map, printElements);
+  await waitForExportFonts();
 
   if (preferOffscreen) {
     try {
@@ -325,6 +333,8 @@ export async function captureMapStackToPngDataUrl(
           targetPixelHeight,
           overlayScale,
           basemapId,
+          paintTextNotes,
+          textNotes: notesForExport,
         });
         if (offscreenData) return offscreenData;
       }
@@ -405,9 +415,24 @@ export async function captureMapStackToPngDataUrl(
     }
     const destW = out.width;
     const destH = out.height;
-    await drawPointShapeLogosForExport(ctx, map, mapCanvas, printElements, overlayScale, destW, destH);
-    drawVectorElementsForExport(ctx, map, mapCanvas, printElements, overlayScale, destW, destH);
-    drawMapLabelsForExport(ctx, map, mapCanvas, printElements, overlayScale, destW, destH);
+    // Live bitmap is already screen-resolution; the 1.2–1.7 overlayScale is
+    // only for the offscreen high-res clone.
+    await drawPointShapeLogosForExport(ctx, map, mapCanvas, printElements, 1, destW, destH);
+    drawVectorElementsForExport(ctx, map, mapCanvas, printElements, 1, destW, destH);
+    drawMapLabelsForExport(ctx, map, mapCanvas, printElements, 1, destW, destH);
+    if (paintTextNotes) {
+      drawTextNotesForExport(
+        ctx,
+        map,
+        mapCanvas,
+        notesForExport,
+        1,
+        destW,
+        destH,
+        null,
+        cropRectCss
+      );
+    }
 
     let finalCanvas = out;
     if (
@@ -459,6 +484,8 @@ async function captureOffscreenHighResMapToDataUrl(
     targetPixelHeight = null,
     overlayScale = 1,
     basemapId = '',
+    paintTextNotes = true,
+    textNotes = null,
   } = {}
 ) {
   const srcCanvas = sourceMap.getCanvas();
@@ -585,6 +612,19 @@ async function captureOffscreenHighResMapToDataUrl(
       layoutFallback,
       { width: srcRect.width, height: srcRect.height }
     );
+    if (paintTextNotes) {
+      drawTextNotesForExport(
+        ctx,
+        offMap,
+        offCanvas,
+        textNotes && textNotes.length ? textNotes : printElements,
+        exportOverlayScale,
+        w,
+        h,
+        layoutFallback,
+        cropRectCss
+      );
+    }
     return out.toDataURL('image/png');
   } finally {
     restoreParcelOutline();
@@ -899,6 +939,325 @@ async function drawPointShapeLogosForExport(
       ctx.drawImage(img, x + pad, y + pad, glyphW, glyphH);
     }
     ctx.restore();
+  }
+}
+
+/** Matches the live note textarea in DraggableNote so PDF wrapping breaks at the same words. */
+const NOTE_FONT_STACK = 'Inter, system-ui, sans-serif';
+/** Canvas fillText in a production build often has no loaded Inter face and draws empty glyphs. */
+const NOTE_CANVAS_FONT_STACK = 'Arial, Helvetica, sans-serif';
+
+function canvasSafeColor(value, fallback = '#111827') {
+  const raw = String(value || '').trim();
+  if (!raw) return fallback;
+  if (/^#([0-9a-f]{3}|[0-9a-f]{4}|[0-9a-f]{6}|[0-9a-f]{8})$/i.test(raw)) return raw;
+  if (/^rgba?\(\s*\d{1,3}\s*,\s*\d{1,3}\s*,\s*\d{1,3}(?:\s*,\s*(?:0|1|0?\.\d+))?\s*\)$/i.test(raw)) {
+    return raw;
+  }
+  return fallback;
+}
+
+async function waitForExportFonts() {
+  try {
+    if (typeof document !== 'undefined' && document.fonts?.ready) {
+      await Promise.race([document.fonts.ready, waitMs(800)]);
+    }
+  } catch (_) {
+    /* canvas will fall back to Arial */
+  }
+}
+
+function hexToRgba(hex, alpha = 1) {
+  const raw = String(hex || '#ffffff').replace(/^#/, '');
+  const full = raw.length === 3 ? raw.split('').map((c) => c + c).join('') : raw;
+  const n = parseInt(full.slice(0, 6), 16);
+  if (!Number.isFinite(n)) return `rgba(255,255,255,${alpha})`;
+  const r = (n >> 16) & 255;
+  const g = (n >> 8) & 255;
+  const b = n & 255;
+  return `rgba(${r}, ${g}, ${b}, ${Math.max(0, Math.min(1, alpha))})`;
+}
+
+function roundRectPath(ctx, x, y, w, h, radius) {
+  const r = Math.max(0, Math.min(radius, w / 2, h / 2));
+  ctx.beginPath();
+  ctx.moveTo(x + r, y);
+  ctx.arcTo(x + w, y, x + w, y + h, r);
+  ctx.arcTo(x + w, y + h, x, y + h, r);
+  ctx.arcTo(x, y + h, x, y, r);
+  ctx.arcTo(x, y, x + w, y, r);
+  ctx.closePath();
+}
+
+function wrapCanvasParagraphs(ctx, text, maxWidth) {
+  const paragraphs = String(text ?? '').split('\n');
+  const lines = [];
+  paragraphs.forEach((para) => {
+    if (!para) {
+      lines.push('');
+      return;
+    }
+    const words = para.split(/\s+/).filter(Boolean);
+    let line = '';
+    words.forEach((word) => {
+      const test = line ? `${line} ${word}` : word;
+      if (!line || ctx.measureText(test).width <= maxWidth) {
+        line = test;
+      } else {
+        lines.push(line);
+        line = word;
+      }
+    });
+    if (line) lines.push(line);
+  });
+  return lines;
+}
+
+function isTextNoteElement(el) {
+  const t = String(el?.type || '').toLowerCase();
+  return t === 'note' || t === 'text';
+}
+
+function getNoteLngLat(el, map, { allowScreenFallback = true } = {}) {
+  const c = el?.geometry?.coordinates;
+  if (Array.isArray(c) && c.length >= 2) {
+    const lng = Number(c[0]);
+    const lat = Number(c[1]);
+    if (Number.isFinite(lng) && Number.isFinite(lat)) return { lng, lat };
+  }
+  if (c && typeof c === 'object' && !Array.isArray(c)) {
+    const lng = Number(c.lng ?? c.lon ?? c.longitude);
+    const lat = Number(c.lat ?? c.latitude);
+    if (Number.isFinite(lng) && Number.isFinite(lat)) return { lng, lat };
+  }
+  if (
+    allowScreenFallback &&
+    map &&
+    Number.isFinite(Number(el?.x)) &&
+    Number.isFinite(Number(el?.y))
+  ) {
+    const s = getPrintPixelScale(map);
+    const w = (Number(el.width) || 220) * s;
+    const h = (Number(el.height) || 120) * s;
+    try {
+      const ll = map.unproject([Number(el.x) + w / 2, Number(el.y) + h / 2]);
+      if (ll && Number.isFinite(ll.lng) && Number.isFinite(ll.lat)) {
+        return { lng: ll.lng, lat: ll.lat };
+      }
+    } catch (_) {
+      // ignore
+    }
+  }
+  return null;
+}
+
+function paintNoteBox(ctx, el, x, y, boxW, boxH, fontPx, pad) {
+  const radius = Math.max(3, Math.min(boxW, boxH) * 0.06);
+  const fillAlpha = Number.isFinite(Number(el.fillOpacity)) ? Number(el.fillOpacity) : 1;
+  const strokeAlpha = Number.isFinite(Number(el.strokeOpacity)) ? Number(el.strokeOpacity) : 0.2;
+  const strokeW = Math.max(1, Number(el.strokeWidth) || 1);
+  const lineHeight = fontPx * 1.4;
+
+  ctx.save();
+  roundRectPath(ctx, x, y, boxW, boxH, radius);
+  const fillRaw = String(el.fill || '#ffffff');
+  const fillLooksTransparent =
+    /transparent/i.test(fillRaw) || /rgba\(\s*\d+\s*,\s*\d+\s*,\s*\d+\s*,\s*0(?:\.0+)?\s*\)/i.test(fillRaw);
+  ctx.fillStyle = fillLooksTransparent
+    ? '#ffffff'
+    : /rgba?\(/i.test(fillRaw)
+      ? fillRaw
+      : hexToRgba(fillRaw, fillAlpha > 0 ? fillAlpha : 1);
+  ctx.fill();
+  if (strokeW > 0) {
+    const strokeRaw = String(el.stroke || '#111827');
+    ctx.strokeStyle = /rgba?\(/i.test(strokeRaw) ? strokeRaw : hexToRgba(strokeRaw, strokeAlpha);
+    ctx.lineWidth = Math.max(1, strokeW);
+    ctx.stroke();
+  }
+
+  ctx.beginPath();
+  ctx.rect(x + pad, y + pad, Math.max(1, boxW - pad * 2), Math.max(1, boxH - pad * 2));
+  ctx.clip();
+
+  ctx.font = `${Math.round(fontPx)}px ${NOTE_CANVAS_FONT_STACK}`;
+  ctx.fillStyle = canvasSafeColor(el.fontColor, '#111827');
+  ctx.textBaseline = 'top';
+  const align = el.textAlign || 'left';
+  ctx.textAlign = align === 'center' || align === 'right' ? align : 'left';
+
+  const textMaxW = Math.max(8, boxW - pad * 2);
+  const body = el.text != null && String(el.text).length ? el.text : el.label || '';
+  const lines = wrapCanvasParagraphs(ctx, body, textMaxW);
+  const textH = Math.max(lineHeight, lines.length * lineHeight);
+  const vAlign = el.textVerticalAlign || 'top';
+  let textY = y + pad;
+  if (vAlign === 'center') textY = y + (boxH - textH) / 2;
+  else if (vAlign === 'bottom') textY = y + boxH - pad - textH;
+
+  const textX =
+    align === 'center' ? x + boxW / 2 : align === 'right' ? x + boxW - pad : x + pad;
+
+  lines.forEach((line, i) => {
+    ctx.fillText(line, textX, textY + i * lineHeight);
+  });
+  ctx.restore();
+}
+
+/** Snapshot Text notes from the live overlay so PDF capture does not depend on html2canvas/textarea. */
+function collectTextNotesForExport(map, printElements = []) {
+  const fromEls = (printElements || []).filter((el) => el && !el.hiddenOnMap && isTextNoteElement(el));
+  const fromDom = [];
+  if (typeof document !== 'undefined' && map && typeof map.getCanvas === 'function') {
+    const overlay = document.getElementById('notes-overlay');
+    const canvas = map.getCanvas();
+    const canvasRect = canvas?.getBoundingClientRect?.();
+    if (overlay && canvasRect && canvasRect.width >= 4 && canvasRect.height >= 4) {
+      const seen = new Set();
+      overlay.querySelectorAll('.print-note-wrapper, [data-print-note]').forEach((node) => {
+        const host = node.closest('.print-shape-rnd') || node;
+        if (seen.has(host)) return;
+        seen.add(host);
+        const box = host.getBoundingClientRect();
+        if (box.width < 2 || box.height < 2) return;
+        const cx = box.left + box.width / 2 - canvasRect.left;
+        const cy = box.top + box.height / 2 - canvasRect.top;
+        let ll;
+        try {
+          ll = map.unproject([cx, cy]);
+        } catch (_) {
+          return;
+        }
+        if (!ll || !Number.isFinite(ll.lng) || !Number.isFinite(ll.lat)) return;
+        const ta = node.tagName === 'TEXTAREA' ? node : node.querySelector?.('textarea');
+        const wrapCs = window.getComputedStyle(host);
+        const taCs = ta ? window.getComputedStyle(ta) : wrapCs;
+        fromDom.push({
+          id: node.getAttribute?.('data-print-note') || null,
+          lng: ll.lng,
+          lat: ll.lat,
+          text: ta ? String(ta.value ?? '') : String(node.textContent || ''),
+          screenCssWidth: box.width,
+          screenCssHeight: box.height,
+          fill:
+            wrapCs.backgroundColor && !/rgba\(\s*\d+\s*,\s*\d+\s*,\s*\d+\s*,\s*0/.test(wrapCs.backgroundColor)
+              ? wrapCs.backgroundColor
+              : '#ffffff',
+          fontColor: canvasSafeColor(taCs.color, '#111827'),
+          fontSize: parseFloat(taCs.fontSize) || 14,
+          fontFamily: NOTE_FONT_STACK,
+          textAlign: taCs.textAlign || 'left',
+        });
+      });
+    }
+  }
+  if (!fromEls.length) {
+    return fromDom.map((d) => ({
+      id: d.id,
+      type: 'note',
+      geometry: { type: 'Point', coordinates: [d.lng, d.lat] },
+      text: d.text,
+      width: d.screenCssWidth,
+      height: d.screenCssHeight,
+      screenCssWidth: d.screenCssWidth,
+      screenCssHeight: d.screenCssHeight,
+      fill: d.fill,
+      fillOpacity: 1,
+      stroke: '#111827',
+      strokeWidth: 1,
+      strokeOpacity: 0.2,
+      fontColor: canvasSafeColor(d.fontColor, '#111827'),
+      fontSize: d.fontSize,
+      fontFamily: d.fontFamily || NOTE_FONT_STACK,
+      textAlign: d.textAlign,
+      textVerticalAlign: 'top',
+    }));
+  }
+  const domById = new Map();
+  fromDom.forEach((d) => {
+    if (d.id != null && d.id !== '') domById.set(String(d.id), d);
+  });
+  return fromEls.map((el) => {
+    const match = el?.id != null ? domById.get(String(el.id)) || null : null;
+    return {
+      ...el,
+      text: match?.text || el.text || el.label || '',
+      screenCssWidth: match?.screenCssWidth,
+      screenCssHeight: match?.screenCssHeight,
+      fill: match?.fill || el.fill || '#ffffff',
+      fontColor: canvasSafeColor(el.fontColor, canvasSafeColor(match?.fontColor, '#111827')),
+      fontFamily: match?.fontFamily || el.fontFamily || NOTE_FONT_STACK,
+    };
+  });
+}
+
+/**
+ * Paint Text (note) map elements onto a captured map bitmap (PNG / offscreen).
+ * Positions use map.project() like icons. Size prefers the live overlay box so
+ * offscreen fitBounds still matches what the editor showed.
+ */
+function drawTextNotesForExport(
+  ctx,
+  map,
+  mapCanvas,
+  printElements,
+  overlayScale = 1,
+  destWidth = null,
+  destHeight = null,
+  layoutFallback = null,
+  cropRectCss = null
+) {
+  if (!ctx || !mapCanvas || !map || !Array.isArray(printElements) || !printElements.length) return;
+  const px = getExportMapPixelScale(
+    mapCanvas,
+    destWidth ?? ctx.canvas?.width,
+    destHeight ?? ctx.canvas?.height,
+    layoutFallback
+  );
+  if (!px) return;
+  const { sx, sy } = px;
+  const destW = destWidth ?? ctx.canvas?.width ?? mapCanvas.width;
+  const destH = destHeight ?? ctx.canvas?.height ?? mapCanvas.height;
+  const cropW =
+    cropRectCss && Number(cropRectCss.width) > 4 ? Number(cropRectCss.width) : destW / Math.max(0.0001, sx);
+  const cropH =
+    cropRectCss && Number(cropRectCss.height) > 4 ? Number(cropRectCss.height) : destH / Math.max(0.0001, sy);
+
+  for (const el of printElements) {
+    if (!el || el.hiddenOnMap || !isTextNoteElement(el)) continue;
+    const ll = getNoteLngLat(el, map, { allowScreenFallback: !layoutFallback });
+    if (!ll) continue;
+    let projected;
+    try {
+      projected = map.project([ll.lng, ll.lat]);
+    } catch (_) {
+      continue;
+    }
+    const cx = projected?.x;
+    const cy = projected?.y;
+    if (!Number.isFinite(cx) || !Number.isFinite(cy)) continue;
+
+    const liveW = Number(el.screenCssWidth);
+    const liveH = Number(el.screenCssHeight);
+    // Offscreen dest is the crop; live dest is the full map canvas. Only use
+    // crop/dest when this bitmap is already fitted to the print frame.
+    const fittedToCrop = Boolean(layoutFallback);
+    const boxW =
+      Number.isFinite(liveW) && liveW > 2
+        ? Math.max(24, fittedToCrop ? (liveW / cropW) * destW : liveW * sx)
+        : Math.max(48, (Number(el.width) || 220) * sx);
+    const boxH =
+      Number.isFinite(liveH) && liveH > 2
+        ? Math.max(18, fittedToCrop ? (liveH / cropH) * destH : liveH * sy)
+        : Math.max(32, (Number(el.height) || 120) * sy);
+    const x = cx * sx - boxW / 2;
+    const y = cy * sy - boxH / 2;
+    const fontPx = Math.max(
+      10,
+      (Number(el.fontSize) || 14) * (boxW / Math.max(24, Number.isFinite(liveW) ? liveW : Number(el.width) || 220))
+    );
+    const pad = Math.max(4, 8 * (boxW / Math.max(24, Number.isFinite(liveW) ? liveW : 220)));
+    paintNoteBox(ctx, el, x, y, boxW, boxH, fontPx, pad);
   }
 }
 
@@ -1258,21 +1617,6 @@ function mercatorMetersPerPixel(lat, zoom) {
   return (156543.03392 * Math.cos(latRad)) / Math.pow(2, zoom);
 }
 
-function roundRectPath(ctx, x, y, w, h, r) {
-  const radius = Math.max(0, Math.min(r, w / 2, h / 2));
-  ctx.beginPath();
-  ctx.moveTo(x + radius, y);
-  ctx.lineTo(x + w - radius, y);
-  ctx.quadraticCurveTo(x + w, y, x + w, y + radius);
-  ctx.lineTo(x + w, y + h - radius);
-  ctx.quadraticCurveTo(x + w, y + h, x + w - radius, y + h);
-  ctx.lineTo(x + radius, y + h);
-  ctx.quadraticCurveTo(x, y + h, x, y + h - radius);
-  ctx.lineTo(x, y + radius);
-  ctx.quadraticCurveTo(x, y, x + radius, y);
-  ctx.closePath();
-}
-
 /** Load a public/static image for PDF compositing (e.g. /logo.png). */
 function loadPublicAssetImage(src) {
   return new Promise((resolve) => {
@@ -1466,6 +1810,7 @@ export async function saveMapPdfWithFooter({
     loadPublicAssetImage(`${process.env.PUBLIC_URL || ''}/logo.png`),
   ]);
 
+  const textNotes = collectTextNotesForExport(map, printElements);
   const mapDataUrl = await captureMapStackToPngDataUrl(map, {
       cropRectCss,
       printElements,
@@ -1475,6 +1820,8 @@ export async function saveMapPdfWithFooter({
       includeNotesOverlay: false,
       overlayScale,
       basemapId: resolvedBasemapId,
+      paintTextNotes: true,
+      textNotes,
     });
   const mapImg = await new Promise((resolve, reject) => {
     const img = new Image();

@@ -1947,27 +1947,42 @@ const {
   readAmenityGridCache,
   writeAmenityGridCache,
 } = require("./amenityGridCache");
-const { fetchTourNearbyPlacesNew, fetchTourGroceryPlacesNew } = require("./placesApiNew");
+const {
+  fetchTourNearbyPlacesNew,
+  fetchTourGroceryPlacesNew,
+  autocompletePlacesNew,
+  fetchPlaceDetailsNew,
+  searchTextNew,
+} = require("./placesApiNew");
 
 /** Keep in sync with `src/utils/propertyTourSlides.js` / `tourNearbyRanking.js`. */
 const NEARBY_FETCH_RADIUS_METERS = 25000;
-const NEARBY_TOUR_DATA_VERSION = 29;
+const NEARBY_TOUR_DATA_VERSION = 35;
 
 /** Tour vicinity: Places API (New) `includedTypes` per amenity key. */
 const NEARBY_TYPES_BY_AMENITY = {
   parks_rec: ["park"],
-  grocery: ["supermarket", "grocery_store", "food_store"],
-  schools: ["primary_school", "secondary_school", "school"],
+  grocery: ["supermarket", "grocery_store"],
+  schools: ["primary_school", "secondary_school"],
   fitness: ["gym"],
-  trailheads: ["hiking_area", "gym"],
+  trailheads: ["hiking_area"],
   essentials: ["pharmacy", "drugstore", "hardware_store", "bank"],
   coffee: ["cafe", "coffee_shop", "bakery"],
   dining: ["restaurant", "pizza_restaurant", "seafood_restaurant", "meal_takeaway"],
   fire_station: ["fire_station"],
   police_station: ["police"],
   library: ["library"],
-  transit: ["subway_station", "train_station", "bus_station", "transit_station"],
   airport: ["airport"],
+};
+
+/** Table A types to drop on the Nearby request (same call, not a second query). */
+const NEARBY_EXCLUDED_TYPES_BY_AMENITY = {
+  schools: ["university", "preschool"],
+};
+
+/** Schools: primary type only so unclaimed K–12 (`school`) is included without tutor/studio side-types. */
+const NEARBY_PRIMARY_TYPES_BY_AMENITY = {
+  schools: ["primary_school", "secondary_school", "school"],
 };
 
 /** Exclude Google Places rows that are heliports / helipads even when returned under airport search. */
@@ -2095,7 +2110,12 @@ exports.getNearbyGooglePlaces = functions.https.onCall(async (data) => {
       amenityKey,
       fetchRadiusMeters
     );
-    if (cached && Array.isArray(cached.features) && cached.features.length > 0) {
+    if (
+      cached &&
+      Array.isArray(cached.features) &&
+      cached.features.length > 0 &&
+      Number(cached.nearbyDataVersion) === NEARBY_TOUR_DATA_VERSION
+    ) {
       console.log("getNearbyGooglePlaces grid cache hit", { amenityKey, fetchRadiusMeters });
       return { ...cached, fromAmenityGridCache: true };
     }
@@ -2140,9 +2160,19 @@ exports.getNearbyGooglePlaces = functions.https.onCall(async (data) => {
         basicFields,
       });
     } else {
-      all = await fetchTourNearbyPlacesNew(lat, lng, fetchRadiusMeters, key, types, {
-        basicFields,
-      });
+      const primaryTypes = NEARBY_PRIMARY_TYPES_BY_AMENITY[amenityKey];
+      all = await fetchTourNearbyPlacesNew(
+        lat,
+        lng,
+        fetchRadiusMeters,
+        key,
+        primaryTypes ? [] : types,
+        {
+          basicFields,
+          excludedTypes: NEARBY_EXCLUDED_TYPES_BY_AMENITY[amenityKey],
+          includedPrimaryTypes: primaryTypes,
+        }
+      );
     }
   } catch (placesErr) {
     console.error("getNearbyGooglePlaces Places API (New) error:", placesErr);
@@ -2239,6 +2269,58 @@ exports.getNearbyGooglePlaces = functions.https.onCall(async (data) => {
   }
 
   return response;
+});
+
+/**
+ * Named add: Autocomplete suggestions or Text Search, biased to the listing.
+ * Used when Nearby Search missed a place the agent knows by name.
+ */
+exports.lookupNamedGooglePlace = functions.https.onCall(async (data) => {
+  const mode = data && data.mode != null ? String(data.mode).trim() : "";
+  const key =
+    (functions.config().google && functions.config().google.places_key) ||
+    process.env.GOOGLE_PLACES_KEY ||
+    "";
+  if (!key) {
+    throw new functions.https.HttpsError(
+      "failed-precondition",
+      "Google Places API key is not configured."
+    );
+  }
+
+  const lat = Number(data && data.lat);
+  const lng = Number(data && data.lng);
+  const radiusMeters = Number(data && data.radiusMeters);
+  const query = data && data.query != null ? String(data.query).trim() : "";
+  const sessionToken =
+    data && data.sessionToken != null ? String(data.sessionToken).trim() : "";
+  const placeId = data && data.placeId != null ? String(data.placeId).trim() : "";
+
+  if (mode === "details") {
+    if (!placeId) {
+      throw new functions.https.HttpsError("invalid-argument", "placeId is required.");
+    }
+    return fetchPlaceDetailsNew(placeId, key, { sessionToken });
+  }
+
+  if (!Number.isFinite(lat) || !Number.isFinite(lng) || !query) {
+    throw new functions.https.HttpsError(
+      "invalid-argument",
+      "lat, lng, and query are required."
+    );
+  }
+
+  if (mode === "autocomplete") {
+    return autocompletePlacesNew(lat, lng, radiusMeters, key, query, { sessionToken });
+  }
+  if (mode === "text") {
+    return searchTextNew(lat, lng, radiusMeters, key, query);
+  }
+
+  throw new functions.https.HttpsError(
+    "invalid-argument",
+    "mode must be autocomplete, text, or details."
+  );
 });
 
 const { regridApi } = require("./regridHandlers");

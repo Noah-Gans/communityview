@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import { signInWithEmailAndPassword, sendPasswordResetEmail, onAuthStateChanged } from "firebase/auth";
 import { auth, db } from "../../firebase/firebaseConfig";
 import { doc, getDoc } from "firebase/firestore";
@@ -7,6 +7,8 @@ import { Link, useNavigate, useLocation } from "react-router-dom";
 import { isNativeApp } from "../../utils/platformDetection";
 import { hasActiveSubscription } from "../../utils/subscriptionAccess";
 import { navigateToMarketingHome } from "../../utils/marketingNavigation";
+import { useUser } from "../../contexts/UserContext";
+import MapLoadingOverlay from "../loading/MapLoadingOverlay";
 
 async function getPostLoginPath(uid) {
   const userDoc = await getDoc(doc(db, "users", uid));
@@ -26,10 +28,19 @@ function safeReturnToPath(raw) {
 const Login = () => {
   const navigate = useNavigate();
   const location = useLocation();
+  const { user, subscriptionStatus, loading: authLoading, sessionTrusted } = useUser();
   const [email, setEmail] = useState(location.state?.email || "");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
   const [isLoading, setIsLoading] = useState(false);
+
+  useEffect(() => {
+    if (authLoading) return;
+    if (!user || !hasActiveSubscription(subscriptionStatus)) return;
+    const params = new URLSearchParams(location.search);
+    const returnTo = safeReturnToPath(params.get("returnTo"));
+    navigate(returnTo || "/map", { replace: true });
+  }, [authLoading, user, subscriptionStatus, location.search, navigate]);
   
   const [showReset, setShowReset] = useState(false);
   const [resetEmail, setResetEmail] = useState("");
@@ -171,6 +182,10 @@ const Login = () => {
   };
 
   const isNative = isNativeApp();
+
+  if (authLoading || sessionTrusted || (user && subscriptionStatus == null)) {
+    return <MapLoadingOverlay phraseSet="site" className="map-loading-overlay--app-boot" />;
+  }
 
   return (
     <div className="login-page">

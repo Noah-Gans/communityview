@@ -3,15 +3,17 @@
  * Then Gemini curates a rational 12–18 for the map (heuristic fallback).
  */
 import { mapService } from '../../services/mapService';
-import { normalizeTourNearbyCacheFromFirestore } from '../tourNearbyFirestore';
+import {
+  normalizeTourNearbyCacheFromFirestore,
+  TOUR_NEARBY_AMENITY_KEYS,
+} from '../tourNearbyFirestore';
 import { TOUR_NEARBY_DATA_VERSION } from '../tourNearbyRanking';
 import { TOUR_NEARBY_SEARCH_RADIUS_METERS } from '../propertyTourSlides';
 import {
-  byAmenityVisibleForListing,
+  byAmenityVisibleForAmenityMap,
   getAmenitySearchRadiusMeters,
   mapHasTourNearbyData,
   normalizeTourSettings,
-  tourNearbyCacheLooksCurated,
 } from '../tourSettings';
 import { curateNeighborhoodAmenitiesWithAi } from '../../services/neighborhoodAmenityCurateService';
 import {
@@ -117,29 +119,19 @@ export async function fetchNeighborhoodAmenities(center, options = {}) {
   const cell = amenityGridCellKey(lat, lng);
 
   // Listing source of truth: amenity map / tour / neighborhood share one Firestore cache.
+  // The PDF always follows amenity-map visibility (not tour hide / removed slides).
   if (!options.forceRefresh && mapHasTourNearbyData(options.existingTourNearbyCache)) {
     const root = normalizeTourNearbyCacheFromFirestore(options.existingTourNearbyCache);
-    const visible = byAmenityVisibleForListing(root.byAmenity);
+    const visible = byAmenityVisibleForAmenityMap(root.byAmenity);
     const report = typeof options.onStatus === 'function' ? options.onStatus : () => {};
-    let selected;
-    let curationSource;
-    let curationNotes = '';
-    if (tourNearbyCacheLooksCurated(root)) {
-      report('Using amenities curated on this listing…');
-      selected = selectedAmenitiesFromVisibleByAmenity(visible);
-      curationSource = 'listing_curated';
-    } else {
-      const curated = await curateSelected(visible, options);
-      selected = curated.selected;
-      curationSource = curated.curationSource;
-      curationNotes = curated.curationNotes;
-    }
+    report('Using amenity map places…');
+    const selected = selectedAmenitiesFromVisibleByAmenity(visible);
     return {
       searchCenter: root.searchCenter || { lat, lng },
       byAmenity: root.byAmenity,
       selected,
-      curationSource,
-      curationNotes,
+      curationSource: 'amenity_map',
+      curationNotes: '',
       fetchErrors: [],
       searchRadiusMeters: root.searchRadiusMeters,
       dataVersion: root.dataVersion || TOUR_NEARBY_DATA_VERSION,
@@ -179,20 +171,7 @@ export async function fetchNeighborhoodAmenities(center, options = {}) {
 
   const tourSettings = normalizeTourSettings({
     searchRadiusMeters: Number(options.radiusMeters) || TOUR_NEARBY_SEARCH_RADIUS_METERS,
-    enabledAmenityKeys: amenityKeys.filter((k) =>
-      [
-        'parks_rec',
-        'grocery',
-        'schools',
-        'fitness',
-        'trailheads',
-        'essentials',
-        'coffee',
-        'transit',
-        'airport',
-        'dining',
-      ].includes(k)
-    ),
+    enabledAmenityKeys: amenityKeys.filter((k) => TOUR_NEARBY_AMENITY_KEYS.includes(k)),
   });
 
   const report = typeof options.onStatus === 'function' ? options.onStatus : () => {};

@@ -16,15 +16,19 @@ const MAX_DISTANCE_METERS_BY_AMENITY = {
   coffee: 16000,
   parks_rec: 12000,
   essentials: 16000,
-  transit: 16000,
   airport: 40000,
 };
 
 const DEFAULT_MAX_DISTANCE_METERS = 12000;
 
-const DISTANCE_FIRST_AMENITIES = new Set(["transit"]);
-
 const ALLOW_UNRATED_AMENITIES = new Set(["parks_rec", "trailheads", "grocery"]);
+
+/**
+ * Keep in sync with PROMINENCE_ANCHOR_AMENITIES in src/utils/tourNearbyRanking.js.
+ * Chain anchors sit at 3.6-3.9 stars and would otherwise tier below any 4.0-star
+ * corner shop and fall out of the result cap.
+ */
+const PROMINENCE_ANCHOR_AMENITIES = new Set(["grocery", "essentials", "fitness"]);
 
 function distanceSortDivisor(amenityKey) {
   if (amenityKey === "fitness") return 12;
@@ -61,10 +65,15 @@ function hasGoogleRating(properties) {
   return Number.isFinite(Number(properties?.rating));
 }
 
-function nearbyQualityTier(properties) {
+function nearbyQualityTier(properties, amenityKey) {
   const rating = Number(properties?.rating);
   const reviews = Number(properties?.user_ratings_total) || 0;
   if (!Number.isFinite(rating)) return "unrated";
+
+  if (PROMINENCE_ANCHOR_AMENITIES.has(amenityKey)) {
+    if (reviews >= 150 && rating >= 3.5) return "strong";
+    if (reviews >= 500 && rating >= 3.2) return "strong";
+  }
 
   if (reviews >= 20 && rating >= 4.0) return "strong";
   if (reviews >= 12 && rating >= 4.2) return "strong";
@@ -130,7 +139,7 @@ function selectByAdaptiveQuality(features, amenityKey) {
 
   const buckets = { strong: [], solid: [], thin: [], weak: [], unrated: [] };
   for (const f of features) {
-    const tier = nearbyQualityTier(f?.properties);
+    const tier = nearbyQualityTier(f?.properties, amenityKey);
     buckets[tier].push(f);
   }
 
@@ -182,7 +191,6 @@ function curateNearbyTourFeatures(features, options = {}) {
   );
   const maxMiles =
     resolveMaxDistanceMetersForCuration(amenityKey, options.searchRadiusMeters) / METERS_PER_MILE;
-  const distanceFirst = DISTANCE_FIRST_AMENITIES.has(amenityKey);
 
   const passesRowFilters = (f, lenient) => {
     if (!f || f.geometry?.type !== "Point") return false;
@@ -203,29 +211,6 @@ function curateNearbyTourFeatures(features, options = {}) {
     (features || []).length
   ) {
     filtered = (features || []).filter((f) => passesRowFilters(f, true));
-  }
-
-  if (distanceFirst) {
-    const rated = filtered.filter((f) => hasGoogleRating(f?.properties));
-    const unrated = filtered.filter((f) => !hasGoogleRating(f?.properties));
-    rated.sort(compareByDistanceThenRating);
-    unrated.sort(compareByDistanceThenRating);
-
-    const goodRated = [];
-    const thinRated = [];
-    for (const f of rated) {
-      const tier = nearbyQualityTier(f?.properties);
-      if (tier === "strong" || tier === "solid") goodRated.push(f);
-      else thinRated.push(f);
-    }
-
-    let selected = goodRated.length > 0 ? goodRated : thinRated;
-    if (ALLOW_UNRATED_AMENITIES.has(amenityKey)) {
-      selected = [...selected, ...unrated];
-    } else if (selected.length === 0) {
-      selected = unrated;
-    }
-    return assignStablePlaceIds(selected.slice(0, maxCap), amenityKey);
   }
 
   const rated = filtered.filter((f) => hasGoogleRating(f?.properties));

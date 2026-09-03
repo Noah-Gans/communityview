@@ -2,22 +2,31 @@ import React from 'react';
 import { useUser } from '../../contexts/UserContext';
 import { Navigate, useLocation } from 'react-router-dom';
 import MapLoadingOverlay from '../loading/MapLoadingOverlay';
+import { hasActiveSubscription } from '../../utils/subscriptionAccess';
 
 function ProtectedRoute({ children }) {
-  const { user, subscriptionStatus, loading } = useUser();
+  const { user, subscriptionStatus, loading, sessionTrusted } = useUser();
   const location = useLocation();
-
-  console.log('🔒 ProtectedRoute check:', { user: !!user, subscriptionStatus, loading });
 
   if (loading) {
     return <MapLoadingOverlay phraseSet="site" className="map-loading-overlay--app-boot" />;
   }
 
-  // If no user or not active subscription, redirect
-  const hasActiveSubscription = subscriptionStatus === 'active' || subscriptionStatus === 'plus' || subscriptionStatus === 'regular';
-  console.log('🔒 hasActiveSubscription:', hasActiveSubscription);
-  
-  if (!user || !hasActiveSubscription) {
+  // Paid session already proven in this tab — don't bounce to /login when
+  // opening amenity/tour tabs briefly drops Auth or the profile snapshot.
+  if (sessionTrusted) {
+    return children;
+  }
+
+  // User is signed in but the profile snapshot has not arrived yet — don't
+  // bounce to /login (opening an amenity/tour tab can also clear this briefly).
+  if (user && subscriptionStatus == null) {
+    return <MapLoadingOverlay phraseSet="site" className="map-loading-overlay--app-boot" />;
+  }
+
+  const subscriptionOk = hasActiveSubscription(subscriptionStatus);
+
+  if (!user || !subscriptionOk) {
     const returnTo = `${location.pathname}${location.search}`;
     const loginPath =
       returnTo && returnTo !== '/'
@@ -27,7 +36,6 @@ function ProtectedRoute({ children }) {
     return <Navigate to={loginPath} replace />;
   }
 
-  // Otherwise, render the protected page
   console.log('🔒 Access granted!');
   return children;
 }

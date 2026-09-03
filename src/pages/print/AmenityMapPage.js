@@ -5,7 +5,22 @@ import { useMapContext } from '../MapContext';
 import { useUser } from '../../contexts/UserContext';
 import MapLoadingOverlay from '../../components/loading/MapLoadingOverlay';
 import { mapService } from '../../services/mapService';
-import { buildTourNearbyCacheForSave } from '../../utils/tourNearbyFirestore';
+import {
+  autoGenerateAmenityMap,
+  isShareCreateInFlight,
+  runShareCreateOnce,
+} from '../../utils/amenityMapAutoGenerate';
+import { GUEST_EDIT_TOGGLE_ENABLED } from '../../config/featureFlags';
+import {
+  buildTourNearbyCacheForSave,
+  normalizeTourNearbyCacheFromFirestore,
+} from '../../utils/tourNearbyFirestore';
+import {
+  amenityKeysWithSavedFeatures,
+  materializeTourSettingsSlidePlan,
+  mergePlaceVisibilityFromPrior,
+  resolveTourSettingsFromMap,
+} from '../../utils/tourSettings';
 import {
   buildAmenityMapSettingsForSave,
   canEditAmenityMap,
@@ -17,9 +32,12 @@ import {
 } from '../map/mapConstants';
 import {
   getTourNearbySearchCenter,
+  TOUR_NEARBY_SEARCH_RADIUS_METERS,
   TOUR_ORBIT_PRINT_FILTER_ATTR,
   TOUR_ORBIT_PRINT_FILTER_VALUE,
 } from '../../utils/propertyTourSlides';
+import AmenityNamedPlaceAdd from './AmenityNamedPlaceAdd';
+import { nearbyQualityTier } from '../../utils/tourNearbyRanking';
 import { runNeighborhoodMapFromAmenityEditor } from '../../utils/neighborhoodMap/runNeighborhoodMapFromAmenityEditor';
 import {
   AMENITY_MAP_CATEGORIES,
@@ -35,11 +53,13 @@ import {
   showTourEditRadiusCircle,
   ensureTourEditRadiusLayersOnTop,
 } from '../../utils/tourBuilderMapLayers';
+import { googlePlaceResultToFeature } from '../../utils/tourNearbyGoogleClient';
 import {
   AMENITY_HOME_LOGO_URL,
   amenityBadgeImageId,
   amenityBadgeUrl,
   amenityHasBadge,
+  ensureAmenityMapLayersOnTop,
   loadAmenityMapIcons,
 } from '../../utils/amenityMapIcons';
 import {
@@ -59,6 +79,22 @@ const POINT_LAYER_ID = 'cv-amenity-map-points';
 const BADGE_LAYER_ID = 'cv-amenity-map-badges';
 const LABEL_LAYER_ID = 'cv-amenity-map-labels';
 const HOME_MARKER_SIZE_PX = 34;
+
+function stripSearchParam(name) {
+  try {
+    const params = new URLSearchParams(window.location.search);
+    if (!params.has(name)) return;
+    params.delete(name);
+    const qs = params.toString();
+    window.history.replaceState(
+      window.history.state,
+      '',
+      qs ? `${window.location.pathname}?${qs}` : window.location.pathname
+    );
+  } catch (_) {
+    /* ignore */
+  }
+}
 
 function demoFeature(amenityKey, name, lng, lat, address, distanceText) {
   const placeId = `demo-${amenityKey}-${name.toLowerCase().replace(/[^a-z0-9]+/g, '-')}`;
@@ -90,12 +126,13 @@ function buildDemoMapData() {
     ['dining', 'The Tailor’s Son', -122.4336, 37.7892, '2049 Fillmore St, San Francisco', '0.8 mi'],
     ['grocery', 'Mollie Stone’s Markets', -122.4403, 37.7897, '2435 California St, San Francisco', '0.5 mi'],
     ['grocery', 'Trader Joe’s', -122.4316, 37.7907, '3 Masonic Ave, San Francisco', '1.0 mi'],
-    ['fire_station', 'San Francisco Fire Station 10', -122.4453, 37.7846, '655 Presidio Ave, San Francisco', '0.8 mi'],
-    ['fire_station', 'San Francisco Fire Station 16', -122.431, 37.7995, '2251 Greenwich St, San Francisco', '1.0 mi'],
-    ['police_station', 'Northern Police Station', -122.4274, 37.7802, '1125 Fillmore St, San Francisco', '1.4 mi'],
-    ['police_station', 'Richmond Police Station', -122.4664, 37.7801, '461 6th Ave, San Francisco', '1.8 mi'],
-    ['library', 'Presidio Branch Library', -122.4443, 37.7881, '3150 Sacramento St, San Francisco', '0.5 mi'],
-    ['library', 'Marina Branch Library', -122.4351, 37.8002, '1890 Chestnut St, San Francisco', '0.8 mi'],
+    ['fitness', 'Equinox Sports Club', -122.4318, 37.7872, '747 Market St, San Francisco', '1.2 mi'],
+    ['fitness', 'Barry’s Fillmore', -122.4332, 37.7864, '2298 Fillmore St, San Francisco', '0.9 mi'],
+    ['trailheads', 'Presidio Bay Area Ridge Trail', -122.4565, 37.7982, 'Presidio of San Francisco', '1.2 mi'],
+    ['trailheads', 'Lands End Trail', -122.5097, 37.7878, 'Lands End Lookout, San Francisco', '3.1 mi'],
+    ['essentials', 'Walgreens', -122.4346, 37.7869, '2145 California St, San Francisco', '0.6 mi'],
+    ['essentials', 'Wells Fargo', -122.4341, 37.7888, '2055 Fillmore St, San Francisco', '0.7 mi'],
+    ['airport', 'San Francisco International Airport', -122.379, 37.6213, 'San Francisco, CA 94128', '11.4 mi'],
   ];
   const byAmenity = {};
   rows.forEach((row) => {
@@ -221,21 +258,31 @@ function amenityRating(properties) {
   };
 }
 
-function AmenityRating({ properties }) {
+function AmenityRating({ properties, amenityKey }) {
   const value = amenityRating(properties);
-  if (!value) return null;
+  const key = amenityKey || properties?.amenityKey;
+  const tier = key ? nearbyQualityTier(properties, key) : null;
+  if (!value && !tier) return null;
   return (
-    <span className="amenity-map-rating" aria-label={`${value.rating.toFixed(1)} out of 5 stars`}>
-      <span aria-hidden>★</span>
-      <strong>{value.rating.toFixed(1)}</strong>
-      {value.count != null ? <small>({value.count.toLocaleString()})</small> : null}
+    <span className="amenity-map-rating-row">
+      {value ? (
+        <span className="amenity-map-rating" aria-label={`${value.rating.toFixed(1)} out of 5 stars`}>
+          <span aria-hidden>★</span>
+          <strong>{value.rating.toFixed(1)}</strong>
+          {value.count != null ? <small>({value.count.toLocaleString()})</small> : null}
+        </span>
+      ) : null}
+      {tier ? (
+        <span className={`amenity-map-quality-tier is-${tier}`} title="Ranking bucket used to pick tour/PDF amenities">
+          {tier}
+        </span>
+      ) : null}
     </span>
   );
 }
 
 function visibleFeature(feature) {
-  const p = feature?.properties || {};
-  return p.amenityMapHidden !== true && p.tourHidden !== true;
+  return feature?.properties?.amenityMapHidden !== true;
 }
 
 function setFeatureVisible(feature, visible) {
@@ -244,7 +291,6 @@ function setFeatureVisible(feature, visible) {
     properties: {
       ...(feature?.properties || {}),
       amenityMapHidden: !visible,
-      tourHidden: !visible,
     },
   };
 }
@@ -259,6 +305,28 @@ function getSearchCenter(data, map) {
     return { lat: mapCenter.lat, lng: mapCenter.lng };
   }
   return null;
+}
+
+function persistableAmenityEntries(entries) {
+  const selected = {};
+  for (const { key } of AMENITY_MAP_CATEGORIES) {
+    const entry = entries?.[key];
+    if (!entry) continue;
+    const hasFeatures = Array.isArray(entry.features) && entry.features.length > 0;
+    if (!hasFeatures) continue;
+    selected[key] = { ...entry, fetched: true };
+  }
+  return selected;
+}
+
+function rootRadiusForAmenitySave(mapData, selectedEntries) {
+  const existing = Number(mapData?.tourNearbyCache?.searchRadiusMeters);
+  if (Number.isFinite(existing) && existing >= 500) return existing;
+  const fromEntries = Object.values(selectedEntries || {}).map((entry) =>
+    Number(entry?.searchRadiusMeters)
+  );
+  const maxEntry = Math.max(0, ...fromEntries.filter((n) => Number.isFinite(n)));
+  return maxEntry >= 500 ? maxEntry : TOUR_NEARBY_SEARCH_RADIUS_METERS;
 }
 
 function pointFrom(lat, lng) {
@@ -315,6 +383,19 @@ function getAmenityPreferredBasemap(data) {
   );
 }
 
+async function loadSharedAmenityMap(shareToken) {
+  let lastErr;
+  for (let attempt = 0; attempt < 8; attempt += 1) {
+    try {
+      return await mapService.getSharedMapByToken(shareToken);
+    } catch (err) {
+      lastErr = err;
+      await new Promise((resolve) => window.setTimeout(resolve, 350 + attempt * 200));
+    }
+  }
+  throw lastErr;
+}
+
 function waitForMap(mapRef, timeoutMs = 12000) {
   return new Promise((resolve) => {
     const started = Date.now();
@@ -359,6 +440,101 @@ function focusMapOnPoint(map, position, zoom) {
   }
 }
 
+function amenityFitStorageKey(shareToken) {
+  return `cv-amenity-fit:${String(shareToken || '').trim()}`;
+}
+
+function notifyAmenityClientFit(shareToken) {
+  const token = String(shareToken || '').trim();
+  if (!token || typeof localStorage === 'undefined') return;
+  try {
+    localStorage.setItem(amenityFitStorageKey(token), String(Date.now()));
+  } catch (_) {
+    /* ignore quota / private mode */
+  }
+}
+
+function amenityMapFitPadding() {
+  const gap = 10;
+  const edge = 12;
+  const narrow = window.innerWidth <= 760;
+  const railEl = document.querySelector('.amenity-map-rail');
+  const brandEl = document.querySelector('.amenity-map-brand');
+  const railRect = railEl?.getBoundingClientRect?.();
+  const brandRect = brandEl?.getBoundingClientRect?.();
+
+  let left = edge + gap;
+  let right = edge + gap;
+  let top = edge + gap;
+  let bottom = edge + gap;
+
+  if (narrow) {
+    const railTop = railRect?.top;
+    const railReady =
+      Number.isFinite(railTop) && railRect.height > 40 && railTop < window.innerHeight - 24;
+    if (!railReady) return null;
+    bottom = Math.max(
+      edge + gap,
+      Math.min(
+        Math.round(window.innerHeight - railTop + gap),
+        Math.round(window.innerHeight * 0.52)
+      )
+    );
+    left = Math.max(left, 20);
+    right = Math.max(right, 20);
+    top = brandRect ? Math.max(top, Math.round(brandRect.bottom + gap)) : Math.max(top, 56);
+  } else {
+    left = railRect
+      ? Math.max(left, Math.round(railRect.right + gap))
+      : Math.round(Math.min(380, window.innerWidth * 0.42 - 24) + edge + gap);
+    if (brandRect) {
+      top = Math.max(top, Math.round(brandRect.bottom + gap));
+      right = Math.max(right, Math.round(window.innerWidth - brandRect.left + gap));
+    } else {
+      top = Math.max(top, 88);
+      right = Math.max(right, 200);
+    }
+    bottom = Math.max(bottom, 48);
+  }
+
+  const padBudget = Math.min(window.innerWidth, window.innerHeight);
+  if (left + right >= padBudget - 40) {
+    left = Math.min(left, 24);
+    right = Math.min(right, 24);
+  }
+  if (top + bottom >= padBudget - 40) {
+    top = Math.min(top, 56);
+    bottom = Math.min(bottom, Math.round(window.innerHeight * 0.42));
+  }
+  return { top, right, bottom, left };
+}
+
+function fitAmenityMapToPlaces(map, features, homePosition, { duration = 0 } = {}) {
+  if (!map) return false;
+  const bounds = new mapboxgl.LngLatBounds();
+  (features || []).forEach((feature) => {
+    const coords = feature?.geometry?.coordinates;
+    if (Array.isArray(coords) && coords.length >= 2) bounds.extend(coords);
+  });
+  if (homePosition && Number.isFinite(homePosition.lat) && Number.isFinite(homePosition.lng)) {
+    bounds.extend([homePosition.lng, homePosition.lat]);
+  }
+  if (bounds.isEmpty()) return false;
+  const padding = amenityMapFitPadding();
+  if (!padding) return false;
+  const narrow = window.innerWidth <= 760;
+  try {
+    map.fitBounds(bounds, {
+      padding,
+      maxZoom: narrow ? 15.2 : 15.5,
+      duration,
+    });
+    return true;
+  } catch (_) {
+    return false;
+  }
+}
+
 /** Screen position for the HTML home marker (above print boundary overlays). */
 function projectHomeScreenPoint(map, position) {
   if (!map || !position) return null;
@@ -379,11 +555,33 @@ function projectHomeScreenPoint(map, position) {
   }
 }
 
-function sourceFeature(feature, hoveredKey) {
+function applyLoadedBadges(geojson, loadedKeys) {
+  const keys = loadedKeys instanceof Set ? loadedKeys : new Set();
+  return {
+    ...geojson,
+    features: (geojson.features || []).map((feature) => {
+      const amenityKey = feature?.properties?.amenityKey;
+      const hasBadge = amenityHasBadge(amenityKey) && keys.has(amenityKey);
+      return {
+        ...feature,
+        properties: {
+          ...(feature?.properties || {}),
+          hasBadge,
+          badgeImage: hasBadge ? amenityBadgeImageId(amenityKey) : '',
+        },
+      };
+    }),
+  };
+}
+
+function sourceFeature(feature, hoveredKey, loadedBadgeKeys) {
   const properties = feature?.properties || {};
   const category = AMENITY_MAP_CATEGORY_BY_KEY[properties.amenityKey] || {};
   const key = amenityFeatureKey(feature);
-  const hasBadge = amenityHasBadge(properties.amenityKey);
+  const catalogHasBadge = amenityHasBadge(properties.amenityKey);
+  const hasBadge =
+    catalogHasBadge &&
+    (loadedBadgeKeys == null || loadedBadgeKeys.has(properties.amenityKey));
   return {
     ...feature,
     properties: {
@@ -501,6 +699,7 @@ function ensureAmenityLayers(map, geojson) {
   } catch (_) {
     // The base style may still be finishing its own layer order.
   }
+  ensureAmenityMapLayersOnTop(map);
   return true;
 }
 
@@ -522,6 +721,17 @@ function removeAmenityLayers(map) {
 
 function AmenityIcon({ amenityKey, className = '' }) {
   const category = AMENITY_MAP_CATEGORY_BY_KEY[amenityKey];
+  if (category?.recolorBadge && category.logoFile) {
+    return (
+      <span
+        className={`amenity-map-icon amenity-map-icon--composited ${className}`.trim()}
+        style={{ backgroundColor: category.color || '#eab308' }}
+        aria-hidden
+      >
+        <img src={`/logos_for_print/${category.logoFile}`} alt="" />
+      </span>
+    );
+  }
   const badgeUrl = amenityBadgeUrl(amenityKey);
   if (badgeUrl) {
     return (
@@ -677,6 +887,11 @@ export default function AmenityMapPage() {
   const [enabledSearchKeys, setEnabledSearchKeys] = useState(
     () => new Set(wantEdit ? [] : AMENITY_MAP_CATEGORIES.map(({ key }) => key))
   );
+  const entriesRef = useRef(entries);
+  const enabledSearchKeysRef = useRef(enabledSearchKeys);
+  const saveEntriesNowRef = useRef(async () => {});
+  entriesRef.current = entries;
+  enabledSearchKeysRef.current = enabledSearchKeys;
   const [visibleCategoryKeys, setVisibleCategoryKeys] = useState(
     () => new Set(AMENITY_MAP_CATEGORIES.map(({ key }) => key))
   );
@@ -695,6 +910,8 @@ export default function AmenityMapPage() {
   const [pdfPanelOpen, setPdfPanelOpen] = useState(() => fromNeighborhood);
   const [hoveredKey, setHoveredKey] = useState(null);
   const [activeFeature, setActiveFeature] = useState(null);
+  const [mapPickFeature, setMapPickFeature] = useState(null);
+  const [mapPickScreen, setMapPickScreen] = useState(null);
   const [activeEditorCategoryKey, setActiveEditorCategoryKey] = useState(null);
   const [choosingAmenity, setChoosingAmenity] = useState(false);
   const [addingCustom, setAddingCustom] = useState(false);
@@ -719,27 +936,47 @@ export default function AmenityMapPage() {
   const popupRef = useRef(null);
   const amenityMapInstanceRef = useRef(null);
   const didInitialFitRef = useRef(false);
+  const lastFitSignatureRef = useRef('');
   const homeDragRef = useRef(null);
   const panelBodyRef = useRef(null);
+  const [loadedBadgeKeys, setLoadedBadgeKeys] = useState(() => new Set());
+  const loadedBadgeKeysRef = useRef(loadedBadgeKeys);
+  loadedBadgeKeysRef.current = loadedBadgeKeys;
 
   const allFeatures = useMemo(
     () =>
       AMENITY_MAP_CATEGORIES.flatMap(({ key }) =>
-        Array.isArray(entries[key]?.features) ? entries[key].features : []
+        (Array.isArray(entries[key]?.features) ? entries[key].features : []).map((feature) => ({
+          ...feature,
+          properties: {
+            ...(feature?.properties || {}),
+            amenityKey: String(feature?.properties?.amenityKey || key).trim() || key,
+          },
+        }))
       ),
     [entries]
   );
+
+  const editorVisibleKeys = useMemo(() => {
+    const keys = new Set(enabledSearchKeys);
+    AMENITY_MAP_CATEGORIES.forEach(({ key }) => {
+      if (Array.isArray(entries[key]?.features) && entries[key].features.length) {
+        keys.add(key);
+      }
+    });
+    return keys;
+  }, [enabledSearchKeys, entries]);
 
   const savedFeatures = useMemo(
     () =>
       allFeatures.filter(
         (feature) =>
           visibleFeature(feature) &&
-          (editMode ? enabledSearchKeys : visibleCategoryKeys).has(
+          (editMode ? editorVisibleKeys : visibleCategoryKeys).has(
             feature?.properties?.amenityKey
           )
       ),
-    [allFeatures, editMode, enabledSearchKeys, visibleCategoryKeys]
+    [allFeatures, editMode, editorVisibleKeys, visibleCategoryKeys]
   );
 
   const geojson = useMemo(
@@ -747,9 +984,9 @@ export default function AmenityMapPage() {
       type: 'FeatureCollection',
       features: savedFeatures
         .filter((feature) => !(editMode && feature?.properties?.isCustom === true))
-        .map((feature) => sourceFeature(feature, hoveredKey)),
+        .map((feature) => sourceFeature(feature, hoveredKey, loadedBadgeKeys)),
     }),
-    [savedFeatures, hoveredKey, editMode]
+    [savedFeatures, hoveredKey, editMode, loadedBadgeKeys]
   );
 
   useEffect(() => {
@@ -798,12 +1035,27 @@ export default function AmenityMapPage() {
       setMapRevealReady(false);
       setError('');
       try {
-        const data =
+        const loaded =
           process.env.NODE_ENV === 'development' && shareToken === 'demo'
             ? buildDemoMapData()
-            : await mapService.getSharedMapByToken(shareToken);
+            : await loadSharedAmenityMap(shareToken);
         if (cancelled) return;
-        setMapData(data);
+        let data = loaded;
+        const wantGenerate =
+          !demoMode && new URLSearchParams(window.location.search).get('generate') === '1';
+        const createKey = shareToken ? `amenity:${shareToken}` : '';
+        if (!demoMode && shareToken && (wantGenerate || isShareCreateInFlight(createKey))) {
+          const result = await runShareCreateOnce(createKey, () =>
+            autoGenerateAmenityMap({ shareToken, mapData: data })
+          );
+          if (cancelled) return;
+          data = {
+            ...data,
+            tourNearbyCache: result.tourNearbyCache || data.tourNearbyCache,
+          };
+          stripSearchParam('generate');
+        }
+        if (cancelled) return;
         const access =
           data?.amenityEditAccess && typeof data.amenityEditAccess === 'object'
             ? data.amenityEditAccess
@@ -812,6 +1064,9 @@ export default function AmenityMapPage() {
                 viewerIsOwner: false,
                 canEdit: isGuestEditAllowed(data?.amenityMapSettings),
               };
+        const mapDoc = data;
+        if (cancelled) return;
+        setMapData(mapDoc);
         if (demoMode) {
           setAmenityEditAccess({ guestEdit: true, viewerIsOwner: true, canEdit: true });
           setGuestEditEnabled(true);
@@ -819,20 +1074,22 @@ export default function AmenityMapPage() {
           setAmenityEditAccess(access);
           setGuestEditEnabled(access.guestEdit === true);
         }
-        setHomePosition(getHomeMarkerPosition(data, mapRef?.current));
-        if (data?.neighborhoodMapAssets?.pdfUrl || data?.neighborhoodMapAssets?.pngUrl) {
-          setPdfAssets(data.neighborhoodMapAssets);
+        setHomePosition(getHomeMarkerPosition(mapDoc, mapRef?.current));
+        if (mapDoc?.neighborhoodMapAssets?.pdfUrl || mapDoc?.neighborhoodMapAssets?.pngUrl) {
+          setPdfAssets(mapDoc.neighborhoodMapAssets);
         }
         setMeta({
-          title: data.title || 'Neighborhood amenities',
-          description: data.description || '',
-          ...buildSharedMapAgentMeta(data),
+          title: mapDoc.title || 'Neighborhood amenities',
+          description: mapDoc.description || '',
+          ...buildSharedMapAgentMeta(mapDoc),
         });
-        const loadedEntries = data.tourNearbyCache?.byAmenity || {};
+        const normalized = normalizeTourNearbyCacheFromFirestore(mapDoc.tourNearbyCache);
+        const loadedEntries = normalized?.byAmenity || mapDoc.tourNearbyCache?.byAmenity || {};
         setEntries(loadedEntries);
-        const populatedKeys = AMENITY_MAP_CATEGORIES.filter(
-          ({ key }) => Array.isArray(loadedEntries[key]?.features) && loadedEntries[key].features.length
-        ).map(({ key }) => key);
+        const populatedKeys = AMENITY_MAP_CATEGORIES.filter(({ key }) => {
+          const features = loadedEntries[key]?.features;
+          return Array.isArray(features) && features.some((f) => String(f?.properties?.name || '').trim());
+        }).map(({ key }) => key);
         if (populatedKeys.length) {
           setVisibleCategoryKeys(new Set(populatedKeys));
           setEnabledSearchKeys(new Set(populatedKeys));
@@ -846,15 +1103,15 @@ export default function AmenityMapPage() {
           return next;
         });
 
-        setPrintElements(Array.isArray(data.printElements) ? data.printElements : []);
+        setPrintElements(Array.isArray(mapDoc.printElements) ? mapDoc.printElements : []);
         // Amenity map: basemap + boundary + home pin only — strip every GIS overlay.
         setLayerStatus({});
         setLayerOrder([]);
-        setPaperSize(data.printSettings?.paperSize || 'full');
+        setPaperSize(mapDoc.printSettings?.paperSize || 'full');
         setIsPrinting(true);
         setActivePrintTool('select');
         setSelectedPrintElement(null);
-        const preferredBasemap = getAmenityPreferredBasemap(data);
+        const preferredBasemap = getAmenityPreferredBasemap(mapDoc);
         // Do not let loadMapState apply the listing `basemap` — that races and overwrites
         // the amenity-specific style on the client view.
         setCurrentBasemapId(preferredBasemap);
@@ -875,9 +1132,13 @@ export default function AmenityMapPage() {
         }
 
         const map = await waitForMap(mapRef);
-        if (!map || cancelled) return;
+        if (cancelled) return;
+        if (!map) {
+          setError('The map failed to load. Refresh the page and try again.');
+          return;
+        }
         mapService.loadMapState(
-          data,
+          mapDoc,
           { setLayerStatus, setLayerOrder, setPaperSize, setPrintElements },
           mapRef
         );
@@ -956,7 +1217,11 @@ export default function AmenityMapPage() {
     setPrintElements,
     setSelectedPrintElement,
     shareToken,
-    user?.uid,
+    wantEdit,
+    // Intentionally omit map context setters / mapRef. Reloading on those
+    // identities wipes restaurants the agent just added, then Save writes the
+    // empty list.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   ]);
 
   useEffect(() => {
@@ -966,26 +1231,48 @@ export default function AmenityMapPage() {
     let cancelled = false;
     let applying = false;
 
+    const dataForMap = (badgeKeys) =>
+      applyLoadedBadges(geojson, badgeKeys || loadedBadgeKeysRef.current);
+
+    const pushSource = (badgeKeys) => {
+      const source = map.getSource?.(SOURCE_ID);
+      if (!source || typeof source.setData !== 'function') return false;
+      source.setData(dataForMap(badgeKeys));
+      ensureAmenityMapLayersOnTop(map);
+      return true;
+    };
+
     const apply = async () => {
       if (cancelled || applying || !map.isStyleLoaded?.()) return;
       applying = true;
       try {
-        await loadAmenityMapIcons(map);
+        const loaded = await loadAmenityMapIcons(map);
         if (cancelled) return;
-        ensureAmenityLayers(map, geojson);
+        ensureAmenityLayers(map, dataForMap(loaded));
         setMapRevealReady(true);
+        setLoadedBadgeKeys(loaded);
       } finally {
         applying = false;
       }
     };
 
-    // Basemap swaps drop custom sources, so re-add them whenever the style settles.
+    // Named-add / checkbox changes must write the GeoJSON source immediately.
+    // Idle used to restack only, so a newly added place never got a pin.
+    if (pushSource()) {
+      setMapRevealReady(true);
+    } else {
+      void apply();
+    }
+
     const onIdle = () => {
-      if (map.getLayer(BADGE_LAYER_ID) && map.getSource(SOURCE_ID)) return;
+      if (cancelled) return;
+      if (pushSource()) {
+        setMapRevealReady(true);
+        return;
+      }
       void apply();
     };
 
-    void apply();
     map.on('idle', onIdle);
     return () => {
       cancelled = true;
@@ -1061,14 +1348,26 @@ export default function AmenityMapPage() {
         node.append(distanceNode);
       }
       const rating = amenityRating(p);
-      if (rating) {
-        const ratingNode = document.createElement('span');
-        ratingNode.className = 'amenity-map-rating';
-        ratingNode.setAttribute('aria-label', `${rating.rating.toFixed(1)} out of 5 stars`);
-        ratingNode.textContent = `★ ${rating.rating.toFixed(1)}${
-          rating.count != null ? ` (${rating.count.toLocaleString()})` : ''
-        }`;
-        node.append(ratingNode);
+      const tier = p.amenityKey ? nearbyQualityTier(p, p.amenityKey) : null;
+      if (rating || tier) {
+        const row = document.createElement('span');
+        row.className = 'amenity-map-rating-row';
+        if (rating) {
+          const ratingNode = document.createElement('span');
+          ratingNode.className = 'amenity-map-rating';
+          ratingNode.setAttribute('aria-label', `${rating.rating.toFixed(1)} out of 5 stars`);
+          ratingNode.textContent = `★ ${rating.rating.toFixed(1)}${
+            rating.count != null ? ` (${rating.count.toLocaleString()})` : ''
+          }`;
+          row.append(ratingNode);
+        }
+        if (tier) {
+          const tierNode = document.createElement('span');
+          tierNode.className = `amenity-map-quality-tier is-${tier}`;
+          tierNode.textContent = tier;
+          row.append(tierNode);
+        }
+        node.append(row);
       }
       const address = featureAddress(feature);
       if (address) {
@@ -1078,7 +1377,7 @@ export default function AmenityMapPage() {
       }
       const clickNode = document.createElement('div');
       clickNode.className = 'amenity-map-hover-action';
-      clickNode.textContent = 'Click for photo and details';
+      clickNode.textContent = editMode ? 'Click to remove from the map' : 'Click for photo and details';
       node.append(clickNode);
       popupRef.current?.remove?.();
       popupRef.current = new mapboxgl.Popup({
@@ -1107,12 +1406,18 @@ export default function AmenityMapPage() {
       popupRef.current?.remove?.();
       popupRef.current = null;
     };
+    const interactiveLayerIds = [POINT_LAYER_ID, BADGE_LAYER_ID];
     const onClick = (event) => {
       const feature = event.features?.[0];
       if (!feature) return;
       const key = String(feature.properties?.amenityMapKey || '');
       const original = allFeatures.find((candidate) => amenityFeatureKey(candidate) === key);
       const selected = original || feature;
+      if (editMode) {
+        setActiveFeature(null);
+        setMapPickFeature(selected);
+        return;
+      }
       setActiveFeature(selected);
       panelBodyRef.current?.scrollTo?.({ top: 0, behavior: 'smooth' });
       const coords = selected?.geometry?.coordinates;
@@ -1124,33 +1429,48 @@ export default function AmenityMapPage() {
         );
       }
     };
+    const onBackgroundClick = (event) => {
+      if (!editMode) return;
+      const layers = interactiveLayerIds.filter((id) => map.getLayer(id));
+      const hits = layers.length ? map.queryRenderedFeatures(event.point, { layers }) : [];
+      if (!hits.length) setMapPickFeature(null);
+    };
 
-    const interactiveLayerIds = [POINT_LAYER_ID, BADGE_LAYER_ID];
-    let bound = false;
-    const bind = () => {
-      if (bound || !interactiveLayerIds.every((id) => map.getLayer(id))) return;
+    let boundLayerIds = '';
+    const unbind = () => {
       interactiveLayerIds.forEach((id) => {
+        map.off('mouseenter', id, onEnter);
+        map.off('mousemove', id, onMove);
+        map.off('mouseleave', id, onLeave);
+        map.off('click', id, onClick);
+      });
+      boundLayerIds = '';
+    };
+    const bind = () => {
+      const readyIds = interactiveLayerIds.filter((id) => map.getLayer(id)).join(',');
+      if (!readyIds) {
+        if (boundLayerIds) unbind();
+        return;
+      }
+      if (readyIds === boundLayerIds) return;
+      unbind();
+      readyIds.split(',').forEach((id) => {
         map.on('mouseenter', id, onEnter);
         map.on('mousemove', id, onMove);
         map.on('mouseleave', id, onLeave);
         map.on('click', id, onClick);
       });
-      bound = true;
+      boundLayerIds = readyIds;
     };
     bind();
-    if (!bound) map.on('idle', bind);
+    if (editMode) map.on('click', onBackgroundClick);
+    map.on('idle', bind);
     return () => {
       map.off('idle', bind);
-      if (bound) {
-        interactiveLayerIds.forEach((id) => {
-          map.off('mouseenter', id, onEnter);
-          map.off('mousemove', id, onMove);
-          map.off('mouseleave', id, onLeave);
-          map.off('click', id, onClick);
-        });
-      }
+      map.off('click', onBackgroundClick);
+      unbind();
     };
-  }, [allFeatures, error, loading, mapRef]);
+  }, [allFeatures, editMode, error, loading, mapRef]);
 
   // Project custom amenity pins (HTML overlays) and keep them in sync with the map.
   useEffect(() => {
@@ -1194,111 +1514,136 @@ export default function AmenityMapPage() {
     };
   }, [allFeatures, editMode, error, loading, mapRef]);
 
-  // Fit the shared map so home + amenities clear the left rail and top-right brand.
   useEffect(() => {
     const map = mapRef?.current;
-    if (!map || didInitialFitRef.current || loading || error || !mapRevealReady) return;
+    if (!map || loading || error || !editMode || !mapPickFeature) {
+      setMapPickScreen(null);
+      return undefined;
+    }
+    const coords = mapPickFeature?.geometry?.coordinates;
+    if (!Array.isArray(coords) || coords.length < 2) {
+      setMapPickScreen(null);
+      return undefined;
+    }
+    const project = () => {
+      const canvas = map.getCanvas?.();
+      const rect = canvas?.getBoundingClientRect?.();
+      if (!rect) return;
+      try {
+        const point = map.project([coords[0], coords[1]]);
+        setMapPickScreen({
+          x: rect.left + point.x,
+          y: rect.top + point.y,
+          name: mapPickFeature?.properties?.name || 'Place',
+        });
+      } catch (_) {
+        setMapPickScreen(null);
+      }
+    };
+    project();
+    map.on('move', project);
+    map.on('resize', project);
+    return () => {
+      map.off('move', project);
+      map.off('resize', project);
+    };
+  }, [editMode, error, loading, mapPickFeature, mapRef]);
+
+  useEffect(() => {
+    didInitialFitRef.current = false;
+    lastFitSignatureRef.current = '';
+    setMapRevealReady(false);
+    setLoadedBadgeKeys(new Set());
+  }, [shareToken]);
+
+  const amenityFitSignature = useMemo(() => {
+    const keys = savedFeatures
+      .map((feature) => amenityFeatureKey(feature))
+      .filter(Boolean)
+      .sort();
+    const home =
+      homePosition && Number.isFinite(homePosition.lat) && Number.isFinite(homePosition.lng)
+        ? `${Number(homePosition.lng).toFixed(5)},${Number(homePosition.lat).toFixed(5)}`
+        : '';
+    return `${keys.join('|')}::${home}`;
+  }, [homePosition, savedFeatures]);
+
+  // Client map: refit whenever published places change so a new amenity stays in frame.
+  // Editor: one opening fit only — later refits happen on Save.
+  useEffect(() => {
+    const map = mapRef?.current;
+    if (!map || loading || error || !mapRevealReady) return;
+    if (editMode && didInitialFitRef.current) return;
+    if (!editMode && lastFitSignatureRef.current === amenityFitSignature) return;
 
     let cancelled = false;
     const run = () => {
-      if (cancelled || didInitialFitRef.current) return;
-      const bounds = new mapboxgl.LngLatBounds();
-      savedFeatures.forEach((feature) => {
-        const coords = feature?.geometry?.coordinates;
-        if (Array.isArray(coords) && coords.length >= 2) bounds.extend(coords);
+      if (cancelled) return;
+      if (editMode && didInitialFitRef.current) return;
+      if (!editMode && lastFitSignatureRef.current === amenityFitSignature) return;
+      const ok = fitAmenityMapToPlaces(map, savedFeatures, homePosition, {
+        duration: didInitialFitRef.current ? 700 : 0,
       });
-      if (
-        homePosition &&
-        Number.isFinite(homePosition.lat) &&
-        Number.isFinite(homePosition.lng)
-      ) {
-        bounds.extend([homePosition.lng, homePosition.lat]);
-      }
-      if (bounds.isEmpty()) return;
-
-      const gap = 10;
-      const edge = 12;
-      const narrow = window.innerWidth <= 760;
-      const railEl = document.querySelector('.amenity-map-rail');
-      const brandEl = document.querySelector('.amenity-map-brand');
-      const railRect = railEl?.getBoundingClientRect?.();
-      const brandRect = brandEl?.getBoundingClientRect?.();
-
-      let left = edge + gap;
-      let right = edge + gap;
-      let top = edge + gap;
-      let bottom = edge + gap;
-
-      if (narrow) {
-        // Bottom sheet only (no agent card) — leave the map above it fully usable.
-        const railTop = railRect?.top;
-        const railReady =
-          Number.isFinite(railTop) &&
-          railRect.height > 40 &&
-          railTop < window.innerHeight - 24;
-        if (!railReady) return;
-        bottom = Math.max(
-          edge + gap,
-          Math.min(
-            Math.round(window.innerHeight - railTop + gap),
-            Math.round(window.innerHeight * 0.52)
-          )
-        );
-        left = Math.max(left, 20);
-        right = Math.max(right, 20);
-        if (brandRect) {
-          top = Math.max(top, Math.round(brandRect.bottom + gap));
-        } else {
-          top = Math.max(top, 56);
-        }
-      } else {
-        left = railRect
-          ? Math.max(left, Math.round(railRect.right + gap))
-          : Math.round(Math.min(380, window.innerWidth * 0.42 - 24) + edge + gap);
-        if (brandRect) {
-          top = Math.max(top, Math.round(brandRect.bottom + gap));
-          right = Math.max(right, Math.round(window.innerWidth - brandRect.left + gap));
-        } else {
-          top = Math.max(top, 88);
-          right = Math.max(right, 200);
-        }
-        bottom = Math.max(bottom, 48);
-      }
-
-      // Mapbox rejects fitBounds when padding eats the whole viewport.
-      const padBudget = Math.min(window.innerWidth, window.innerHeight);
-      if (left + right >= padBudget - 40) {
-        left = Math.min(left, 24);
-        right = Math.min(right, 24);
-      }
-      if (top + bottom >= padBudget - 40) {
-        top = Math.min(top, 56);
-        bottom = Math.min(bottom, Math.round(window.innerHeight * 0.42));
-      }
-
+      if (!ok) return;
       didInitialFitRef.current = true;
-      try {
-        map.fitBounds(bounds, {
-          padding: { top, right, bottom, left },
-          maxZoom: narrow ? 15.2 : 15.5,
-          duration: 0,
-        });
-      } catch (_) {
-        didInitialFitRef.current = false;
-      }
+      lastFitSignatureRef.current = amenityFitSignature;
     };
 
-    // Wait for the bottom sheet / brand to finish layout before measuring padding.
     const frame = window.requestAnimationFrame(() => {
       window.requestAnimationFrame(run);
     });
-    const retries = [120, 280, 600].map((ms) => window.setTimeout(run, ms));
+    const retries = [120, 280, 600, 1200, 2200].map((ms) => window.setTimeout(run, ms));
+    const railEl = typeof document !== 'undefined' ? document.querySelector('.amenity-map-rail') : null;
+    const observer =
+      typeof ResizeObserver !== 'undefined' && railEl
+        ? new ResizeObserver(() => run())
+        : null;
+    if (observer && railEl) observer.observe(railEl);
     return () => {
       cancelled = true;
       window.cancelAnimationFrame(frame);
       retries.forEach((id) => window.clearTimeout(id));
+      observer?.disconnect();
     };
-  }, [error, homePosition, loading, mapRef, mapRevealReady, savedFeatures]);
+  }, [
+    amenityFitSignature,
+    editMode,
+    error,
+    homePosition,
+    loading,
+    mapRef,
+    mapRevealReady,
+    savedFeatures,
+  ]);
+
+  useEffect(() => {
+    if (editMode || !shareToken) return undefined;
+    const key = amenityFitStorageKey(shareToken);
+    const refitFromOtherTab = () => {
+      const map = mapRef?.current;
+      if (!map || loading || error || !mapRevealReady) return;
+      lastFitSignatureRef.current = '';
+      if (fitAmenityMapToPlaces(map, savedFeatures, homePosition, { duration: 700 })) {
+        lastFitSignatureRef.current = amenityFitSignature;
+        didInitialFitRef.current = true;
+      }
+    };
+    const onStorage = (event) => {
+      if (event.key === key) refitFromOtherTab();
+    };
+    window.addEventListener('storage', onStorage);
+    return () => window.removeEventListener('storage', onStorage);
+  }, [
+    amenityFitSignature,
+    editMode,
+    error,
+    homePosition,
+    loading,
+    mapRef,
+    mapRevealReady,
+    savedFeatures,
+    shareToken,
+  ]);
 
   useEffect(() => {
     const map = mapRef?.current;
@@ -1373,7 +1718,7 @@ export default function AmenityMapPage() {
           editorMode: true,
           basicFields: true,
           gridCache: true,
-          preferBrowser: false,
+          preferBrowser: true,
         });
 
         let merged = [];
@@ -1394,7 +1739,12 @@ export default function AmenityMapPage() {
           const searched = (result?.features || []).map((feature, index) => {
             const id = amenityFeatureKey(feature);
             const prior = prevById.get(id);
-            if (prior) return setFeatureVisible(feature, visibleFeature(prior));
+            if (prior) {
+              return mergePlaceVisibilityFromPrior(
+                setFeatureVisible(feature, visibleFeature(prior)),
+                prior
+              );
+            }
             // First search: auto-select a few. Re-search: leave new finds off so picks aren’t reset.
             return setFeatureVisible(feature, !hadPriorSearch && index < autoSelect);
           });
@@ -1429,6 +1779,77 @@ export default function AmenityMapPage() {
       }
     },
     [mapData, mapRef, radiusByKey, shareToken]
+  );
+
+  const addNamedGooglePlace = useCallback(
+    (place, { alreadyPresent } = {}) => {
+      const categoryKey = activeEditorCategoryKey;
+      if (!categoryKey || !place) return;
+      const raw = googlePlaceResultToFeature(place, categoryKey);
+      if (!raw) {
+        setSearchState((previous) => ({
+          ...previous,
+          [categoryKey]: {
+            status: 'error',
+            error: 'That place has no map location. Try Search, then pick it from the list.',
+          },
+        }));
+        return;
+      }
+      const map = mapRef?.current;
+      const origin = getSearchCenter(mapData, map) || homePosition;
+      const lng = Number(raw.geometry?.coordinates?.[0]);
+      const lat = Number(raw.geometry?.coordinates?.[1]);
+      const feature = {
+        ...raw,
+        properties: {
+          ...(raw.properties || {}),
+          amenityMapHidden: false,
+        },
+      };
+      if (origin && Number.isFinite(lat) && Number.isFinite(lng)) {
+        const miles = haversineMiles(origin.lat, origin.lng, lat, lng);
+        if (Number.isFinite(miles)) {
+          feature.properties.straightLineMiles = Math.round(miles * 10) / 10;
+          feature.properties.distanceText = `${feature.properties.straightLineMiles} mi`;
+        }
+      }
+      const id = amenityFeatureKey(feature);
+      const previous = entriesRef.current || {};
+      const entry = previous[categoryKey];
+      const existing = Array.isArray(entry?.features) ? entry.features : [];
+      const nextFeatures = alreadyPresent
+        ? existing.map((row) =>
+            amenityFeatureKey(row) === id ? setFeatureVisible(row, true) : row
+          )
+        : [feature, ...existing.filter((row) => amenityFeatureKey(row) !== id)];
+      const nextEntries = {
+        ...previous,
+        [categoryKey]: {
+          type: 'FeatureCollection',
+          features: nextFeatures,
+          fetched: true,
+          searchRadiusMeters: entry?.searchRadiusMeters || radiusByKey[categoryKey],
+        },
+      };
+      const nextEnabled = new Set([...(enabledSearchKeysRef.current || []), categoryKey]);
+      entriesRef.current = nextEntries;
+      enabledSearchKeysRef.current = nextEnabled;
+      setEntries(nextEntries);
+      setEnabledSearchKeys(nextEnabled);
+      setVisibleCategoryKeys((previous) => new Set([...previous, categoryKey]));
+      setActiveFeature(null);
+      setMapPickFeature(feature);
+      if (map && Number.isFinite(lng) && Number.isFinite(lat)) {
+        map.easeTo?.({
+          center: [lng, lat],
+          zoom: Math.max(Number(map.getZoom?.()) || 12, 13),
+          duration: 600,
+        });
+      }
+      void saveEntriesNowRef.current(nextEntries, nextEnabled);
+    },
+    [activeEditorCategoryKey, homePosition, mapData, mapRef, radiusByKey]
   );
 
   const autoBuild = useCallback(async () => {
@@ -1638,9 +2059,40 @@ export default function AmenityMapPage() {
       setActiveFeature((previous) =>
         String(previous?.properties?.placeId || '') === id ? null : previous
       );
+      setMapPickFeature((previous) =>
+        String(previous?.properties?.placeId || '') === id ? null : previous
+      );
     },
     [customDraft.placeId]
   );
+
+  const removePickedFromMap = useCallback(() => {
+    const feature = mapPickFeature;
+    if (!feature) return;
+    const categoryKey = String(feature?.properties?.amenityKey || '').trim();
+    const featureKey = amenityFeatureKey(feature);
+    if (feature?.properties?.isCustom === true) {
+      deleteCustomPlace(String(feature.properties.placeId || featureKey), categoryKey);
+    } else if (categoryKey && featureKey) {
+      setEntries((previous) => {
+        const entry = previous[categoryKey];
+        if (!entry) return previous;
+        return {
+          ...previous,
+          [categoryKey]: {
+            ...entry,
+            features: (entry.features || []).map((row) =>
+              amenityFeatureKey(row) === featureKey ? setFeatureVisible(row, false) : row
+            ),
+          },
+        };
+      });
+    }
+    setMapPickFeature(null);
+    setActiveFeature((previous) =>
+      previous && amenityFeatureKey(previous) === featureKey ? null : previous
+    );
+  }, [deleteCustomPlace, mapPickFeature]);
 
   const startPlacingCustom = useCallback(
     (event) => {
@@ -1857,7 +2309,7 @@ export default function AmenityMapPage() {
     [allFeatures, editMode, mapRef, moveCustomPlace, openCustomEditor]
   );
 
-  const saveMap = useCallback(async () => {
+  const saveEntriesNow = useCallback(async (nextEntries, nextEnabledKeys) => {
     if (demoMode) {
       setSaveError('Demo mode previews the editor but does not write to a saved map.');
       return;
@@ -1870,11 +2322,9 @@ export default function AmenityMapPage() {
     setSaveState('saving');
     setSaveError('');
     try {
-      const keys = AMENITY_MAP_CATEGORIES.map(({ key }) => key).filter(
-        (key) => enabledSearchKeys.has(key) && entries[key]?.fetched
-      );
-      const maxRadius = Math.max(500, ...keys.map((key) => Number(radiusByKey[key]) || 0));
-      const selectedEntries = Object.fromEntries(keys.map((key) => [key, entries[key]]));
+      const selectedEntries = persistableAmenityEntries(nextEntries || entriesRef.current);
+      const keys = Object.keys(selectedEntries);
+      const rootRadius = rootRadiusForAmenitySave(mapData, selectedEntries);
       const basemapToSave =
         normalizeBasemapId(activeBasemapIdRef?.current || currentBasemapId) ||
         AMENITY_BASEMAP_ID;
@@ -1887,20 +2337,50 @@ export default function AmenityMapPage() {
         },
         { allowAccessFlags: amenityEditAccess?.viewerIsOwner === true }
       );
-      // Merge (no replace): preserve tour-only categories (trailheads, airport, …)
-      // that amenity-map saves do not include.
-      const payload = buildTourNearbyCacheForSave(center, selectedEntries, maxRadius, keys, {
+      const payload = buildTourNearbyCacheForSave(center, selectedEntries, rootRadius, keys, {
         allowEmpty: true,
         homeMarker: homeToSave,
         amenityMapBasemap: basemapToSave,
       });
+      if (!payload) {
+        throw new Error('Could not build amenity map data to save.');
+      }
+      let tourSettingsToSave;
+      let settingsSource = mapData;
+      let latestSettingsOk = false;
+      try {
+        const latest = await mapService.getSharedMapByToken(shareToken);
+        if (latest) {
+          settingsSource = latest;
+          latestSettingsOk = true;
+        }
+      } catch (_) {
+        /* If we cannot read live tour settings, do not rewrite the slide plan. */
+      }
+      const existingSettings = resolveTourSettingsFromMap(settingsSource);
+      if (latestSettingsOk && existingSettings.slidePlanUserEdited !== true) {
+        const mergedForPlan = {
+          byAmenity: {
+            ...(settingsSource?.tourNearbyCache?.byAmenity || {}),
+            ...payload.byAmenity,
+          },
+        };
+        tourSettingsToSave = materializeTourSettingsSlidePlan(
+          existingSettings,
+          settingsSource?.printElements || mapData?.printElements || [],
+          { availableAmenityKeys: amenityKeysWithSavedFeatures(mergedForPlan) }
+        );
+      }
       const result = await mapService.saveTourNearbyCache(
         shareToken,
         payload,
-        undefined,
+        tourSettingsToSave,
         amenityMapSettings,
         { amenityEditor: true }
       );
+      if (result?.success === false) {
+        throw new Error('Tour save was rejected by the server.');
+      }
       if (result?.amenityEditAccess) {
         setAmenityEditAccess(result.amenityEditAccess);
         setGuestEditEnabled(result.amenityEditAccess.guestEdit === true);
@@ -1915,15 +2395,55 @@ export default function AmenityMapPage() {
                 previous.amenityMapSettings ||
                 null,
               amenityEditAccess: result?.amenityEditAccess || previous.amenityEditAccess,
+              tourSettings: result?.tourSettings || tourSettingsToSave || previous.tourSettings,
+              tourSlidePlan:
+                result?.tourSlidePlan ||
+                tourSettingsToSave?.slidePlan ||
+                previous.tourSlidePlan ||
+                null,
               tourNearbyCache: {
                 ...(previous.tourNearbyCache || {}),
-                ...(payload || {}),
+                ...(result?.tourNearbyCache || payload || {}),
+                byAmenity: {
+                  ...(previous.tourNearbyCache?.byAmenity || {}),
+                  ...(result?.tourNearbyCache?.byAmenity || payload?.byAmenity || {}),
+                },
                 homeMarker: homeToSave,
                 amenityMapBasemap: basemapToSave,
               },
             }
           : previous
       );
+      notifyAmenityClientFit(shareToken);
+      const map = mapRef?.current;
+      if (map) {
+        const visibleNow = AMENITY_MAP_CATEGORIES.flatMap(({ key }) => {
+          const features = Array.isArray(selectedEntries[key]?.features)
+            ? selectedEntries[key].features
+            : [];
+          return features
+            .filter(visibleFeature)
+            .map((feature) => ({
+              ...feature,
+              properties: {
+                ...(feature?.properties || {}),
+                amenityKey: String(feature?.properties?.amenityKey || key).trim() || key,
+              },
+            }));
+        });
+        if (fitAmenityMapToPlaces(map, visibleNow, homeToSave, { duration: 800 })) {
+          lastFitSignatureRef.current = `${visibleNow
+            .map((feature) => amenityFeatureKey(feature))
+            .filter(Boolean)
+            .sort()
+            .join('|')}::${
+            Number.isFinite(homeToSave?.lng) && Number.isFinite(homeToSave?.lat)
+              ? `${Number(homeToSave.lng).toFixed(5)},${Number(homeToSave.lat).toFixed(5)}`
+              : ''
+          }`;
+          didInitialFitRef.current = true;
+        }
+      }
       setSaveState('saved');
       window.setTimeout(() => setSaveState('idle'), 1800);
     } catch (err) {
@@ -1934,16 +2454,19 @@ export default function AmenityMapPage() {
     activeBasemapIdRef,
     amenityEditAccess,
     demoMode,
-    enabledSearchKeys,
-    entries,
     guestEditEnabled,
     homePosition,
     mapData,
     mapRef,
-    radiusByKey,
     shareToken,
     currentBasemapId,
   ]);
+
+  saveEntriesNowRef.current = saveEntriesNow;
+
+  const saveMap = useCallback(() => {
+    return saveEntriesNow(entriesRef.current, enabledSearchKeysRef.current);
+  }, [saveEntriesNow]);
 
   const generateNeighborhoodPdf = useCallback(async () => {
     if (demoMode) {
@@ -1970,10 +2493,7 @@ export default function AmenityMapPage() {
     setPdfStatus('Saving amenities…');
     try {
       await saveMap();
-      const keys = AMENITY_MAP_CATEGORIES.map(({ key }) => key).filter(
-        (key) => enabledSearchKeys.has(key) && entries[key]?.fetched
-      );
-      const selectedEntries = Object.fromEntries(keys.map((key) => [key, entries[key]]));
+      const selectedEntries = persistableAmenityEntries(entries);
       const result = await runNeighborhoodMapFromAmenityEditor({
         map,
         mapRef,
@@ -2057,6 +2577,14 @@ export default function AmenityMapPage() {
     });
   };
 
+  if (error) {
+    return (
+      <div className="amenity-map-loading amenity-map-loading--error">
+        <h2>We couldn’t open this map</h2>
+        <p>{error}</p>
+      </div>
+    );
+  }
   if (loading || !mapRevealReady) {
     return (
       <MapLoadingOverlay
@@ -2064,14 +2592,6 @@ export default function AmenityMapPage() {
         mapTitle={meta.title}
         className="map-loading-overlay--opaque"
       />
-    );
-  }
-  if (error) {
-    return (
-      <div className="amenity-map-loading amenity-map-loading--error">
-        <h2>We couldn’t open this map</h2>
-        <p>{error}</p>
-      </div>
     );
   }
 
@@ -2082,12 +2602,20 @@ export default function AmenityMapPage() {
   const activeEditorFeatures = Array.isArray(activeEditorEntry?.features)
     ? activeEditorEntry.features
     : [];
+  const namedAddPlaceIds = new Set(
+    activeEditorFeatures
+      .map((feature) => String(feature?.properties?.placeId || feature?.properties?.place_id || ''))
+      .filter(Boolean)
+  );
+  const namedAddCenter = getSearchCenter(mapData, mapRef?.current) || homePosition;
   const activeEditorSearchState = activeEditorCategoryKey
     ? searchState[activeEditorCategoryKey] || {}
     : {};
-  const addedEditorCategories = AMENITY_MAP_CATEGORIES.filter(({ key }) =>
-    enabledSearchKeys.has(key)
-  );
+  const addedEditorCategories = AMENITY_MAP_CATEGORIES.filter(({ key }) => {
+    if (enabledSearchKeys.has(key)) return true;
+    const features = entries[key]?.features;
+    return Array.isArray(features) && features.length > 0;
+  });
 
   /** Viewer only lists categories the agent actually published places for. */
   const viewerCategories = AMENITY_MAP_CATEGORIES.map((category) => {
@@ -2161,14 +2689,36 @@ export default function AmenityMapPage() {
               style={{ left: point.x, top: point.y }}
               title={`${point.name || 'Custom place'} — drag to move`}
               aria-label={`${point.name || 'Custom place'} — drag to reposition`}
-              onPointerDown={(event) =>
-                beginCustomMarkerDrag(event, placeId, point.categoryKey)
-              }
+              onPointerDown={(event) => {
+                const feature = allFeatures.find(
+                  (candidate) =>
+                    String(candidate?.properties?.placeId || amenityFeatureKey(candidate)) ===
+                    placeId
+                );
+                if (feature) {
+                  setActiveFeature(null);
+                  setMapPickFeature(feature);
+                }
+                beginCustomMarkerDrag(event, placeId, point.categoryKey);
+              }}
             >
               <AmenityIcon amenityKey={point.categoryKey} />
             </button>
           ))
         : null}
+
+      {editMode && mapPickScreen ? (
+        <button
+          type="button"
+          className="amenity-map-pin-remove"
+          style={{ left: mapPickScreen.x, top: mapPickScreen.y }}
+          onClick={removePickedFromMap}
+          aria-label={`Remove ${mapPickScreen.name} from the map`}
+          title="Remove from map"
+        >
+          ×
+        </button>
+      ) : null}
 
       {placingCustom && placeGhost ? (
         <div
@@ -2245,7 +2795,7 @@ export default function AmenityMapPage() {
                       ? 'Saved'
                       : 'Save map'}
                 </button>
-                {amenityEditAccess?.viewerIsOwner ? (
+                {GUEST_EDIT_TOGGLE_ENABLED && amenityEditAccess?.viewerIsOwner ? (
                   <label className="amenity-map-guest-edit">
                     <input
                       type="checkbox"
@@ -2341,7 +2891,7 @@ export default function AmenityMapPage() {
           </header>
 
           <div className="amenity-map-panel-body">
-            {activeFeature ? (
+            {!editMode && activeFeature ? (
               <AmenityDetail feature={activeFeature} onClose={() => setActiveFeature(null)} />
             ) : null}
 
@@ -2442,6 +2992,14 @@ export default function AmenityMapPage() {
                 stay, and places you already selected stay selected when they still appear. New
                 finds start unchecked.
               </p>
+              <AmenityNamedPlaceAdd
+                key={activeEditorCategory.key}
+                category={activeEditorCategory}
+                center={namedAddCenter}
+                radiusMeters={radiusByKey[activeEditorCategory.key]}
+                existingPlaceIds={namedAddPlaceIds}
+                onAddPlace={addNamedGooglePlace}
+              />
               {activeEditorSearchState.error ? (
                 <p className="amenity-map-error">{activeEditorSearchState.error}</p>
               ) : null}
@@ -2607,11 +3165,13 @@ export default function AmenityMapPage() {
                           type="button"
                           className="amenity-map-result-details"
                           onClick={() =>
-                            p.isCustom ? openCustomEditor(feature) : setActiveFeature(feature)
+                            p.isCustom
+                              ? openCustomEditor(feature)
+                              : setMapPickFeature(feature)
                           }
-                          aria-label={`Details for ${p.name || 'this place'}`}
+                          aria-label={`${p.isCustom ? 'Edit' : 'Select'} ${p.name || 'this place'}`}
                         >
-                          {p.isCustom ? 'Edit' : 'Details'}
+                          {p.isCustom ? 'Edit' : 'Select'}
                         </button>
                       </li>
                     );

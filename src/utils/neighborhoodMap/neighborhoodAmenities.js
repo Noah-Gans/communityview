@@ -2,13 +2,18 @@
  * Neighborhood map amenity categories (urban marketing layout).
  * Uses the same Places Nearby path as property tours (one request per key).
  */
+import {
+  AMENITY_MAP_CATEGORIES,
+  AMENITY_MAP_CATEGORY_BY_KEY,
+  AMENITY_MAP_CATEGORY_KEYS,
+} from '../amenityMapCatalog';
+
 export const NEIGHBORHOOD_AMENITY_CATEGORIES = [
   { key: 'dining', label: 'Dining', max: 5, min: 2 },
   { key: 'coffee', label: 'Coffee & Bakeries', max: 4, min: 1 },
   { key: 'grocery', label: 'Groceries & Essentials', max: 3, min: 1 },
   { key: 'fitness', label: 'Fitness & Wellness', max: 4, min: 1 },
   { key: 'parks_rec', label: 'Parks & Recreation', max: 5, min: 2 },
-  { key: 'transit', label: 'Transit', max: 3, min: 1 },
   { key: 'essentials', label: 'Essentials', max: 3, min: 1 },
 ];
 
@@ -97,9 +102,16 @@ function rankedForCategory(byAmenity, cat) {
 }
 
 function passesSoftQuality(row) {
-  if (row.amenityKey === 'transit' || row.amenityKey === 'parks_rec') return true;
+  if (row.amenityKey === 'parks_rec') return true;
   if (row.rating != null && row.rating < 3.6 && row.reviews < 25) return false;
   return true;
+}
+
+function compareAmenityRows(a, b) {
+  const milesA = Number.isFinite(a.miles) ? a.miles : 99;
+  const milesB = Number.isFinite(b.miles) ? b.miles : 99;
+  if (milesA !== milesB) return milesA - milesB;
+  return String(a.name || '').localeCompare(String(b.name || ''));
 }
 
 function toNumbered(rows) {
@@ -122,19 +134,19 @@ function toNumbered(rows) {
  * Number visible amenity-map features for the neighborhood PDF (same places the agent curated).
  */
 export function numberedAmenitiesFromFeatures(features, options = {}) {
-  const maxTotal = Number(options.maxTotal) || 40;
+  const maxTotal = Number(options.maxTotal) || 60;
   const allowed = new Set(
     Array.isArray(options.keys) && options.keys.length
       ? options.keys
-      : NEIGHBORHOOD_AMENITY_KEYS
+      : AMENITY_MAP_CATEGORY_KEYS
   );
-  const rows = [];
+  const byKey = new Map();
   const seenPlaceIds = new Set();
   for (const f of features || []) {
-    if (rows.length >= maxTotal) break;
     const key = String(f?.properties?.amenityKey || '').trim();
     if (!allowed.has(key)) continue;
     const cat =
+      AMENITY_MAP_CATEGORY_BY_KEY[key] ||
       NEIGHBORHOOD_AMENITY_CATEGORIES.find((c) => c.key === key) || {
         key,
         label: key.replace(/_/g, ' '),
@@ -142,7 +154,18 @@ export function numberedAmenitiesFromFeatures(features, options = {}) {
     const row = featureToRow(f, cat);
     if (!row || seenPlaceIds.has(row.placeId)) continue;
     seenPlaceIds.add(row.placeId);
-    rows.push(row);
+    if (!byKey.has(key)) byKey.set(key, []);
+    byKey.get(key).push(row);
+  }
+  const rows = [];
+  const catalogKeys = AMENITY_MAP_CATEGORIES.map((c) => c.key);
+  const extraKeys = [...byKey.keys()].filter((key) => !catalogKeys.includes(key));
+  for (const key of [...catalogKeys, ...extraKeys]) {
+    const list = (byKey.get(key) || []).slice().sort(compareAmenityRows);
+    for (const row of list) {
+      if (rows.length >= maxTotal) break;
+      rows.push(row);
+    }
   }
   return toNumbered(rows);
 }
@@ -314,31 +337,54 @@ export function applyCuratedNeighborhoodIds(candidates, placeIds, options = {}) 
 export function groupAmenitiesByCategory(amenities) {
   const groups = [];
   const byKey = new Map();
-  for (const cat of NEIGHBORHOOD_AMENITY_CATEGORIES) {
+  for (const cat of AMENITY_MAP_CATEGORIES) {
     const g = { key: cat.key, label: cat.label, items: [] };
     byKey.set(cat.key, g);
     groups.push(g);
   }
   for (const a of amenities || []) {
-    const g = byKey.get(a.amenityKey);
-    if (g) g.items.push(a);
+    let g = byKey.get(a.amenityKey);
+    if (!g) {
+      g = {
+        key: a.amenityKey,
+        label: a.categoryLabel || String(a.amenityKey || '').replace(/_/g, ' '),
+        items: [],
+      };
+      byKey.set(a.amenityKey, g);
+      groups.push(g);
+    }
+    g.items.push(a);
+  }
+  for (const g of groups) {
+    g.items.sort((a, b) => (Number(a.number) || 0) - (Number(b.number) || 0));
   }
   return groups.filter((g) => g.items.length > 0);
 }
 
 /**
- * When the agent curated amenities on the amenity map / tour, use that visible set
- * as the neighborhood PDF pin list (same places across all three).
+ * Neighborhood PDF pin list = places currently shown on the amenity map.
  */
 export function selectedAmenitiesFromVisibleByAmenity(byAmenity, options = {}) {
-  const maxTotal = Number(options.maxTotal) || 40;
+  const maxTotal = Number(options.maxTotal) || 60;
+  const keys =
+    Array.isArray(options.keys) && options.keys.length
+      ? options.keys
+      : AMENITY_MAP_CATEGORY_KEYS;
   const rows = [];
   const seenPlaceIds = new Set();
-  for (const cat of NEIGHBORHOOD_AMENITY_CATEGORIES) {
+  for (const key of keys) {
     if (rows.length >= maxTotal) break;
-    for (const row of rankedForCategory(byAmenity, cat)) {
+    const category =
+      AMENITY_MAP_CATEGORIES.find((c) => c.key === key) ||
+      NEIGHBORHOOD_AMENITY_CATEGORIES.find((c) => c.key === key) || {
+        key,
+        label: key.replace(/_/g, ' '),
+      };
+    const features = Array.isArray(byAmenity?.[key]?.features) ? byAmenity[key].features : [];
+    for (const feature of features) {
       if (rows.length >= maxTotal) break;
-      if (seenPlaceIds.has(row.placeId)) continue;
+      const row = featureToRow(feature, category);
+      if (!row || seenPlaceIds.has(row.placeId)) continue;
       seenPlaceIds.add(row.placeId);
       rows.push(row);
     }

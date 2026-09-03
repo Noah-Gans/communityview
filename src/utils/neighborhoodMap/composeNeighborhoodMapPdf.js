@@ -6,7 +6,7 @@ import { jsPDF } from 'jspdf';
 import QRCode from 'qrcode';
 import { sanitizeMapExportBasename } from '../mapExportCapture';
 import { groupAmenitiesByCategory } from './neighborhoodAmenities';
-import { NEIGHBORHOOD_CATEGORY_COLORS } from './buildNeighborhoodPrintElements';
+import { neighborhoodCategoryColors } from './buildNeighborhoodPrintElements';
 
 const PAGE_W = 8.5;
 const PAGE_H = 11;
@@ -34,7 +34,7 @@ function hexToRgb(hex) {
 }
 
 function categoryRgb(amenityKey) {
-  const c = NEIGHBORHOOD_CATEGORY_COLORS[amenityKey];
+  const c = neighborhoodCategoryColors(amenityKey);
   if (c?.rgb) return c.rgb;
   if (c?.fill) return hexToRgb(c.fill);
   return [15, 23, 42];
@@ -255,6 +255,10 @@ async function composeLetterPageCanvas({
   const swatch = inch(0.095);
 
   groups.forEach((group) => {
+    const groupH = inch(0.15) + group.items.length * lineH + inch(0.08);
+    if (colY[0] + groupH <= legendBottom) col = 0;
+    else if (colY[1] + groupH <= legendBottom) col = 1;
+    else col = colY[0] <= colY[1] ? 0 : 1;
     let cy = colY[col];
     const x0 = legendInnerLeft + col * (colW + colGap);
     const rgb = categoryRgb(group.key);
@@ -284,7 +288,6 @@ async function composeLetterPageCanvas({
       cy += lineH;
     });
     colY[col] = cy + inch(0.08);
-    col = colY[0] <= colY[1] ? 0 : 1;
   });
 
   // --- Footer: CV logo + firm logo (+ optional QR) ---

@@ -415,7 +415,6 @@ export const TOUR_NEARBY_AMENITY_ORDER = [
   { key: 'trailheads', label: 'Trailheads' },
   { key: 'essentials', label: 'Essentials' },
   { key: 'coffee', label: 'Coffee' },
-  { key: 'transit', label: 'Transit' },
   { key: 'airport', label: 'Airports' },
 ];
 
@@ -429,7 +428,6 @@ const TOUR_VICINITY_FULL_BADGE_FILES = {
   fitness: 'fitness-badge.png',
   essentials: 'essentials-badge.png',
   coffee: 'coffee-badge.png',
-  transit: 'transit-badge.png',
   airport: 'airport-badge.png',
 };
 
@@ -603,7 +601,6 @@ const TOUR_VICINITY_AMENITY_LOGO_FILES = {
   trailheads: 'hiking.svg',
   essentials: 'tools.svg',
   coffee: 'mug-hot-alt.svg',
-  transit: 'subway.svg',
   airport: 'plane-alt.svg',
 };
 
@@ -617,7 +614,7 @@ const TOUR_VICINITY_MAP_MAKER_MAIN_HOME_FILE = 'house-chimney.svg';
 const TOUR_VICINITY_NEARBY_MAIN_HOME_OVERRIDE_IMAGE_ID = 'tour-vicinity-logo-mapmaker-main-home';
 
 /**
- * When true, every nearby marker except full-badge categories (parks, grocery, schools, fitness, essentials, coffee, transit, airport) uses the Main Home glyph (`house-chimney.svg`).
+ * When true, every nearby marker except full-badge categories (parks, grocery, schools, fitness, essentials, coffee, airport) uses the Main Home glyph (`house-chimney.svg`).
  * Those categories always use their pre-made full-badge PNGs.
  * Enable with `REACT_APP_TOUR_NEARBY_MAIN_HOME_TEST=1` in `.env`.
  */
@@ -682,7 +679,6 @@ export async function loadTourVicinityPrintLogoImages(map) {
     await ensureTourVicinityFullBadgeImage(map, 'fitness');
     await ensureTourVicinityFullBadgeImage(map, 'essentials');
     await ensureTourVicinityFullBadgeImage(map, 'coffee');
-    await ensureTourVicinityFullBadgeImage(map, 'transit');
     await ensureTourVicinityFullBadgeImage(map, 'airport');
     let ok = await ensureTourVicinityLogoImage(
       map,
@@ -743,8 +739,6 @@ function tourVicinityNearbyIconImageLayout() {
       tourVicinityFullBadgeImageId('essentials'),
       'coffee',
       tourVicinityFullBadgeImageId('coffee'),
-      'transit',
-      tourVicinityFullBadgeImageId('transit'),
       'airport',
       tourVicinityFullBadgeImageId('airport'),
       'trailheads',
@@ -769,8 +763,6 @@ function tourVicinityNearbyIconImageLayout() {
     tourVicinityFullBadgeImageId('essentials'),
     'coffee',
     tourVicinityFullBadgeImageId('coffee'),
-    'transit',
-    tourVicinityFullBadgeImageId('transit'),
     'airport',
     tourVicinityFullBadgeImageId('airport'),
     'trailheads',

@@ -28,7 +28,6 @@ const CATEGORY_META = {
   grocery: { label: "Groceries & Essentials", fill: "#eab308", rgb: [234, 179, 8] },
   fitness: { label: "Fitness & Wellness", fill: "#f43f5e", rgb: [244, 63, 94] },
   parks_rec: { label: "Parks & Recreation", fill: "#22c55e", rgb: [34, 197, 94] },
-  transit: { label: "Transit", fill: "#6366f1", rgb: [99, 102, 241] },
   essentials: { label: "Essentials", fill: "#78716c", rgb: [120, 113, 108] },
 };
 
@@ -38,7 +37,6 @@ const CATEGORY_ORDER = [
   "grocery",
   "fitness",
   "parks_rec",
-  "transit",
   "essentials",
 ];
 

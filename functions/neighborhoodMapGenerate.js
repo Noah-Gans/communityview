@@ -24,7 +24,7 @@ const {
 } = require("./amenityGridCache");
 const { enrichNearbyTourFeatureCollection } = require("./nearbyTourEnrichment");
 
-const NEARBY_TOUR_DATA_VERSION = 29;
+const NEARBY_TOUR_DATA_VERSION = 35;
 const DEFAULT_RADIUS_M = 8000;
 
 const CATEGORIES = [
@@ -49,7 +49,7 @@ const CATEGORIES = [
     label: "Grocery",
     max: 3,
     min: 1,
-    types: ["supermarket", "grocery_store", "food_store"],
+    types: ["supermarket", "grocery_store"],
     color: "0xEAB308",
   },
   {
@@ -67,14 +67,6 @@ const CATEGORIES = [
     min: 2,
     types: ["park"],
     color: "0x22C55E",
-  },
-  {
-    key: "transit",
-    label: "Transit",
-    max: 3,
-    min: 1,
-    types: ["subway_station", "train_station", "bus_station", "transit_station"],
-    color: "0x6366F1",
   },
   {
     key: "essentials",

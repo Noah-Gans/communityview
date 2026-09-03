@@ -1,3 +1,4 @@
+import { AMENITY_MAP_CATEGORY_KEYS } from './amenityMapCatalog';
 import { TOUR_NEARBY_SEARCH_RADIUS_METERS, TOUR_NEARBY_AMENITY_ORDER } from './propertyTourSlides';
 import {
   normalizeTourNearbyCacheFromFirestore,
@@ -76,6 +77,7 @@ export function normalizeTourSettings(raw) {
     searchRadiusMeters: clampTourSearchRadiusMeters(src.searchRadiusMeters),
     enabledAmenityKeys: resolvedAmenityKeys,
     slidePlan: slidePlan?.length ? slidePlan : null,
+    slidePlanUserEdited: src.slidePlanUserEdited === true,
     amenityRadiusMeters: normalizeAmenityRadiusMeters(src.amenityRadiusMeters),
     slidePrintElements: normalizeSlidePrintElements(src.slidePrintElements),
   };
@@ -88,10 +90,38 @@ export function getEnabledTourAmenityOrder(tourSettings) {
   return settings.enabledAmenityKeys;
 }
 
-/** Ensure `slidePlan` is always a concrete ordered list (never null in UI state). */
-export function materializeTourSettingsSlidePlan(rawSettings, printElements) {
+/**
+ * Tour-supported amenity keys that actually have saved places. Used to decide what
+ * an un-edited slide plan should pick up from the amenity map.
+ * @param {unknown} tourNearbyCache
+ */
+export function amenityKeysWithSavedFeatures(tourNearbyCache) {
+  const byAmenity =
+    tourNearbyCache && typeof tourNearbyCache === 'object' ? tourNearbyCache.byAmenity : null;
+  if (!byAmenity || typeof byAmenity !== 'object') return [];
+  return TOUR_NEARBY_AMENITY_KEYS.filter((key) => {
+    const features = byAmenity[key]?.features;
+    return Array.isArray(features) && features.some((f) => String(f?.properties?.name || '').trim());
+  });
+}
+
+/**
+ * Ensure `slidePlan` is always a concrete ordered list (never null in UI state).
+ * @param {unknown} rawSettings
+ * @param {unknown[]} printElements
+ * @param {{ availableAmenityKeys?: string[] }} [options]
+ */
+export function materializeTourSettingsSlidePlan(rawSettings, printElements, options = {}) {
   const settings = normalizeTourSettings(rawSettings);
-  const plan = normalizeTourSlidePlan(settings.slidePlan, printElements, settings.enabledAmenityKeys);
+  const plan = normalizeTourSlidePlan(
+    settings.slidePlan,
+    printElements,
+    settings.enabledAmenityKeys,
+    {
+      userEdited: settings.slidePlanUserEdited,
+      availableAmenityKeys: options.availableAmenityKeys,
+    }
+  );
   return normalizeTourSettings({ ...settings, slidePlan: plan });
 }
 
@@ -124,10 +154,13 @@ export function resolveTourSettingsFromMap(mapData) {
         ? slidePlanFromDoc
         : slidePlanFromCache;
 
-  // Saved slide order is authoritative — do not rebuild from cached amenity key lists.
+  const slidePlanUserEdited =
+    fromDoc?.slidePlanUserEdited === true || fromCacheEmbedded?.slidePlanUserEdited === true;
+
   if (slidePlan?.length) {
     return normalizeTourSettings({
       slidePlan,
+      slidePlanUserEdited,
       searchRadiusMeters: radius,
       enabledAmenityKeys: fromDoc?.enabledAmenityKeys ?? fromCacheEmbedded?.enabledAmenityKeys,
       amenityRadiusMeters: fromDoc?.amenityRadiusMeters ?? fromCacheEmbedded?.amenityRadiusMeters,
@@ -153,6 +186,7 @@ export function resolveTourSettingsFromMap(mapData) {
       enabledAmenityKeys,
       searchRadiusMeters: radius,
       slidePlan,
+      slidePlanUserEdited,
       amenityRadiusMeters: fromDoc?.amenityRadiusMeters ?? fromCacheEmbedded?.amenityRadiusMeters,
       slidePrintElements: pickSlidePrintElements(
         fromDoc?.slidePrintElements,
@@ -169,6 +203,7 @@ export function resolveTourSettingsFromMap(mapData) {
         enabledAmenityKeys: embeddedKeys,
         searchRadiusMeters: root.searchRadiusMeters,
         slidePlan: root.tourSettings?.slidePlan,
+        slidePlanUserEdited,
         amenityRadiusMeters: root.tourSettings?.amenityRadiusMeters,
         slidePrintElements: pickSlidePrintElements(
           fromDoc?.slidePrintElements,
@@ -185,6 +220,8 @@ export function resolveTourSettingsFromMap(mapData) {
       return normalizeTourSettings({
         enabledAmenityKeys: keys,
         searchRadiusMeters: root.searchRadiusMeters,
+        slidePlan,
+        slidePlanUserEdited,
         slidePrintElements: pickSlidePrintElements(
           fromDoc?.slidePrintElements,
           fromCacheEmbedded?.slidePrintElements,
@@ -236,6 +273,37 @@ export function mapHasTourNearbyData(tourNearbyCache) {
   );
 }
 
+function amenityMapCategoryIsCovered(entry) {
+  if (!entry) return false;
+  const features = Array.isArray(entry.features) ? entry.features : [];
+  return features.some((f) => String(f?.properties?.name || '').trim());
+}
+
+/**
+ * True when every amenity-map category has been fetched (including empty).
+ * Used to skip Places auto-generate, not for the share-kit Ready state.
+ */
+export function mapHasAmenityMapData(tourNearbyCache) {
+  const root = normalizeTourNearbyCacheFromFirestore(tourNearbyCache);
+  if (!root?.byAmenity) return false;
+  return AMENITY_MAP_CATEGORY_KEYS.every((key) => amenityMapCategoryIsCovered(root.byAmenity[key]));
+}
+
+/**
+ * Amenity-map share card is ready when nearby places exist. Tour and amenity
+ * map share that cache and start from the same category list.
+ */
+export function mapAmenityShareCardReady(tourNearbyCache) {
+  return mapHasTourNearbyData(tourNearbyCache);
+}
+
+/** Amenity-map categories that still need a Places fetch. */
+export function amenityMapCategoriesNeedingFetch(tourNearbyCache) {
+  const root = normalizeTourNearbyCacheFromFirestore(tourNearbyCache);
+  const byAmenity = root?.byAmenity || {};
+  return AMENITY_MAP_CATEGORY_KEYS.filter((key) => !amenityMapCategoryIsCovered(byAmenity[key]));
+}
+
 /** True when the agent has toggled place visibility (amenity map or tour). */
 export function tourNearbyCacheLooksCurated(tourNearbyCache) {
   const root = normalizeTourNearbyCacheFromFirestore(tourNearbyCache);
@@ -247,22 +315,47 @@ export function tourNearbyCacheLooksCurated(tourNearbyCache) {
   );
 }
 
+export function featureVisibleOnAmenityMap(feature) {
+  return feature?.properties?.amenityMapHidden !== true;
+}
+
+export function featureVisibleOnTour(feature) {
+  return feature?.properties?.tourHidden !== true;
+}
+
 /**
- * Amenity map + tour + neighborhood PDF share one pool: drop places the agent hid.
- * @param {Record<string, { features?: unknown[] }>|null|undefined} byAmenity
+ * Keep the other product's hide flag when one editor re-searches a category.
+ * Amenity map and tour share place records; each has its own `*Hidden` field.
  */
-export function byAmenityVisibleForListing(byAmenity) {
+export function mergePlaceVisibilityFromPrior(nextFeature, priorFeature) {
+  if (!nextFeature || !priorFeature) return nextFeature;
+  const nextProps = nextFeature.properties || {};
+  const priorProps = priorFeature.properties || {};
+  const props = { ...nextProps };
+  if (priorProps.amenityMapHidden === true) props.amenityMapHidden = true;
+  if (priorProps.tourHidden === true) props.tourHidden = true;
+  return { ...nextFeature, properties: props };
+}
+
+function filterByAmenity(byAmenity, keepFeature) {
   const out = {};
   for (const [key, entry] of Object.entries(byAmenity || {})) {
-    const features = Array.isArray(entry?.features)
-      ? entry.features.filter(
-          (f) =>
-            f?.properties?.amenityMapHidden !== true && f?.properties?.tourHidden !== true
-        )
-      : [];
+    const features = Array.isArray(entry?.features) ? entry.features.filter(keepFeature) : [];
     out[key] = { ...entry, features };
   }
   return out;
+}
+
+/** Amenity map + neighborhood PDF: ignore tour hide / removed tour slides. */
+export function byAmenityVisibleForAmenityMap(byAmenity) {
+  return filterByAmenity(byAmenity, featureVisibleOnAmenityMap);
+}
+
+/**
+ * @deprecated Use {@link byAmenityVisibleForAmenityMap} — neighborhood PDF follows the amenity map.
+ */
+export function byAmenityVisibleForListing(byAmenity) {
+  return byAmenityVisibleForAmenityMap(byAmenity);
 }
 
 /**
