@@ -16,6 +16,9 @@ import UseCases from './pages/landingPages/UseCases';
 import UseCasePage from './pages/landingPages/UseCasePage';
 import CompareLandId from './pages/landingPages/CompareLandId';
 import OnePage from './pages/OnePage'; // Import the OnePage sales document
+import FreeCountyMapPage from './pages/FreeCountyMapPage';
+import CountiesHub from './pages/landingPages/CountiesHub';
+import FreeTierPaywallModal from './components/paywall/FreeTierPaywallModal';
 import { MapProvider } from './pages/MapContext';
 import { UserProvider } from './contexts/UserContext'; // Import UserContext
 import Login from './components/auth/Login'; // Import Login component
@@ -62,6 +65,7 @@ function AppRoutes({ activeTab, setActiveTab }) {
       <SeoManager jsonLdByPath={JSON_LD_BY_PATH} />
       <MainHeader activeTab={activeTab} onTabChange={setActiveTab} />
       <MobileTopBar />
+      <FreeTierPaywallModal />
 
       {showMap && (
         <div className="map-container">
@@ -75,6 +79,7 @@ function AppRoutes({ activeTab, setActiveTab }) {
         <Routes>
                   <Route path="/" element={<LandingPage onStartClick={() => setActiveTab('map')} />} />
                   <Route path="/map" element={null} />
+                  <Route path="/map/:state/:countySlug" element={<FreeCountyMapPage />} />
                   <Route
                     path="/search"
                     element={
@@ -106,6 +111,7 @@ function AppRoutes({ activeTab, setActiveTab }) {
                   <Route path="/features" element={<Features />} />
                   <Route path="/faq" element={<FAQ />} />
                   <Route path="/use-cases" element={<UseCases />} />
+                  <Route path="/counties" element={<CountiesHub />} />
                   <Route path="/use-cases/:slug" element={<UseCasePage />} />
                   <Route path="/compare/land-id" element={<CompareLandId />} />
                   <Route path="/compare/landid" element={<CompareLandId />} />

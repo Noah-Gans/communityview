@@ -68,6 +68,12 @@
   color: rgba(15, 23, 42, 0.45);
 }
 
+.mobile-top-bar-input:disabled,
+.mobile-top-bar-input:read-only {
+  opacity: 0.55;
+  cursor: pointer;
+}
+
 .mobile-top-bar-account .mobile-account-controls-btn {
   width: 36px;
   height: 36px;

@@ -140,6 +140,19 @@
   box-shadow: var(--header-shadow);
 }
 
+.header-tab--locked {
+  opacity: 0.55;
+  cursor: not-allowed;
+  gap: 4px;
+}
+
+.header-tab--locked:hover {
+  background: var(--header-surface-muted);
+  color: var(--header-text-muted);
+  border-color: var(--header-border);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
+}
+
 /* Right Side - Account */
 .header-right {
   display: flex;
@@ -211,6 +224,31 @@
   align-items: center;
   justify-content: center;
   box-shadow: var(--header-shadow);
+}
+
+.header-signup-button {
+  background: linear-gradient(135deg, #006b45 0%, #059669 100%);
+  color: #fff;
+  border: none;
+  padding: 0 18px;
+  border-radius: var(--header-radius, 10px);
+  cursor: pointer;
+  font-weight: 600;
+  font-family: inherit;
+  font-size: 14px;
+  height: 36px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  letter-spacing: -0.01em;
+  text-decoration: none;
+  white-space: nowrap;
+  transition: box-shadow 0.15s ease;
+}
+
+.header-signup-button:hover {
+  box-shadow: 0 4px 14px rgba(0, 107, 69, 0.35);
+  color: #fff;
 }
 
 .user-button:hover,
@@ -959,6 +997,12 @@
   background: #fff;
   color: #059669;
   cursor: pointer;
+}
+
+.mobile-tutorial-nav-btn--locked {
+  opacity: 0.55;
+  cursor: not-allowed;
+  color: #64748b;
 }
 
 .mobile-tutorial-nav-hint {

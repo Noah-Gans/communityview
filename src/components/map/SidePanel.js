@@ -325,6 +325,7 @@ const SidePanel = memo(({
 
   // Fetch detailed Regrid parcel data from API
   const fetchRegridParcelDetails = useCallback(async (parcelId, parcelSeed = {}) => {
+    if (!user) return;
     if (!parcelId && !parcelSeed?.path) {
       console.error('No parcel id or path provided for Regrid parcel details');
       return;
@@ -375,7 +376,7 @@ const SidePanel = memo(({
     } finally {
       setRegridLoadingStates((prev) => ({ ...prev, [cacheKey]: false }));
     }
-  }, [regridDetailedData, regridDetailFailed]);
+  }, [regridDetailedData, regridDetailFailed, user]);
 
   const calculateFeatureArea = (feature) => {
     if (!feature || !feature.geometry) return 'N/A';
@@ -814,6 +815,7 @@ const SidePanel = memo(({
             collapsedCategories={collapsedCategories}
             setCollapsedCategories={setCollapsedCategories}
             fetchRegridParcelDetails={fetchRegridParcelDetails}
+            disablePropertyDetails={!user}
             renderField={renderField}
             onZoomToFeature={onZoomToFeature}
             handleCreateMap={handleCreateMap}

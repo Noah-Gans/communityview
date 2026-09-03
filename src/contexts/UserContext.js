@@ -23,6 +23,10 @@ export function UserProvider({ children }) {
   const [defaultSearchCounty, setDefaultSearchCounty] = useState(null);
   const [searchCountyModePreference, setSearchCountyModePreferenceState] = useState(null);
   const [searchCountySetupDismissed, setSearchCountySetupDismissed] = useState(false);
+  /** Full-page "unlock this" paywall, opened from any free-tier locked-feature click. */
+  const [paywallReason, setPaywallReason] = useState(null);
+  const openPaywall = (reason = null) => setPaywallReason(reason || 'default');
+  const closePaywall = () => setPaywallReason(null);
 
   // User authentication with real-time subscription updates
   useEffect(() => {
@@ -360,7 +364,10 @@ export function UserProvider({ children }) {
       saveDefaultSearchCounty,
       setSearchCountyModePreference,
       dismissSearchCountySetupPrompt,
-      hasAccessToFeature
+      hasAccessToFeature,
+      paywallReason,
+      openPaywall,
+      closePaywall
     }}>
       {children}
     </UserContext.Provider>

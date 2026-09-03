@@ -1229,6 +1229,15 @@
   background: #1f2937;
 }
 
+.enhanced-details-toggle--locked {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.enhanced-details-toggle--locked:hover {
+  background: #111827;
+}
+
 .enhanced-details-content {
   padding: 10px;
 }

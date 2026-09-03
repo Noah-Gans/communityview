@@ -2,6 +2,7 @@ import React, { useCallback, useMemo } from 'react';
 import { getPropertySectionIcon } from './propertyFieldIcons';
 import { parseRegridLocation } from '../../utils/regridDetailSections';
 import { buildRegridPropertyLayout } from '../../utils/regridPropertyLayout';
+import { useUser } from '../../contexts/UserContext';
 
 /* detail section builders live in utils/regridDetailSections.js */
 
@@ -81,6 +82,7 @@ export default function RegridParcelFeatureDetails({
   collapsedCategories,
   setCollapsedCategories,
   fetchRegridParcelDetails,
+  disablePropertyDetails = false,
   renderField,
   renderDetailField: renderDetailFieldProp,
   onZoomToFeature,
@@ -88,6 +90,7 @@ export default function RegridParcelFeatureDetails({
   isMobile,
   mobileSheetState = 'hidden',
 }) {
+  const { openPaywall } = useUser();
   const isMobilePeek = isMobile && mobileSheetState === 'peek';
   const renderDetailField = renderDetailFieldProp || defaultRenderDetailField;
   const locationDisplay = parseRegridLocation(
@@ -119,6 +122,10 @@ export default function RegridParcelFeatureDetails({
     detailsToggleKey != null ? (collapsedCategories[detailsToggleKey] ?? true) : true;
 
   const toggleEnhancedDetails = useCallback(() => {
+    if (disablePropertyDetails) {
+      openPaywall('property-details');
+      return;
+    }
     if (!parcelCacheKey || !detailsToggleKey) return;
     const shouldExpand = isEnhancedDetailsCollapsed;
     if (shouldExpand && !hasDetailedData && !isLoading && !detailFetchFailed) {
@@ -139,6 +146,8 @@ export default function RegridParcelFeatureDetails({
     detailFetchFailed,
     fetchRegridParcelDetails,
     setCollapsedCategories,
+    disablePropertyDetails,
+    openPaywall,
   ]);
 
   const getSectionToggleKey = useCallback(
@@ -200,15 +209,24 @@ export default function RegridParcelFeatureDetails({
         <div className="enhanced-details-toolbar">
           <button
             type="button"
-            className="enhanced-details-toggle enhanced-details-toggle--regrid-single"
+            className={`enhanced-details-toggle enhanced-details-toggle--regrid-single${
+              disablePropertyDetails ? ' enhanced-details-toggle--locked' : ''
+            }`}
             onClick={toggleEnhancedDetails}
             aria-expanded={!isEnhancedDetailsCollapsed}
+            aria-disabled={disablePropertyDetails}
             aria-label={
-              isEnhancedDetailsCollapsed ? 'Expand property details' : 'Collapse property details'
+              disablePropertyDetails
+                ? 'Sign up to view full property details'
+                : isEnhancedDetailsCollapsed
+                  ? 'Expand property details'
+                  : 'Collapse property details'
             }
             data-tour={index === 0 ? 'info-see-more-details' : undefined}
           >
-            <span className="enhanced-details-toggle-label">Property details</span>
+            <span className="enhanced-details-toggle-label">
+              Property details{disablePropertyDetails ? <span aria-hidden="true"> 🔒</span> : null}
+            </span>
             <span
               className={`enhanced-details-toggle-icon${
                 !isEnhancedDetailsCollapsed ? ' is-open' : ''

@@ -1,5 +1,6 @@
 import { getUseCaseBySlug, useCasesHub } from '../pages/landingPages/content/useCases';
 import { landIdCompare } from '../pages/landingPages/content/compare';
+import { findFreeCountyMap } from '../data/freeCountyMaps';
 
 /** Canonical site origin — always apex (no www). */
 export const SITE_ORIGIN = 'https://communityview.ai';
@@ -62,6 +63,12 @@ export const PAGE_SEO = {
     title: 'Interactive Parcel Map | Community View',
     description:
       'Open the Community View map to explore parcels, ownership, and land layers nationwide.',
+  },
+  '/counties': {
+    path: '/counties',
+    title: 'Free Property Ownership Maps by County | Community View',
+    description:
+      'Free, no-login ownership maps for select counties nationwide — explore parcel boundaries and property ownership free, county by county.',
   },
   '/login': {
     path: '/login',
@@ -128,6 +135,19 @@ export function getPageSeo(pathname) {
         title: useCase.seoTitle,
         description: useCase.seoDescription,
         faqs: useCase.faqs || null,
+      };
+    }
+  }
+
+  if (clean.startsWith('/map/')) {
+    const parts = clean.replace('/map/', '').split('/').filter(Boolean);
+    const [state, countySlug] = parts;
+    const county = findFreeCountyMap(state, countySlug);
+    if (county) {
+      return {
+        path: `/map/${county.state}/${county.slug}`,
+        title: `${county.name}, ${county.stateName} Ownership Map — Free Parcel & GIS Data | Community View`,
+        description: `Free ${county.name}, ${county.stateName} ownership map — see who owns any parcel and explore ${county.name} GIS data free, no account required.`,
       };
     }
   }
