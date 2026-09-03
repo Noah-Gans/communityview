@@ -127,9 +127,10 @@ export const authPersistenceReady = Promise.race([
   return undefined;
 });
 
-// Optional: Initialize Analytics (only if you want to use it)
-// Commented out for iOS compatibility
-// export const analytics = getAnalytics(app);
+// Analytics uses browser-only APIs that misbehave inside the native Capacitor
+// iOS WebView — only initialize it for real web visitors (isNativeWebView is
+// already computed above for the same reason on the Auth persistence path).
+export const analytics = isNativeWebView ? null : getAnalytics(app);
 
 export const db = getFirestore(app);
 export const storage = getStorage(app);

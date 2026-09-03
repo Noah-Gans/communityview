@@ -1,5 +1,7 @@
 import { useEffect } from 'react';
 import { Navigate, useNavigate, useParams } from 'react-router-dom';
+import { logEvent } from 'firebase/analytics';
+import { analytics } from '../firebase/firebaseConfig';
 import { findFreeCountyMap } from '../data/freeCountyMaps';
 
 /**
@@ -22,6 +24,17 @@ export default function FreeCountyMapPage() {
   const { state, countySlug } = useParams();
   const navigate = useNavigate();
   const county = findFreeCountyMap(state, countySlug);
+
+  useEffect(() => {
+    if (!county || !analytics) return;
+    logEvent(analytics, 'free_county_page_view', {
+      county: county.name,
+      state: county.stateName,
+      slug: `${county.state}/${county.slug}`,
+    });
+    // Intentionally fires once per mount only (landing), not on every re-render.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [county?.slug, county?.state]);
 
   useEffect(() => {
     if (!county) return undefined;

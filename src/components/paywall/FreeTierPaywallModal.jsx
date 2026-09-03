@@ -1,5 +1,7 @@
 import React from 'react';
 import { useNavigate } from 'react-router-dom';
+import { logEvent } from 'firebase/analytics';
+import { analytics } from '../../firebase/firebaseConfig';
 import { useUser } from '../../contexts/UserContext';
 import { heroPeek } from '../../pages/landingPages/content/messaging';
 import { researchPropertyDetails, homeResearchStack } from '../../pages/landingPages/content/features';
@@ -24,6 +26,12 @@ export default function FreeTierPaywallModal() {
   const reasonLabel = REASON_COPY[paywallReason] || REASON_COPY.default;
 
   const handleUpgrade = () => {
+    if (analytics) {
+      logEvent(analytics, 'paywall_upgrade_click', {
+        reason: paywallReason,
+        path: window.location.pathname,
+      });
+    }
     closePaywall();
     navigate('/signup');
   };
